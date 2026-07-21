@@ -1,0 +1,4 @@
+[
+  { "id": "streak", "label": "STREAK 🔥", "files": ["manifest.json", "index.html", "game.js"] },
+  { "id": "blitz",  "label": "BLITZ ⚡️",  "files": ["manifest.json", "index.html", "game.js"] }
+]

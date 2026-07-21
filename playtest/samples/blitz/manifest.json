@@ -1,0 +1,10 @@
+{
+  "id": "com.chris.blitz",
+  "version": "1.0.0",
+  "name": "BLITZ",
+  "entry": "index.html",
+  "iconEmoji": "⚡️",
+  "minPlayers": 2,
+  "maxPlayers": 8,
+  "author": "Chris"
+}

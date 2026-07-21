@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>STREAK</title>
+<style>
+  :root{
+    --felt:#0e2a22; --felt2:#0a1f19; --panel:#15362b; --screen:#0c241d;
+    --line:#24473b; --cream:#f3ead6; --ink:#12241d; --gold:#e8b34a;
+    --danger:#d9695c; --muted:#93afa3; --text:#e8f2ec; --good:#7fc9a2;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--text);
+    font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(circle at 50% 0%,#1a4034,var(--felt) 55%,var(--felt2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 12px 14px}
+
+  .hdr{display:flex; align-items:baseline; gap:10px; padding:4px 2px 2px}
+  .brand{font-size:22px; letter-spacing:.18em; font-weight:800; color:var(--gold)}
+  .roundlbl{color:var(--muted); font-size:13px}
+  .goal{margin-left:auto; color:var(--muted); font-size:13px}
+
+  .banner{min-height:22px; font-size:15px; font-weight:600; color:var(--gold); padding:6px 2px}
+
+  .board{flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:7px; min-height:0}
+  .prow{border:1.5px solid transparent; border-radius:14px; padding:9px 11px; background:#0f2b23}
+  .prow.active-turn{border-color:var(--gold); background:#123328}
+  .prow.busted{opacity:.5}
+  .prow.stayed{opacity:.75}
+  .prow .top{display:flex; align-items:center; gap:6px; font-size:15px}
+  .prow .who{font-weight:700}
+  .prow .you{color:var(--good); font-size:11px; font-weight:700; letter-spacing:.06em}
+  .prow .meta{margin-left:auto; color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums}
+  .prow .meta b{color:var(--text); font-size:15px}
+  .prow .chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; min-height:26px}
+  .prow.me-row{background:#143a2d; border-color:var(--line)}
+  .prow.me-row.active-turn{border-color:var(--gold)}
+  .c{display:inline-flex; align-items:center; justify-content:center; min-width:26px; height:26px; padding:0 5px;
+     background:var(--cream); color:var(--ink); border-radius:7px; font-size:14px; font-weight:800; font-variant-numeric:tabular-nums;
+     box-shadow:0 1.5px 0 rgba(0,0,0,.35)}
+  .c.mod{background:var(--gold); color:#3a2a06}
+  .c.save{background:var(--good); color:#0c2b1c; font-size:10px; letter-spacing:.04em}
+  .empty{color:var(--muted); font-size:12px; align-self:center}
+
+  .ctrl{padding-top:10px}
+  .btnrow{display:flex; gap:10px}
+  button{font:inherit; cursor:pointer; border:1px solid var(--line); background:#1d4034; color:var(--text);
+    border-radius:14px; padding:15px 12px; font-size:17px; font-weight:700; flex:1}
+  button:disabled{opacity:.35}
+  button.primary{background:var(--gold); color:#3a2a06; border-color:var(--gold)}
+  .wait{display:block; text-align:center; color:var(--muted); font-size:14px; padding:16px 0 12px}
+
+  .overlay{position:fixed; inset:0; background:rgba(5,15,12,.72); display:flex; align-items:center; justify-content:center; padding:24px; z-index:10}
+  .sheet{background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:20px; width:100%; max-width:340px;
+    box-shadow:0 18px 50px rgba(0,0,0,.5)}
+  .sheet h2{margin:0 0 4px; font-size:19px; letter-spacing:.04em}
+  .sheet h2.gold{color:var(--gold)}
+  .sheet .sub{color:var(--muted); font-size:13px; margin:0 0 14px}
+  .sheet .rowbtns{display:flex; flex-direction:column; gap:9px}
+  .score-row{display:flex; align-items:center; gap:8px; padding:7px 2px; font-size:15px; border-bottom:1px solid var(--line)}
+  .score-row:last-of-type{border-bottom:none}
+  .score-row .pts{margin-left:auto; font-variant-numeric:tabular-nums; color:var(--muted)}
+  .score-row .pts b{color:var(--text); font-size:16px}
+  .score-row.winner{color:var(--gold); font-weight:800}
+  .sheet .cta{margin-top:14px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>

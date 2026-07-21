@@ -1,0 +1,10 @@
+{
+  "id": "com.chris.streak",
+  "version": "1.0.0",
+  "name": "STREAK",
+  "entry": "index.html",
+  "iconEmoji": "🔥",
+  "minPlayers": 2,
+  "maxPlayers": 8,
+  "author": "Chris"
+}

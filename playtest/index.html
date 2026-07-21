@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Family Room · Playtest Studio</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171b22; --panel2:#1e232c; --line:#2a313c; --line2:#39424f;
+    --text:#e7edf3; --muted:#93a1b0; --accent:#e8b34a; --accent2:#4a9de8; --good:#5ecb8f; --bad:#e0695c;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:ui-rounded,-apple-system,"Segoe UI",system-ui,sans-serif;font-size:14px;
+    display:flex;flex-direction:column;overflow:hidden}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line2);background:var(--panel2);color:var(--text);
+    border-radius:8px;padding:6px 11px;transition:.12s}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);color:#3a2a06;border-color:var(--accent);font-weight:700}
+  button.small{padding:3px 8px;font-size:12px}
+  select,input[type=text],input[type=number]{font:inherit;background:var(--panel2);color:var(--text);
+    border:1px solid var(--line2);border-radius:7px;padding:5px 8px}
+  select{cursor:pointer}
+  a{color:var(--accent2)}
+  .row{display:flex;align-items:center;gap:8px}
+  .muted{color:var(--muted)}
+  .pill{font-size:11px;padding:2px 7px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+
+  /* top bar */
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto}
+  header .brand{font-weight:800;letter-spacing:.04em}
+  header .brand b{color:var(--accent)}
+  header .spacer{flex:1}
+  #bundleInfo{font-size:12.5px;color:var(--muted)}
+  #bundleInfo b{color:var(--text)}
+
+  /* body split */
+  .split{flex:1;display:flex;min-height:0}
+  aside{flex:0 0 300px;background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:14px}
+  aside h3{margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  aside section{margin-bottom:20px}
+  main{flex:1;display:flex;flex-direction:column;min-width:0}
+  #stage{flex:1;overflow:auto;padding:22px;display:flex;flex-wrap:wrap;gap:26px;align-content:flex-start;justify-content:center}
+  #empty{margin:auto;text-align:center;color:var(--muted);max-width:440px;line-height:1.6}
+  #empty h2{color:var(--text);font-weight:700}
+  .dropzone{border:2px dashed var(--line2);border-radius:16px;padding:34px}
+  .dropzone.hot{border-color:var(--accent);background:#1a1e14}
+
+  /* roster editor */
+  .seat{display:flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 8px;margin-bottom:7px}
+  .seat .idx{width:16px;text-align:center;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+  .seat .em{width:30px;height:30px;font-size:19px;text-align:center;border-radius:7px;border:1px solid var(--line2);background:var(--panel);cursor:pointer;padding:0}
+  .seat input.nm{flex:1;min-width:0;padding:4px 7px}
+  .seat .host{font-size:10px;letter-spacing:.05em;color:var(--accent);cursor:pointer;user-select:none}
+  .seat .host input{margin-right:3px;vertical-align:middle}
+  .seat .ord{display:flex;flex-direction:column;gap:1px}
+  .seat .ord button{padding:0 5px;font-size:10px;line-height:1.35}
+  .seat .del{padding:2px 6px;font-size:12px;color:var(--bad)}
+  .count{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .count button{width:30px;height:30px;padding:0;font-size:17px}
+  label.field{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  aside select, aside input[type=range]{width:100%}
+
+  /* phone */
+  .phone{background:#000;border-radius:44px;padding:11px;box-shadow:0 16px 50px rgba(0,0,0,.5);position:relative;
+    transform-origin:top center}
+  .phone .notch{position:absolute;top:20px;left:50%;transform:translateX(-50%);width:112px;height:32px;background:#000;border-radius:20px;z-index:3;pointer-events:none}
+  .phone .screen{border-radius:34px;overflow:hidden;background:#0c241d;position:relative}
+  .phone iframe{border:0;display:block;width:100%;height:100%;background:#0c241d}
+  .phone .plabel{position:absolute;top:-30px;left:0;right:0;display:flex;align-items:center;gap:6px;font-size:12.5px}
+  .phone .plabel .who{font-weight:700}
+  .phone .plabel .dev{color:var(--muted);font-size:11px}
+  .phone .plabel .hostbadge{color:var(--accent);font-size:10px;font-weight:700;letter-spacing:.04em}
+  .phone .plabel .youbadge{color:var(--good);font-size:10px;font-weight:700}
+  .phone .ctl{position:absolute;top:-30px;right:0;display:flex;gap:5px}
+  .phone .ctl select{padding:2px 5px;font-size:11px}
+  .phone .ctl button{padding:2px 7px;font-size:11px}
+  .phone.dropped .screen{filter:grayscale(1) brightness(.5)}
+  .phone .droptag{position:absolute;inset:11px;border-radius:34px;display:none;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.45);color:#fff;font-weight:700;z-index:4}
+  .phone.dropped .droptag{display:flex}
+
+  /* shell results overlay (Table.endGame) */
+  .phone .results{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;
+    padding:16px;background:rgba(6,10,14,.62);backdrop-filter:blur(2px)}
+  .rsheet{background:#20242c;border:1px solid var(--line2);border-radius:20px;padding:18px 16px;width:100%;max-width:280px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.55)}
+  .remoji{font-size:34px} .rhead{font-size:19px;font-weight:800;margin-top:2px}
+  .rsub{font-size:12px;color:var(--muted);margin:2px 0 12px}
+  .rrows{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+  .rrow{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:9px;font-size:14px}
+  .rrow.win{background:rgba(232,179,74,.14)}
+  .rrow .rrank{width:16px;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+  .rrow .rwho{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis}
+  .rrow .rdetail{font-size:11px;color:var(--muted)}
+  .rrow.win .rscore b{color:var(--accent)}
+  .rrow .rscore{font-variant-numeric:tabular-nums}
+  .rplay{width:100%;background:var(--accent);color:#3a2a06;border-color:var(--accent);font-weight:700;padding:10px}
+  .rwait{font-size:12.5px;color:var(--muted)}
+
+  /* log */
+  #logwrap{flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;max-height:34vh}
+  #logwrap.collapsed{max-height:38px}
+  #logbar{display:flex;align-items:center;gap:10px;padding:8px 14px;flex:0 0 auto;cursor:pointer;user-select:none}
+  #logbar .t{font-weight:700;font-size:12.5px}
+  #log{overflow-y:auto;padding:2px 14px 10px;font-family:var(--mono);font-size:12px;line-height:1.5}
+  #logwrap.collapsed #log{display:none}
+  .le{display:flex;gap:8px;padding:2px 0;border-bottom:1px solid #20262f;white-space:nowrap}
+  .le .dir{width:74px;flex:0 0 auto;font-weight:700}
+  .le .dir.send{color:var(--accent2)} .le .dir.broadcast{color:var(--accent)} .le .dir.sendTo{color:var(--good)}
+  .le .dir.leave,.le .dir.error{color:var(--bad)} .le .dir.start,.le .dir.join{color:var(--good)}
+  .le .dir.gameOver{color:var(--accent)}
+  .le .rt{color:var(--muted);flex:0 0 auto;width:120px;overflow:hidden;text-overflow:ellipsis}
+  .le .pl{color:var(--text);overflow:hidden;text-overflow:ellipsis}
+  .toolbtns{margin-left:auto;display:flex;gap:6px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>Family Room</b> · Playtest Studio</div>
+  <button id="openBtn">Open game folder…</button>
+  <select id="sampleSel" title="Load a built-in sample"><option value="">Samples…</option></select>
+  <button id="reloadBtn" disabled title="Re-read the folder (hot reload after edits)">↻ Reload</button>
+  <div id="bundleInfo" class="muted">No game loaded</div>
+  <div class="spacer"></div>
+  <button id="exportBtn" disabled title="Package the loaded game as a bundle .zip">Export .zip</button>
+</header>
+
+<div class="split">
+  <aside>
+    <section>
+      <h3>Players</h3>
+      <div class="count">
+        <button id="minus">–</button>
+        <span id="pcount">0 players</span>
+        <button id="plus">+</button>
+      </div>
+      <div id="roster"></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">Seat order = turn order. One host (authoritative).</div>
+    </section>
+
+    <section>
+      <h3>Devices</h3>
+      <label class="field">Default device</label>
+      <select id="deviceSel"></select>
+      <label class="field">Zoom · <span id="scaleVal">70%</span></label>
+      <input type="range" id="scale" min="35" max="110" value="70">
+      <div class="muted" style="font-size:11.5px;margin-top:6px">Sizes are <b>logical points</b> (CSS px) — the unit layouts use, not physical pixels (which are 3× larger: 402×874 pt = 1206×2622 px @3×). iPhone 16 Pro and 17 Pro share the 6.3″ / 402×874 pt geometry, so they render identically. Each phone can override its device below its label.</div>
+    </section>
+
+    <section>
+      <h3>Session</h3>
+      <div class="row" style="gap:8px">
+        <button id="startBtn" class="primary" disabled style="flex:1">Start</button>
+        <button id="resetBtn" disabled>Reset</button>
+      </div>
+      <div class="muted" style="font-size:11.5px;margin-top:8px">Start freezes the roster and boots every phone. Edit game files, then <b>Reload</b> → <b>Start</b> to see changes.</div>
+    </section>
+  </aside>
+
+  <main>
+    <div id="stage">
+      <div id="empty">
+        <div class="dropzone" id="dropzone">
+          <h2>Load a game bundle</h2>
+          <p>Click <b>Open game folder…</b> and pick a folder containing <code>manifest.json</code> + <code>index.html</code> + <code>game.js</code> — or drag that folder here — or pick a built-in <b>Sample</b>.</p>
+          <p class="muted" style="font-size:12px">Folder picking needs a secure context: serve this over <code>localhost</code>/https (e.g. <code>python3 -m http.server</code>). Over <code>file://</code>, use the folder <b>input</b> fallback the button offers.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="logwrap" class="collapsed">
+      <div id="logbar">
+        <span class="t">Message log</span>
+        <span id="logcount" class="pill">0</span>
+        <span class="muted" style="font-size:11.5px">wire traffic between players (client→host, host→clients)</span>
+        <div class="toolbtns">
+          <button class="small" id="clearLog">Clear</button>
+          <button class="small" id="toggleLog">Expand</button>
+        </div>
+      </div>
+      <div id="log"></div>
+    </div>
+  </main>
+</div>
+
+<!-- hidden fallback folder input -->
+<input type="file" id="dirInput" webkitdirectory directory multiple style="display:none">
+
+<script>
+/* =====================================================================================
+   Family Room — Playtest Studio
+   A zero-dependency, self-contained tool for authoring & testing Table SDK game bundles
+   across multiple simulated players, without an iOS simulator.
+
+   How it works: each player is an <iframe> (a real "phone") loading the game's index.html.
+   A Table SDK is injected into every frame; the parent page is the authoritative star-
+   topology router (client → host, host → clients), mirroring the native iOS shell.
+   ===================================================================================== */
+
+// ---- device presets (logical CSS points) ----
+// w/h are LOGICAL POINTS (CSS px) — the unit web/SwiftUI layouts use. The physical
+// pixel resolution is w*dpr × h*dpr (shown in labels). Sizing iframes to points is
+// correct: a 200pt button = 200 CSS px here = 200pt on device, 1:1.
+const DEVICES = {
+  'iphone-16-pro':      {label:'iPhone 16 Pro',      w:402, h:874, dpr:3},  // 1206×2622 px
+  'iphone-17-pro':      {label:'iPhone 17 Pro',      w:402, h:874, dpr:3},  // 1206×2622 px
+  'iphone-16-pro-max':  {label:'iPhone 16 Pro Max',  w:440, h:956, dpr:3},  // 1320×2868 px
+  'iphone-17-pro-max':  {label:'iPhone 17 Pro Max',  w:440, h:956, dpr:3},  // 1320×2868 px
+  'iphone-15-pro':      {label:'iPhone 15 Pro',      w:393, h:852, dpr:3},  // 1179×2556 px
+  'iphone-se':          {label:'iPhone SE',          w:375, h:667, dpr:2},  // 750×1334 px
+};
+const pxLabel = d => `${d.w*d.dpr}×${d.h*d.dpr} px @${d.dpr}×`;
+const DEFAULT_DEVICE = 'iphone-16-pro';
+
+const EMOJI = ['🦊','🐙','🐢','🦉','🐸','🦁','🐨','🦄','🐼','🦩','🐧','🐝'];
+const NAMES = ['Ava','Ben','Cleo','Dan','Evie','Finn','Gus','Hana','Iris','Jax','Kim','Lou'];
+
+// ---- state ----
+const state = {
+  vfs:null,            // { path: Uint8Array }
+  manifest:null,
+  entryHtmlBase:null,  // rewritten entry HTML with a <!--__TABLE_SDK__--> marker
+  dirHandle:null,      // FileSystemDirectoryHandle for hot reload (if available)
+  players:[],          // [{id,name,emoji,isHost,device,dropped}]
+  started:false,
+  blobUrls:{},         // path -> objectURL cache
+};
+
+// ---- element refs ----
+const $ = s => document.querySelector(s);
+const stage = $('#stage'), empty = $('#empty'), rosterEl = $('#roster');
+
+/* ============================ Virtual filesystem loading ============================ */
+
+async function readDirHandle(dirHandle, prefix=''){
+  const out=[];
+  for await (const [name, handle] of dirHandle.entries()){
+    if(name.startsWith('.') || name==='__MACOSX') continue;
+    const path = prefix ? prefix+'/'+name : name;
+    if(handle.kind==='file'){
+      const f = await handle.getFile();
+      out.push({path, bytes:new Uint8Array(await f.arrayBuffer())});
+    } else if(handle.kind==='directory'){
+      out.push(...await readDirHandle(handle, path));
+    }
+  }
+  return out;
+}
+
+// Normalize a flat file list to a bundle rooted at the folder containing manifest.json.
+function rootFiles(files){
+  const manifestFile = files
+    .filter(f => f.path.split('/').pop() === 'manifest.json')
+    .sort((a,b)=>a.path.split('/').length - b.path.split('/').length)[0];
+  if(!manifestFile) throw new Error('No manifest.json found in the selected folder.');
+  const segs = manifestFile.path.split('/'); segs.pop();
+  const root = segs.join('/');
+  const prefix = root ? root+'/' : '';
+  const vfs = {};
+  for(const f of files){
+    if(f.path.startsWith(prefix)){
+      const rel = f.path.slice(prefix.length);
+      if(rel && !rel.split('/').some(p=>p.startsWith('.')||p==='__MACOSX')) vfs[rel]=f.bytes;
+    }
+  }
+  return vfs;
+}
+
+async function loadFromDirHandle(dirHandle){
+  state.dirHandle = dirHandle;
+  const files = await readDirHandle(dirHandle);
+  await ingest(rootFiles(files));
+}
+
+async function loadFromFileList(fileList){
+  state.dirHandle = null; // no hot-reload handle via input
+  const files = [];
+  for(const f of fileList){
+    files.push({path: f.webkitRelativePath || f.name, bytes:new Uint8Array(await f.arrayBuffer())});
+  }
+  await ingest(rootFiles(files));
+}
+
+async function loadSample(id){
+  // Samples are fetched relative to this tool (see samples/index.json).
+  const list = SAMPLES.find(s=>s.id===id);
+  if(!list) return;
+  state.dirHandle = null;
+  const vfs = {};
+  for(const rel of list.files){
+    const res = await fetch(`samples/${id}/${rel}`);
+    if(!res.ok) throw new Error(`sample fetch failed: ${rel} (${res.status})`);
+    vfs[rel] = new Uint8Array(await res.arrayBuffer());
+  }
+  await ingest(vfs);
+}
+
+// Turn a freshly-loaded VFS into a ready-to-run bundle.
+async function ingest(vfs){
+  // reset old blob urls
+  Object.values(state.blobUrls).forEach(u=>URL.revokeObjectURL(u));
+  state.blobUrls = {};
+  state.vfs = vfs;
+
+  const manifestBytes = vfs['manifest.json'];
+  if(!manifestBytes) throw new Error('manifest.json missing at bundle root.');
+  let manifest;
+  try { manifest = JSON.parse(decode(manifestBytes)); }
+  catch(e){ throw new Error('manifest.json is not valid JSON: '+e.message); }
+  const entry = manifest.entry || 'index.html';
+  if(!vfs[entry]) throw new Error(`entry "${entry}" not found in the bundle.`);
+  state.manifest = manifest;
+
+  state.entryHtmlBase = buildEntryBase(entry);
+  state.started = false;
+
+  // roster defaults from manifest
+  const min = Math.max(1, manifest.minPlayers || 2);
+  seedRoster(Math.max(2, min));
+
+  onBundleReady();
+}
+
+/* ============================ HTML / asset rewriting ============================ */
+
+const mimes = {js:'text/javascript', mjs:'text/javascript', css:'text/css', html:'text/html', json:'application/json',
+  png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', svg:'image/svg+xml', webp:'image/webp',
+  ico:'image/x-icon', mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', m4a:'audio/mp4', mp4:'video/mp4',
+  woff:'font/woff', woff2:'font/woff2', ttf:'font/ttf', otf:'font/otf'};
+const decode = b => new TextDecoder().decode(b);
+const encode = s => new TextEncoder().encode(s);
+const extOf = p => (p.split('.').pop()||'').toLowerCase();
+const mimeOf = p => mimes[extOf(p)] || 'application/octet-stream';
+const dirOf = p => { const s=p.split('/'); s.pop(); return s.join('/'); };
+
+function joinPath(baseDir, ref){
+  if(!ref) return null;
+  ref = ref.split('#')[0].split('?')[0];
+  if(/^[a-z]+:/i.test(ref)) return null;              // http:, data:, blob:, mailto: ...
+  let parts = ref.startsWith('/') ? ref.slice(1).split('/')
+                                  : (baseDir?baseDir.split('/'):[]).concat(ref.split('/'));
+  const out=[];
+  for(const p of parts){ if(p===''||p==='.') continue; if(p==='..') out.pop(); else out.push(p); }
+  return out.join('/');
+}
+
+function blobUrlFor(path){
+  if(!path || !(path in state.vfs)) return null;
+  if(state.blobUrls[path]) return state.blobUrls[path];
+  let bytes = state.vfs[path];
+  const type = mimeOf(path);
+  if(type==='text/css') bytes = encode(rewriteCss(decode(bytes), dirOf(path)));
+  const url = URL.createObjectURL(new Blob([bytes], {type}));
+  state.blobUrls[path] = url;
+  return url;
+}
+const resolveToBlob = (baseDir, ref) => blobUrlFor(joinPath(baseDir, ref));
+
+function rewriteCss(text, baseDir){
+  return text.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (m,q,ref)=>{
+    const u = resolveToBlob(baseDir, ref); return u ? `url(${u})` : m;
+  });
+}
+
+// Rewrite the entry HTML: point assets at blob URLs, insert an SDK marker, return the string.
+function buildEntryBase(entryPath){
+  const baseDir = dirOf(entryPath);
+  const doc = new DOMParser().parseFromString(decode(state.vfs[entryPath]), 'text/html');
+  doc.querySelectorAll('[src]').forEach(el=>{
+    const u = resolveToBlob(baseDir, el.getAttribute('src')); if(u) el.setAttribute('src', u);
+  });
+  doc.querySelectorAll('link[href]').forEach(el=>{
+    const u = resolveToBlob(baseDir, el.getAttribute('href')); if(u) el.setAttribute('href', u);
+  });
+  doc.querySelectorAll('style').forEach(el=>{ el.textContent = rewriteCss(el.textContent, baseDir); });
+  const head = doc.head || doc.documentElement;
+  head.insertBefore(doc.createComment('__TABLE_SDK__'), head.firstChild);
+  return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+}
+
+/* ============================ Table SDK (injected per phone) ============================ */
+
+function sdkScript(player, roster){
+  const me = {id:player.id, name:player.name, emoji:player.emoji, isHost:player.isHost};
+  const players = roster.map(r=>({id:r.id, name:r.name, emoji:r.emoji}));
+  // Same-origin srcdoc iframe → reach the parent router directly. Mirrors the native shell.
+  return `(function(){
+    const PID=${JSON.stringify(player.id)};
+    const H=window.parent.HarnessBus;
+    const handlers={};
+    window.Table={
+      me:${JSON.stringify(me)}, isHost:${player.isHost?'true':'false'}, players:${JSON.stringify(players)},
+      onStart:cb=>handlers.start=cb, onPlayerJoin:cb=>handlers.join=cb,
+      onPlayerLeave:cb=>handlers.leave=cb, onMessage:cb=>handlers.message=cb,
+      send:p=>H.send(PID,p), broadcast:p=>H.broadcast(PID,p), sendTo:(id,p)=>H.sendTo(PID,id,p),
+      endGame:r=>H.endGame(PID,r),
+      saveState:o=>H.saveState(PID,o), loadState:()=>H.loadState(PID)
+    };
+    window.__tableDispatch=(ev,a,b)=>{ const cb=handlers[ev]; if(cb){ try{cb(a,b);}catch(e){ H.error(PID,String(e&&e.stack||e)); } } };
+    window.addEventListener('error',e=>H.error(PID, e.message));
+  })();`;
+}
+
+/* ============================ Router (authoritative star topology) ============================ */
+
+const HarnessBus = {
+  hostId(){ const h=state.players.find(p=>p.isHost); return h?h.id:null; },
+  winOf(pid){ const f=document.querySelector(`iframe[data-pid="${pid}"]`); return f?f.contentWindow:null; },
+  alive(pid){ const p=state.players.find(x=>x.id===pid); return p && !p.dropped; },
+  saved:{},
+
+  send(from, payload){                    // client (or host's own) → host
+    const host = this.hostId();
+    log('send', from, host, payload);
+    this._deliver(host, from, payload);
+  },
+  broadcast(from, payload){               // host → all clients
+    if(from!==this.hostId()){ log('error', from, '*', 'broadcast ignored (not host)'); return; }
+    log('broadcast', from, '*', payload);
+    state.players.forEach(p=>{ if(p.id!==from && !p.dropped) this._deliver(p.id, from, payload); });
+  },
+  sendTo(from, to, payload){              // host → one player
+    if(from!==this.hostId()){ log('error', from, to, 'sendTo ignored (not host)'); return; }
+    log('sendTo', from, to, payload);
+    this._deliver(to, from, payload);
+  },
+  endGame(from, result){                  // host ends the game → shell shows results everywhere
+    if(from!==this.hostId()){ log('error', from, '*', 'endGame ignored (not host)'); return; }
+    log('gameOver', from, 'all', result);
+    state.result = result;
+    showResults();
+  },
+  saveState(pid, o){ this.saved[pid]=structuredClone(o); },
+  loadState(pid){ return this.saved[pid] ?? null; },
+  error(pid, msg){ log('error', pid, '', msg); },
+
+  _deliver(toPid, fromPid, payload){
+    if(!this.alive(toPid)) return;
+    let clone; try{ clone=structuredClone(payload); }catch(e){ clone=payload; }
+    queueMicrotask(()=>{ const w=this.winOf(toPid); if(w && w.__tableDispatch) w.__tableDispatch('message', fromPid, clone); });
+  },
+};
+window.HarnessBus = HarnessBus;
+
+/* ============================ Roster ============================ */
+
+function seedRoster(n){
+  state.players = [];
+  for(let i=0;i<n;i++){
+    state.players.push({id:'p'+i, name:NAMES[i%NAMES.length], emoji:EMOJI[i%EMOJI.length],
+      isHost:i===0, device:i===1?'iphone-17-pro':DEFAULT_DEVICE, dropped:false});
+  }
+  renderRoster();
+}
+function reindexIds(){ state.players.forEach((p,i)=>{ p._seat=i; }); }
+function movePlayer(i, d){ const j=i+d; if(j<0||j>=state.players.length) return;
+  [state.players[i],state.players[j]]=[state.players[j],state.players[i]]; renderRoster(); }
+function setHost(i){ state.players.forEach((p,k)=>p.isHost=(k===i)); renderRoster(); }
+function addPlayer(){
+  const max = state.manifest?.maxPlayers || 8;
+  if(state.players.length>=max) return;
+  const i = state.players.length;
+  state.players.push({id:'p'+Date.now().toString(36)+i, name:NAMES[i%NAMES.length], emoji:EMOJI[i%EMOJI.length],
+    isHost:false, device:DEFAULT_DEVICE, dropped:false});
+  renderRoster();
+}
+function removePlayer(){
+  const min = Math.max(1, state.manifest?.minPlayers || 2);
+  if(state.players.length<=min) return;
+  const wasHost = state.players[state.players.length-1].isHost;
+  state.players.pop();
+  if(wasHost && state.players.length) state.players[0].isHost=true;
+  renderRoster();
+}
+
+function renderRoster(){
+  const min = Math.max(1, state.manifest?.minPlayers || 2);
+  const max = state.manifest?.maxPlayers || 8;
+  $('#pcount').textContent = state.players.length + ' player' + (state.players.length===1?'':'s');
+  $('#minus').disabled = state.players.length<=min;
+  $('#plus').disabled = state.players.length>=max;
+  rosterEl.innerHTML = '';
+  state.players.forEach((p,i)=>{
+    const row = document.createElement('div'); row.className='seat';
+    row.innerHTML = `
+      <span class="idx">${i+1}</span>
+      <button class="em" title="cycle emoji">${p.emoji}</button>
+      <input class="nm" type="text" value="${escapeAttr(p.name)}">
+      <label class="host" title="authoritative host"><input type="radio" name="host" ${p.isHost?'checked':''}>host</label>
+      <span class="ord"><button data-up ${i===0?'disabled':''}>▲</button><button data-down ${i===state.players.length-1?'disabled':''}>▼</button></span>
+      <button class="del" title="remove" ${state.players.length<=min?'disabled':''}>✕</button>`;
+    row.querySelector('.em').onclick = ()=>{ p.emoji=EMOJI[(EMOJI.indexOf(p.emoji)+1+EMOJI.length)%EMOJI.length]||'🙂'; renderRoster(); };
+    row.querySelector('.nm').oninput = e=>{ p.name=e.target.value; };
+    row.querySelector('.host input').onclick = ()=>setHost(i);
+    row.querySelector('[data-up]').onclick = ()=>movePlayer(i,-1);
+    row.querySelector('[data-down]').onclick = ()=>movePlayer(i,1);
+    row.querySelector('.del').onclick = ()=>{ state.players.splice(i,1); if(!state.players.some(x=>x.isHost)&&state.players.length) state.players[0].isHost=true; renderRoster(); };
+    rosterEl.appendChild(row);
+  });
+}
+const escapeAttr = s => String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+
+/* ============================ Stage (phones) ============================ */
+
+function startSession(){
+  if(!state.entryHtmlBase || !state.players.length) return;
+  if(!state.players.some(p=>p.isHost)) state.players[0].isHost=true;
+  state.players.forEach(p=>p.dropped=false);
+  HarnessBus.saved = {};
+  state.result = null;
+  state.started = true;
+  reindexIds();
+  clearLog();
+  renderStage();
+}
+
+function renderStage(){
+  empty.style.display='none';
+  stage.innerHTML='';
+  const scale = (+$('#scale').value)/100;
+  const roster = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji}));
+  const loads = [];
+
+  state.players.forEach(p=>{
+    const dev = DEVICES[p.device] || DEVICES[DEFAULT_DEVICE];
+    const wrap = document.createElement('div');
+    wrap.className = 'phone' + (p.dropped?' dropped':'');
+    wrap.style.transform = `scale(${scale})`;
+    wrap.style.marginBottom = (dev.h*scale - dev.h + 44) + 'px';       // reclaim scaled empty space
+    wrap.style.marginLeft = wrap.style.marginRight = (dev.w*scale - dev.w)/2 + 'px';
+
+    const devOpts = Object.entries(DEVICES).map(([k,v])=>`<option value="${k}" ${k===p.device?'selected':''}>${v.label}</option>`).join('');
+    wrap.innerHTML = `
+      <div class="plabel">
+        <span>${p.emoji}</span><span class="who">${escapeHtml(p.name)}</span>
+        ${p.isHost?'<span class="hostbadge">HOST</span>':''}
+        <span class="dev" title="logical points · physical pixels">${dev.w}×${dev.h} pt · ${pxLabel(dev)}</span>
+      </div>
+      <div class="ctl">
+        <select class="devsel">${devOpts}</select>
+        <button class="dropbtn">${p.dropped?'Reconnect':'Drop'}</button>
+      </div>
+      <div class="notch"></div>
+      <div class="screen" style="width:${dev.w}px;height:${dev.h}px">
+        <iframe data-pid="${p.id}"></iframe>
+        <div class="droptag">disconnected</div>
+      </div>`;
+    wrap.querySelector('.devsel').onchange = e=>{ p.device=e.target.value; renderStage(); };
+    wrap.querySelector('.dropbtn').onclick = ()=> p.dropped ? reconnect(p) : drop(p);
+
+    stage.appendChild(wrap);
+
+    const iframe = wrap.querySelector('iframe');
+    const html = state.entryHtmlBase.replace('<!--__TABLE_SDK__-->', '<script>'+sdkScript(p, roster)+'<\/script>');
+    loads.push(new Promise(res=>{ iframe.onload = ()=>res(p); iframe.srcdoc = html; }));
+  });
+
+  // Fire onStart on every phone once all documents (and their game scripts) have run.
+  Promise.all(loads).then(()=>{
+    const roster2 = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji}));
+    state.players.forEach(p=>{ if(p.dropped) return; const w=HarnessBus.winOf(p.id); if(w&&w.__tableDispatch) w.__tableDispatch('start', roster2); });
+    log('start', '—', 'all', {players:roster2.length});
+  });
+}
+
+// Shell-rendered results screen (mirrors the native shell's Table.endGame UI),
+// overlaid on every phone. Host sees "Play Again"; clients wait.
+function showResults(){
+  const r = state.result; if(!r) return;
+  const winner = r.winnerId || (r.standings[0] && r.standings[0].playerId);
+  const nameOf = id => { const p=state.players.find(x=>x.id===id); return p?`${p.emoji} ${escapeHtml(p.name)}`:escapeHtml(id); };
+  const head = r.title || (winner ? `${nameOf(winner)} wins!` : 'Game Over');
+  const rows = (r.standings||[]).map((s,i)=>{
+    const win = s.playerId===winner;
+    const score = (s.score!==undefined && s.score!==null && s.score!=='') ? `<b>${escapeHtml(String(s.score))}</b>` : '';
+    const detail = s.detail ? `<div class="rdetail">${escapeHtml(s.detail)}</div>` : '';
+    return `<div class="rrow ${win?'win':''}"><span class="rrank">${i+1}</span><span class="rwho">${nameOf(s.playerId)}${detail}</span><span class="rscore">${score}</span></div>`;
+  }).join('');
+  document.querySelectorAll('.phone').forEach(ph=>{
+    const pid = ph.querySelector('iframe')?.dataset.pid;
+    const me = state.players.find(x=>x.id===pid);
+    const cta = me && me.isHost ? `<button class="rplay">Play Again</button>` : `<div class="rwait">Waiting for the host…</div>`;
+    const screen = ph.querySelector('.screen');
+    let ov = screen.querySelector('.results');
+    if(!ov){ ov=document.createElement('div'); ov.className='results'; screen.appendChild(ov); }
+    ov.innerHTML = `<div class="rsheet"><div class="remoji">🏆</div><div class="rhead">${head}</div>
+      <div class="rsub">Final standings</div><div class="rrows">${rows}</div>${cta}</div>`;
+    const btn = ov.querySelector('.rplay'); if(btn) btn.onclick = restartGame;
+  });
+}
+function restartGame(){
+  state.result = null;
+  HarnessBus.saved = {};
+  log('start', '—', 'all', {restart:true});
+  renderStage();          // rebuild every phone → fresh Table.onStart → new game
+}
+
+function drop(p){
+  p.dropped = true;
+  document.querySelector(`iframe[data-pid="${p.id}"]`)?.closest('.phone')?.classList.add('dropped');
+  log('leave', p.id, 'all', {left:p.name});
+  state.players.forEach(o=>{ if(o.id!==p.id && !o.dropped){ const w=HarnessBus.winOf(o.id); if(w&&w.__tableDispatch) w.__tableDispatch('leave', p.id); } });
+}
+function reconnect(p){
+  // Rebuild just this phone, re-fire start on it, and notify others via onPlayerJoin.
+  p.dropped = false;
+  renderStage();
+  setTimeout(()=>{
+    state.players.forEach(o=>{ if(o.id!==p.id && !o.dropped){ const w=HarnessBus.winOf(o.id); if(w&&w.__tableDispatch) w.__tableDispatch('join', {id:p.id,name:p.name,emoji:p.emoji}); } });
+    log('join', p.id, 'all', {rejoined:p.name});
+  }, 60);
+}
+
+/* ============================ Log ============================ */
+
+let logEntries = 0;
+function log(dir, from, to, payload){
+  logEntries++;
+  $('#logcount').textContent = logEntries;
+  const el = document.createElement('div'); el.className='le';
+  const pl = typeof payload==='string' ? payload : safeJson(payload);
+  el.innerHTML = `<span class="dir ${dir}">${dir}</span><span class="rt">${from}${to?' → '+to:''}</span><span class="pl">${escapeHtml(pl)}</span>`;
+  const logEl = $('#log'); logEl.appendChild(el);
+  while(logEl.childElementCount>500) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function clearLog(){ $('#log').innerHTML=''; logEntries=0; $('#logcount').textContent='0'; }
+const safeJson = o => { try{ const s=JSON.stringify(o); return s.length>240?s.slice(0,240)+'…':s; }catch(e){ return String(o); } };
+const escapeHtml = s => String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+/* ============================ Export .zip (stored, no deps) ============================ */
+
+const CRC = (()=>{ const t=new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; t[n]=c>>>0; } return t; })();
+function crc32(b){ let c=0xFFFFFFFF; for(let i=0;i<b.length;i++) c=CRC[(c^b[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+function makeZip(files){                       // files: [{name, bytes}]
+  const enc = new TextEncoder(); const chunks=[]; const central=[]; let offset=0;
+  const u16=n=>[n&255,(n>>8)&255]; const u32=n=>[n&255,(n>>8)&255,(n>>16)&255,(n>>24)&255];
+  for(const f of files){
+    const name = enc.encode(f.name); const crc = crc32(f.bytes); const sz=f.bytes.length;
+    const lh=[...u32(0x04034b50),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(crc),...u32(sz),...u32(sz),...u16(name.length),...u16(0)];
+    chunks.push(new Uint8Array(lh), name, f.bytes);
+    const ch=[...u32(0x02014b50),...u16(20),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(crc),...u32(sz),...u32(sz),...u16(name.length),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(0),...u32(offset)];
+    central.push(new Uint8Array(ch), name);
+    offset += lh.length + name.length + sz;
+  }
+  const cdStart=offset; let cdSize=0; central.forEach(c=>cdSize+=c.length);
+  const eocd=[...u32(0x06054b50),...u16(0),...u16(0),...u16(files.length),...u16(files.length),
+    ...u32(cdSize),...u32(cdStart),...u16(0)];
+  return new Blob([...chunks, ...central, new Uint8Array(eocd)], {type:'application/zip'});
+}
+function exportZip(){
+  if(!state.vfs) return;
+  const files = Object.entries(state.vfs).map(([name,bytes])=>({name, bytes}));
+  const blob = makeZip(files);
+  const m = state.manifest;
+  const fname = (m ? `${(m.id||'game')}-${m.version||'1.0.0'}` : 'bundle') + '.zip';
+  const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ============================ Wiring ============================ */
+
+function onBundleReady(){
+  const m = state.manifest;
+  $('#bundleInfo').innerHTML = `<b>${escapeHtml(m.name||m.id||'game')}</b> ${m.version?('v'+m.version):''} · ${escapeHtml(m.id||'')} · ${(m.minPlayers||2)}–${(m.maxPlayers||8)} players`;
+  $('#startBtn').disabled = false;
+  $('#resetBtn').disabled = false;
+  $('#exportBtn').disabled = false;
+  $('#reloadBtn').disabled = !state.dirHandle && !lastFileList;
+  empty.style.display = state.started ? 'none' : 'flex';
+  if(!state.started){ stage.innerHTML=''; stage.appendChild(empty); empty.style.display='flex'; }
+}
+
+let lastFileList = null;
+
+$('#openBtn').onclick = async ()=>{
+  if(window.showDirectoryPicker){
+    try{ const h = await window.showDirectoryPicker(); await loadFromDirHandle(h); }
+    catch(e){ if(e.name!=='AbortError') fail(e); }
+  } else {
+    $('#dirInput').click();   // file:// fallback
+  }
+};
+$('#dirInput').onchange = async e=>{
+  if(!e.target.files.length) return;
+  lastFileList = e.target.files;
+  try{ await loadFromFileList(e.target.files); } catch(err){ fail(err); }
+};
+$('#reloadBtn').onclick = async ()=>{
+  try{
+    if(state.dirHandle) await loadFromDirHandle(state.dirHandle);
+    else if(lastFileList) await loadFromFileList(lastFileList);
+    if(state.started) startSession();   // re-boot phones with fresh code
+  }catch(e){ fail(e); }
+};
+$('#sampleSel').onchange = async e=>{
+  const id=e.target.value; e.target.value='';
+  if(id){ try{ await loadSample(id); }catch(err){ fail(err); } }
+};
+$('#exportBtn').onclick = exportZip;
+$('#startBtn').onclick = startSession;
+$('#resetBtn').onclick = ()=>{ state.started=false; seedRoster(Math.max(2, state.manifest?.minPlayers||2)); onBundleReady(); };
+$('#plus').onclick = addPlayer;
+$('#minus').onclick = removePlayer;
+$('#scale').oninput = e=>{ $('#scaleVal').textContent=e.target.value+'%'; if(state.started) renderStage(); };
+$('#deviceSel').onchange = e=>{ state.players.forEach(p=>p.device=e.target.value); if(state.started) renderStage(); };
+$('#logbar').onclick = ()=>{ const w=$('#logwrap'); w.classList.toggle('collapsed'); $('#toggleLog').textContent = w.classList.contains('collapsed')?'Expand':'Collapse'; };
+$('#clearLog').onclick = e=>{ e.stopPropagation(); clearLog(); };
+
+// device dropdown
+$('#deviceSel').innerHTML = Object.entries(DEVICES).map(([k,v])=>`<option value="${k}" ${k===DEFAULT_DEVICE?'selected':''}>${v.label} · ${v.w}×${v.h} pt</option>`).join('');
+
+// drag & drop a folder
+const dz = $('#dropzone');
+['dragenter','dragover'].forEach(ev=>document.addEventListener(ev,e=>{ e.preventDefault(); dz&&dz.classList.add('hot'); }));
+['dragleave','drop'].forEach(ev=>document.addEventListener(ev,e=>{ e.preventDefault(); dz&&dz.classList.remove('hot'); }));
+document.addEventListener('drop', async e=>{
+  const items = [...(e.dataTransfer?.items||[])];
+  const entries = items.map(it=>it.webkitGetAsEntry&&it.webkitGetAsEntry()).filter(Boolean);
+  if(!entries.length) return;
+  try{ const files = []; for(const en of entries) await walkEntry(en, '', files); await ingest(rootFiles(files)); }
+  catch(err){ fail(err); }
+});
+async function walkEntry(entry, prefix, out){
+  if(entry.isFile){ await new Promise(res=>entry.file(async f=>{ out.push({path:(prefix?prefix+'/':'')+f.name, bytes:new Uint8Array(await f.arrayBuffer())}); res(); })); }
+  else if(entry.isDirectory){ const rd=entry.createReader();
+    const ents = await new Promise(res=>rd.readEntries(res));
+    for(const c of ents) await walkEntry(c, (prefix?prefix+'/':'')+entry.name, out); }
+}
+
+function fail(err){ console.error(err); alert('Could not load game:\n\n'+(err.message||err)); }
+
+// load sample list (built-in demos)
+let SAMPLES = [];
+fetch('samples/index.json').then(r=>r.ok?r.json():[]).then(list=>{
+  SAMPLES = list||[];
+  const sel=$('#sampleSel');
+  SAMPLES.forEach(s=>{ const o=document.createElement('option'); o.value=s.id; o.textContent=s.label||s.id; sel.appendChild(o); });
+}).catch(()=>{});
+</script>
+</body>
+</html>
