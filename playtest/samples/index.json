@@ -1,4 +1,20 @@
 [
-  { "id": "streak", "label": "STREAK 🔥", "files": ["manifest.json", "index.html", "game.js"] },
-  { "id": "blitz",  "label": "BLITZ ⚡️",  "files": ["manifest.json", "index.html", "game.js"] }
+  {
+    "id": "streak",
+    "label": "STREAK \ud83d\udd25",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "blitz",
+    "label": "BLITZ \u26a1\ufe0f",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  }
 ]

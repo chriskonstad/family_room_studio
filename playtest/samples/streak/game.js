@@ -54,8 +54,8 @@ function createGame(Table, root) {
     if (card.k === 'num') {
       if (busted) { G.discard.push(card); return; }
       if (line.nums.includes(card.v)) {
-        if (line.hasSave) { line.hasSave=false; G.discard.push(card); G.banner = G.names[pid]+' used a Second Chance!'; }
-        else { G.status[pid]='busted'; G.banner = G.names[pid]+' busted on a '+card.v+'!'; }
+        if (line.hasSave) { line.hasSave=false; G.discard.push(card); G.banner = '🛟 '+G.names[pid]+' drew a second '+card.v+' — saved by their Second Chance!'; }
+        else { G.status[pid]='busted'; line.bust = card.v; G.banner = '💥 '+G.names[pid]+' drew a second '+card.v+' — BUST!'; }
       } else {
         line.nums.push(card.v); G.banner = G.names[pid]+' flipped '+card.v;
         if (line.nums.length === 7) { G.banner = '🔥 '+G.names[pid]+' hit a FULL STREAK! +15'; G.roundOver = true; }
@@ -75,7 +75,7 @@ function createGame(Table, root) {
     return act === 'save' ? ids.filter(id => !G.lines[id].hasSave) : ids; // freeze/triple: any active incl. self
   }
   function applyAction(act, target, chooser) {
-    if (act === 'freeze') { G.status[target]='stayed'; G.banner = G.names[chooser]+' froze '+G.names[target]; }
+    if (act === 'freeze') { G.status[target]='frozen'; G.banner = '🧊 '+G.names[chooser]+' froze '+G.names[target]+' — their points are locked in'; }
     else if (act === 'save') { G.lines[target].hasSave=true; G.banner = G.names[chooser]+' gave '+G.names[target]+' a Second Chance'; }
     else { G.banner = G.names[chooser]+' makes '+G.names[target]+' flip three!';   // triple
            G.work.unshift({t:'flip',pid:target},{t:'flip',pid:target},{t:'flip',pid:target}); }
@@ -155,6 +155,7 @@ function createGame(Table, root) {
       players: G.order.map(id => ({
         id, name:G.names[id], emoji:G.emojis[id], total:G.totals[id], status:G.status[id],
         nums:G.lines[id].nums.slice(), mods:G.lines[id].mods.slice(), hasSave:G.lines[id].hasSave,
+        bust:(G.lines[id].bust != null) ? G.lines[id].bust : null,
         unique:G.lines[id].nums.length, roundPts:liveScore(id),
         lastRound:(G.lastRound && G.lastRound[id]!=null) ? G.lastRound[id] : null
       }))
@@ -180,11 +181,22 @@ function createGame(Table, root) {
   const label = a => a==='freeze' ? 'Freeze' : a==='triple' ? 'Flip Three' : 'Second Chance';
   const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
+  // Animation bookkeeping: pop in only chips that are NEW since the last render,
+  // and shake/flash a row only on the transition into busted/frozen.
+  let seenChips = {};    // pid -> chip count last render
+  let seenStatus = {};   // pid -> status last render
+
   function chipsHTML(p) {
-    return p.nums.map(n=>`<i class="c">${n}</i>`).join('')
-         + p.mods.map(m=>`<i class="c mod">${m.mod==='x2'?'×2':'+'+m.v}</i>`).join('')
-         + (p.hasSave?'<i class="c save">2ND</i>':'')
-         || '<span class="empty">no cards yet</span>';
+    const prev = (seenChips[p.id] != null) ? seenChips[p.id] : 0;
+    const chips = [];
+    p.nums.forEach(n => chips.push({ cls: 'c' + (p.bust === n ? ' dup' : ''), txt: n }));
+    p.mods.forEach(m => chips.push({ cls: 'c mod', txt: m.mod==='x2' ? '×2' : '+'+m.v }));
+    if (p.bust != null) chips.push({ cls: 'c dup drawn', txt: p.bust });   // the fatal duplicate they drew
+    if (p.hasSave) chips.push({ cls: 'c save', txt: '2ND' });
+    if (!chips.length) return '<span class="empty">no cards yet</span>';
+    const shrunk = chips.length < prev;   // new round — don't pop everything
+    return chips.map((c, i) =>
+      `<i class="${c.cls}${(!shrunk && i >= prev) ? ' pop' : ''}">${c.txt}</i>`).join('');
   }
 
   function render() {
@@ -193,16 +205,24 @@ function createGame(Table, root) {
       return;
     }
     const v = view, meTurn = v.turn===MY, iChoose = v.pending && v.pending.chooserId===MY;
+    const bannerCls = v.banner && v.banner.indexOf('💥')===0 ? ' bust'
+                    : v.banner && v.banner.indexOf('🧊')===0 ? ' frozen'
+                    : v.banner && v.banner.indexOf('🔥')===0 ? ' streak' : '';
 
     let h = `<div class="hdr"><span class="brand">STREAK</span>
       <span class="roundlbl">Round ${v.round}</span><span class="goal">first to 200</span></div>
-      <div class="banner">${esc(v.banner||'')}</div><div class="board">`;
+      <div class="banner${bannerCls}">${esc(v.banner||'')}</div><div class="board">`;
 
     v.players.forEach(p => {
       const mine = p.id===MY;
-      const state = p.status==='busted' ? 'BUST' : p.status==='stayed' ? 'banked' : p.roundPts+' pts';
-      h += `<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}">
-        <div class="top"><span>${p.emoji}</span><span class="who">${esc(p.name)}</span>
+      const state = p.status==='busted' ? `<span class="st bust">💥 BUST — double ${p.bust!=null?p.bust:''}</span>`
+                  : p.status==='frozen' ? '<span class="st frozen">🧊 FROZEN</span>'
+                  : p.status==='stayed' ? '<span class="st banked">🏦 banked</span>'
+                  : p.roundPts+' pts';
+      const justBusted = p.status==='busted' && seenStatus[p.id] !== 'busted';
+      const justFrozen = p.status==='frozen' && seenStatus[p.id] !== 'frozen';
+      h += `<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}${justBusted?' shake':''}${justFrozen?' freezeflash':''}">
+        <div class="top"><span class="pemoji">${p.emoji}</span><span class="who">${esc(p.name)}</span>
           ${mine?'<span class="you">YOU</span>':''}
           <span class="meta">${state} · ${p.unique}/7 · <b>${p.total}</b></span></div>
         <div class="chips">${chipsHTML(p)}</div></div>`;
@@ -254,6 +274,13 @@ function createGame(Table, root) {
     }
 
     root.innerHTML = h;
+
+    // update animation bookkeeping AFTER building the DOM
+    v.players.forEach(p => {
+      seenChips[p.id] = p.nums.length + p.mods.length + (p.bust!=null?1:0) + (p.hasSave?1:0);
+      seenStatus[p.id] = p.status;
+    });
+
     root.querySelectorAll('button[data-act]').forEach(b => b.onclick = () => {
       const a = b.dataset.act;
       if (a==='flip') Table.send({t:'flip'});
