@@ -1,0 +1,10 @@
+{
+  "id": "com.chris.tapas",
+  "version": "1.0.0",
+  "name": "TAPAS",
+  "entry": "index.html",
+  "iconEmoji": "🫒",
+  "minPlayers": 2,
+  "maxPlayers": 5,
+  "author": "Chris"
+}

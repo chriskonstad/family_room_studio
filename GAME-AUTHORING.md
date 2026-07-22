@@ -71,6 +71,7 @@ Easiest way to produce a valid archive: open the folder in the Playtest Studio a
   "iconEmoji": "🎲",          // shown next to the name
   "minPlayers": 2,            // roster lower bound (the shell won't start below this)
   "maxPlayers": 8,            // roster upper bound
+  "teams": "required",        // OPTIONAL — declare a team game (see "Teams" below)
   "author": "You"
 }
 ```
@@ -172,14 +173,31 @@ no sockets, no device APIs).
 
 ### Identity & roster
 ```js
-Table.me         // { id, name, emoji, isHost } — this device's player
+Table.me         // { id, name, emoji, isHost, teamId? } — this device's player
 Table.isHost     // boolean convenience
-Table.players    // [{ id, name, emoji }, …] — the finalized roster, in SEAT ORDER
+Table.players    // [{ id, name, emoji, teamId? }, …] — the finalized roster, in SEAT ORDER
+Table.teams      // null, or [{ id, name, color, playerIds }, …] for team games (see "Teams")
 ```
 - **Seat order is turn order.** `Table.players[0]` is the first seat (and is the host). The
   host arranges seats in the lobby before starting; respect that order for turns.
 - Player **ids are opaque strings** (e.g. `"p0"`, `"p1"`). Never hard-code them — read
   `Table.me.id` and iterate `Table.players`.
+
+### Teams (shell-managed)
+Declare `"teams": "required"` in the manifest and the **shell owns team setup** — don't
+build your own team picker:
+- The **host's lobby** shows a team-count stepper (2–4) and a colored chip per player;
+  tapping a chip moves that player to the next team. Joiners are auto-assigned to the
+  smallest team. The game can't start until every player has a team and ≥2 teams are
+  non-empty. (The Playtest Studio mirrors this in its roster editor.)
+- Your game receives the result: `Table.teams` is an array of
+  `{ id, name, color, playerIds }` (e.g. `{id:'t0', name:'Red Team', color:'#e0564b',
+  playerIds:['p0','p2']}`), each roster entry carries `teamId`, and `Table.me.teamId` is
+  this device's team.
+- Treat teams as **final at `onStart`**, like seats. Filter out empty teams defensively
+  (`Table.teams.filter(t => t.playerIds.length)`).
+- To rank **teams** on the results screen, use `teamId` in `endGame` standings (below).
+- Games without `"teams"` in the manifest get `Table.teams === null` and no team UI.
 
 ### Lifecycle (shell → your game)
 ```js
@@ -208,9 +226,9 @@ Table.sendTo(playerId, payload) // host → one client (e.g. a private hand). Ho
 
 ### Ending the game
 ```js
-Table.endGame({ winnerId, title, standings: [{ playerId, score, detail }] })
+Table.endGame({ winnerId, title, standings: [{ playerId | teamId, score, detail }] })
 ```
-Host-only. See [§6](#6-ending-a-game).
+Host-only. Standings rank players — or whole teams via `teamId`. See [§6](#6-ending-a-game).
 
 ### Optional persistence (stretch; may be a no-op in some shells)
 ```js
@@ -264,6 +282,13 @@ Table.endGame({
 ```
 - `score` may be a **number or a string** (`42`, `"DNF"`); both optional.
 - `detail` is optional secondary text under the name.
+- **Team games:** put `teamId` in a standing instead of `playerId` to rank whole teams —
+  the shell renders the team's color, name, and member emojis, and `winnerId` may be a
+  team id:
+  ```js
+  Table.endGame({ winnerId: 't0',
+    standings: [ { teamId:'t0', score: 24 }, { teamId:'t1', score: 12 } ] })
+  ```
 - The shell shows the winner (trophy + headline), the ranked standings, and a **"Play
   Again"** button to the host (clients see "waiting"). **Play Again reloads the bundle on
   every device → `onStart` fires fresh.** You need no rematch/restart code of your own —

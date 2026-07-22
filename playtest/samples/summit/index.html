@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>SUMMIT</title>
+<style>
+  :root{
+    --bg1:#101c2c; --bg2:#0a1220; --panel:#182740; --line:#27395a;
+    --text:#e8eef7; --muted:#8fa2bd; --gold:#e8c15a; --bad:#e0695c;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none}
+  html,body{height:100%}
+  body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:linear-gradient(180deg,#1a2c48,var(--bg1) 40%,var(--bg2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:8px 10px 10px}
+
+  .hdr{display:flex; align-items:baseline; gap:8px; padding:2px 2px 4px}
+  .brand{font-size:19px; letter-spacing:.16em; font-weight:800; color:var(--gold)}
+  .hdr .sub{color:var(--muted); font-size:12px}
+  .hdr .deck{margin-left:auto; color:var(--muted); font-size:12px}
+  .banner{min-height:20px; font-size:13.5px; font-weight:600; color:var(--gold); padding:2px 2px 6px}
+
+  .routes{display:flex; gap:5px}
+  .route{flex:1; border-radius:10px; padding:4px 3px; text-align:center; background:var(--panel); border:1px solid var(--line); min-height:44px}
+  .route .icon{font-size:14px}
+  .route .cards{font-size:11.5px; font-weight:700; letter-spacing:.02em; line-height:1.45; min-height:16px}
+  .route .pts{font-size:10px; color:var(--muted)}
+  .sec{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:7px 2px 3px}
+
+  .discards{display:flex; gap:5px}
+  .dpile{flex:1; border-radius:10px; padding:5px 3px; text-align:center; background:#0e1a2e; border:1px dashed var(--line); min-height:44px}
+  .dpile.canTake{border-color:var(--gold); border-style:solid; box-shadow:0 0 8px rgba(232,193,90,.35)}
+  .dpile .top{font-size:15px; font-weight:800}
+  .dpile .cnt{font-size:9.5px; color:var(--muted)}
+
+  .hand{display:flex; flex-wrap:wrap; gap:6px; padding:6px 0; min-height:60px; justify-content:center}
+  .card{width:44px; height:58px; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-weight:800; font-size:19px; color:#fff; box-shadow:0 2px 0 rgba(0,0,0,.4); border:2px solid transparent}
+  .card .ri{font-size:12px}
+  .card.sel{transform:translateY(-8px); border-color:#fff}
+  .card.pop{animation:pop .3s ease-out}
+  @keyframes pop{0%{transform:scale(.4);opacity:0}100%{transform:scale(1);opacity:1}}
+
+  .ctrl{display:flex; gap:8px; padding-top:6px}
+  button{font:inherit; cursor:pointer; border:1px solid var(--line); background:#22375c; color:var(--text);
+    border-radius:12px; padding:12px 10px; font-size:15px; font-weight:700; flex:1}
+  button:disabled{opacity:.35}
+  button.primary{background:var(--gold); color:#3a2c06; border-color:var(--gold)}
+  .wait{display:block; text-align:center; color:var(--muted); font-size:13px; padding:12px 0 8px}
+
+  .overlay{position:fixed; inset:0; background:rgba(4,8,14,.75); display:flex; align-items:center; justify-content:center; padding:22px; z-index:10}
+  .sheet{background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:18px; width:100%; max-width:330px}
+  .sheet h2{margin:0 0 10px; font-size:18px; color:var(--gold)}
+  .srow{display:flex; justify-content:space-between; padding:5px 0; font-size:14px; border-bottom:1px solid var(--line)}
+  .srow:last-of-type{border-bottom:none}
+  .sheet .cta{margin-top:12px; width:100%}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>

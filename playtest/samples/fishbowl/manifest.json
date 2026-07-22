@@ -1,0 +1,11 @@
+{
+  "id": "com.chris.fishbowl",
+  "version": "1.0.0",
+  "name": "FISHBOWL",
+  "entry": "index.html",
+  "iconEmoji": "🐟",
+  "minPlayers": 4,
+  "maxPlayers": 10,
+  "teams": "required",
+  "author": "Chris"
+}

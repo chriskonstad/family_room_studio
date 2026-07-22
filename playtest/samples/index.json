@@ -16,5 +16,50 @@
       "index.html",
       "game.js"
     ]
+  },
+  {
+    "id": "summit",
+    "label": "SUMMIT \ud83c\udfd4",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "fishbowl",
+    "label": "FISHBOWL \ud83d\udc1f",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "meltdown",
+    "label": "MELTDOWN \u2622\ufe0f",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "tapas",
+    "label": "TAPAS \ud83e\uded2",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "tempo",
+    "label": "TEMPO \ud83c\udfb5",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
   }
 ]

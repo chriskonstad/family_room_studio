@@ -59,6 +59,7 @@
   .seat .ord{display:flex;flex-direction:column;gap:1px}
   .seat .ord button{padding:0 5px;font-size:10px;line-height:1.35}
   .seat .del{padding:2px 6px;font-size:12px;color:var(--bad)}
+  .seat .teamchip{font-size:10px;font-weight:700;color:#fff;border:0;border-radius:20px;padding:3px 8px;letter-spacing:.03em}
   .count{display:flex;align-items:center;gap:10px;margin-bottom:10px}
   .count button{width:30px;height:30px;padding:0;font-size:17px}
   label.field{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
@@ -95,6 +96,7 @@
   .rrow .rrank{width:16px;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
   .rrow .rwho{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis}
   .rrow .rdetail{font-size:11px;color:var(--muted)}
+  .rrow .tdot{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:-1px}
   .rrow.win .rscore b{color:var(--accent)}
   .rrow .rscore{font-variant-numeric:tabular-nums}
   .rplay{width:100%;background:var(--accent);color:#3a2a06;border-color:var(--accent);font-weight:700;padding:10px}
@@ -137,8 +139,13 @@
         <span id="pcount">0 players</span>
         <button id="plus">+</button>
       </div>
+      <div class="count" id="teamctl" style="display:none">
+        <button id="tminus">–</button>
+        <span id="tcount">2 teams</span>
+        <button id="tplus">+</button>
+      </div>
       <div id="roster"></div>
-      <div class="muted" style="font-size:11.5px;margin-top:4px">Seat order = turn order. One host (authoritative).</div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">Seat order = turn order. One host (authoritative). Team games show a colored chip — click it to move a player.</div>
     </section>
 
     <section>
@@ -217,6 +224,13 @@ const DEFAULT_DEVICE = 'iphone-16-pro';
 
 const EMOJI = ['🦊','🐙','🐢','🦉','🐸','🦁','🐨','🦄','🐼','🦩','🐧','🐝'];
 const NAMES = ['Ava','Ben','Cleo','Dan','Evie','Finn','Gus','Hana','Iris','Jax','Kim','Lou'];
+// Team presets — mirror the native shell exactly (id/name/color).
+const TEAMS = [
+  {id:'t0', name:'Red Team',   color:'#e0564b'},
+  {id:'t1', name:'Blue Team',  color:'#4a90e0'},
+  {id:'t2', name:'Green Team', color:'#43b06b'},
+  {id:'t3', name:'Gold Team',  color:'#e0a52e'},
+];
 
 // ---- state ----
 const state = {
@@ -224,10 +238,13 @@ const state = {
   manifest:null,
   entryHtmlBase:null,  // rewritten entry HTML with a <!--__TABLE_SDK__--> marker
   dirHandle:null,      // FileSystemDirectoryHandle for hot reload (if available)
-  players:[],          // [{id,name,emoji,isHost,device,dropped}]
+  players:[],          // [{id,name,emoji,isHost,device,dropped,teamId}]
+  teamCount:2,
   started:false,
   blobUrls:{},         // path -> objectURL cache
 };
+const teamsEnabled = () => state.manifest && state.manifest.teams === 'required';
+const activeTeams = () => TEAMS.slice(0, state.teamCount);
 
 // ---- element refs ----
 const $ = s => document.querySelector(s);
@@ -384,8 +401,12 @@ function buildEntryBase(entryPath){
 /* ============================ Table SDK (injected per phone) ============================ */
 
 function sdkScript(player, roster){
-  const me = {id:player.id, name:player.name, emoji:player.emoji, isHost:player.isHost};
-  const players = roster.map(r=>({id:r.id, name:r.name, emoji:r.emoji}));
+  const me = {id:player.id, name:player.name, emoji:player.emoji, isHost:player.isHost, teamId:player.teamId||undefined};
+  const players = roster.map(r=>({id:r.id, name:r.name, emoji:r.emoji, teamId:r.teamId||undefined}));
+  const teams = teamsEnabled()
+    ? activeTeams().map(t=>({id:t.id, name:t.name, color:t.color,
+        playerIds: roster.filter(r=>r.teamId===t.id).map(r=>r.id)}))
+    : null;
   // Same-origin srcdoc iframe → reach the parent router directly. Mirrors the native shell.
   return `(function(){
     const PID=${JSON.stringify(player.id)};
@@ -393,6 +414,7 @@ function sdkScript(player, roster){
     const handlers={};
     window.Table={
       me:${JSON.stringify(me)}, isHost:${player.isHost?'true':'false'}, players:${JSON.stringify(players)},
+      teams:${JSON.stringify(teams)},
       onStart:cb=>handlers.start=cb, onPlayerJoin:cb=>handlers.join=cb,
       onPlayerLeave:cb=>handlers.leave=cb, onMessage:cb=>handlers.message=cb,
       send:p=>H.send(PID,p), broadcast:p=>H.broadcast(PID,p), sendTo:(id,p)=>H.sendTo(PID,id,p),
@@ -451,8 +473,21 @@ function seedRoster(n){
   state.players = [];
   for(let i=0;i<n;i++){
     state.players.push({id:'p'+i, name:NAMES[i%NAMES.length], emoji:EMOJI[i%EMOJI.length],
-      isHost:i===0, device:i===1?'iphone-17-pro':DEFAULT_DEVICE, dropped:false});
+      isHost:i===0, device:i===1?'iphone-17-pro':DEFAULT_DEVICE, dropped:false,
+      teamId: teamsEnabled() ? activeTeams()[i % state.teamCount].id : null});
   }
+  renderRoster();
+}
+function cycleTeam(i){
+  const ids = activeTeams().map(t=>t.id);
+  const cur = ids.indexOf(state.players[i].teamId);
+  state.players[i].teamId = ids[(cur+1) % ids.length];
+  renderRoster();
+}
+function setTeamCount(n){
+  state.teamCount = Math.min(Math.max(n,2), Math.min(4, Math.max(2, state.players.length)));
+  const valid = new Set(activeTeams().map(t=>t.id));
+  state.players.forEach((p,i)=>{ if(!valid.has(p.teamId)) p.teamId = activeTeams()[i % state.teamCount].id; });
   renderRoster();
 }
 function reindexIds(){ state.players.forEach((p,i)=>{ p._seat=i; }); }
@@ -482,18 +517,34 @@ function renderRoster(){
   $('#pcount').textContent = state.players.length + ' player' + (state.players.length===1?'':'s');
   $('#minus').disabled = state.players.length<=min;
   $('#plus').disabled = state.players.length>=max;
+
+  // team controls (visible only for team games)
+  const tc = $('#teamctl');
+  if(teamsEnabled()){
+    tc.style.display='flex';
+    $('#tcount').textContent = state.teamCount + ' teams';
+    state.players.forEach((p,i)=>{ if(!p.teamId) p.teamId = activeTeams()[i % state.teamCount].id; });
+  } else {
+    tc.style.display='none';
+    state.players.forEach(p=>p.teamId=null);
+  }
+
   rosterEl.innerHTML = '';
   state.players.forEach((p,i)=>{
+    const team = teamsEnabled() ? activeTeams().find(t=>t.id===p.teamId) : null;
+    const chip = team ? `<button class="teamchip" style="background:${team.color}" title="cycle team">${team.name.replace(' Team','')}</button>` : '';
     const row = document.createElement('div'); row.className='seat';
     row.innerHTML = `
       <span class="idx">${i+1}</span>
       <button class="em" title="cycle emoji">${p.emoji}</button>
       <input class="nm" type="text" value="${escapeAttr(p.name)}">
+      ${chip}
       <label class="host" title="authoritative host"><input type="radio" name="host" ${p.isHost?'checked':''}>host</label>
       <span class="ord"><button data-up ${i===0?'disabled':''}>▲</button><button data-down ${i===state.players.length-1?'disabled':''}>▼</button></span>
       <button class="del" title="remove" ${state.players.length<=min?'disabled':''}>✕</button>`;
     row.querySelector('.em').onclick = ()=>{ p.emoji=EMOJI[(EMOJI.indexOf(p.emoji)+1+EMOJI.length)%EMOJI.length]||'🙂'; renderRoster(); };
     row.querySelector('.nm').oninput = e=>{ p.name=e.target.value; };
+    const tchip = row.querySelector('.teamchip'); if(tchip) tchip.onclick = ()=>cycleTeam(i);
     row.querySelector('.host input').onclick = ()=>setHost(i);
     row.querySelector('[data-up]').onclick = ()=>movePlayer(i,-1);
     row.querySelector('[data-down]').onclick = ()=>movePlayer(i,1);
@@ -521,7 +572,7 @@ function renderStage(){
   empty.style.display='none';
   stage.innerHTML='';
   const scale = (+$('#scale').value)/100;
-  const roster = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji}));
+  const roster = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji,teamId:p.teamId||undefined}));
   const loads = [];
 
   state.players.forEach(p=>{
@@ -560,7 +611,7 @@ function renderStage(){
 
   // Fire onStart on every phone once all documents (and their game scripts) have run.
   Promise.all(loads).then(()=>{
-    const roster2 = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji}));
+    const roster2 = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji,teamId:p.teamId||undefined}));
     state.players.forEach(p=>{ if(p.dropped) return; const w=HarnessBus.winOf(p.id); if(w&&w.__tableDispatch) w.__tableDispatch('start', roster2); });
     log('start', '—', 'all', {players:roster2.length});
   });
@@ -570,14 +621,26 @@ function renderStage(){
 // overlaid on every phone. Host sees "Play Again"; clients wait.
 function showResults(){
   const r = state.result; if(!r) return;
-  const winner = r.winnerId || (r.standings[0] && r.standings[0].playerId);
+  const winner = r.winnerId || (r.standings[0] && (r.standings[0].playerId || r.standings[0].teamId));
   const nameOf = id => { const p=state.players.find(x=>x.id===id); return p?`${p.emoji} ${escapeHtml(p.name)}`:escapeHtml(id); };
-  const head = r.title || (winner ? `${nameOf(winner)} wins!` : 'Game Over');
+  const teamOf = id => TEAMS.find(t=>t.id===id);
+  const head = r.title
+    || (winner && teamOf(winner) ? `${escapeHtml(teamOf(winner).name)} wins!` : null)
+    || (winner ? `${nameOf(winner)} wins!` : 'Game Over');
   const rows = (r.standings||[]).map((s,i)=>{
-    const win = s.playerId===winner;
+    const sid = s.playerId || s.teamId;
+    const win = sid===winner;
     const score = (s.score!==undefined && s.score!==null && s.score!=='') ? `<b>${escapeHtml(String(s.score))}</b>` : '';
     const detail = s.detail ? `<div class="rdetail">${escapeHtml(s.detail)}</div>` : '';
-    return `<div class="rrow ${win?'win':''}"><span class="rrank">${i+1}</span><span class="rwho">${nameOf(s.playerId)}${detail}</span><span class="rscore">${score}</span></div>`;
+    let who;
+    if(s.teamId && teamOf(s.teamId)){
+      const t = teamOf(s.teamId);
+      const members = state.players.filter(p=>p.teamId===t.id).map(p=>p.emoji).join(' ');
+      who = `<span class="tdot" style="background:${t.color}"></span>${escapeHtml(t.name)} <span class="rdetail" style="display:inline">${members}</span>${detail}`;
+    } else {
+      who = `${nameOf(s.playerId)}${detail}`;
+    }
+    return `<div class="rrow ${win?'win':''}"><span class="rrank">${i+1}</span><span class="rwho">${who}</span><span class="rscore">${score}</span></div>`;
   }).join('');
   document.querySelectorAll('.phone').forEach(ph=>{
     const pid = ph.querySelector('iframe')?.dataset.pid;
@@ -708,6 +771,8 @@ $('#startBtn').onclick = startSession;
 $('#resetBtn').onclick = ()=>{ state.started=false; seedRoster(Math.max(2, state.manifest?.minPlayers||2)); onBundleReady(); };
 $('#plus').onclick = addPlayer;
 $('#minus').onclick = removePlayer;
+$('#tplus').onclick = ()=>setTeamCount(state.teamCount+1);
+$('#tminus').onclick = ()=>setTeamCount(state.teamCount-1);
 $('#scale').oninput = e=>{ $('#scaleVal').textContent=e.target.value+'%'; if(state.started) renderStage(); };
 $('#deviceSel').onchange = e=>{ state.players.forEach(p=>p.device=e.target.value); if(state.started) renderStage(); };
 $('#logbar').onclick = ()=>{ const w=$('#logwrap'); w.classList.toggle('collapsed'); $('#toggleLog').textContent = w.classList.contains('collapsed')?'Expand':'Collapse'; };

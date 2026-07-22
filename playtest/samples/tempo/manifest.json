@@ -1,0 +1,10 @@
+{
+  "id": "com.chris.tempo",
+  "version": "1.0.0",
+  "name": "TEMPO",
+  "entry": "index.html",
+  "iconEmoji": "🎵",
+  "minPlayers": 1,
+  "maxPlayers": 6,
+  "author": "Chris"
+}

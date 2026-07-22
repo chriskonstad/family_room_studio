@@ -1,0 +1,269 @@
+/* SUMMIT — a two-player expedition card game (Lost Cities mechanics; original
+   name/theme/art). Same bundle on both devices; host authoritative. Hands are
+   PRIVATE: the host deals them via Table.sendTo, so opponents never see them. */
+
+function createGame(Table, root) {
+  const MY = Table.me.id;
+  const ROUTES = [
+    { k:'glacier', icon:'❄️', color:'#5aa0e0' },
+    { k:'volcano', icon:'🌋', color:'#e0564b' },
+    { k:'jungle',  icon:'🦜', color:'#43b06b' },
+    { k:'desert',  icon:'🏜️', color:'#d99a2e' },
+    { k:'reef',    icon:'🐠', color:'#9b6ee0' },
+  ];
+  const ROUNDS = 3;
+  let view = null;     // public state (both devices render this)
+  let myHand = [];     // private hand (sent by host via sendTo)
+  let sel = null;      // selected hand index
+  let G = null;        // authoritative (host only)
+
+  // ---------- host: rules ----------
+  const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+  function buildDeck() {
+    const d = [];
+    ROUTES.forEach(r => {
+      for (let i=0;i<3;i++) d.push({ c:r.k, v:0 });          // ⭐ wagers
+      for (let v=2;v<=10;v++) d.push({ c:r.k, v });
+    });
+    return d;  // 60 cards
+  }
+
+  function initGame(players) {
+    G = { order:players.map(p=>p.id), names:{}, emojis:{}, totals:{},
+          round:1, phase:'playing' };
+    players.forEach(p => { G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.totals[p.id]=0; });
+    startRound(0);
+  }
+  function startRound(startIdx) {
+    G.deck = shuffle(buildDeck());
+    G.hands = {}; G.routes = {}; G.discards = {};
+    ROUTES.forEach(r => G.discards[r.k] = []);
+    G.order.forEach(id => {
+      G.hands[id] = G.deck.splice(0,8);
+      G.routes[id] = {}; ROUTES.forEach(r => G.routes[id][r.k] = []);
+    });
+    G.turn = G.order[startIdx % 2];
+    G.sub = 'play';                       // play|discard first, then draw
+    G.lastDiscard = null;                 // {pid, color} — can't re-draw same turn
+    G.phase = 'playing';
+    G.banner = 'Round '+G.round+' — '+G.names[G.turn]+' starts';
+  }
+
+  function canPlay(pid, card) {
+    const pile = G.routes[pid][card.c];
+    if (card.v === 0) return pile.every(x => x.v === 0);            // wagers only before numbers
+    const maxNum = Math.max(0, ...pile.map(x => x.v));
+    return card.v > maxNum;
+  }
+  function removeFromHand(pid, card) {
+    const i = G.hands[pid].findIndex(x => x.c===card.c && x.v===card.v);
+    if (i < 0) return false;
+    G.hands[pid].splice(i,1);
+    return true;
+  }
+  function routeScore(pile) {
+    if (!pile.length) return 0;
+    const wagers = pile.filter(x=>x.v===0).length;
+    const sum = pile.reduce((a,x)=>a+x.v,0);
+    let s = (sum - 20) * (1 + wagers);
+    if (pile.length >= 8) s += 20;
+    return s;
+  }
+  function roundScore(pid) {
+    return ROUTES.reduce((a,r)=>a+routeScore(G.routes[pid][r.k]), 0);
+  }
+
+  function handleIntent(from, msg) {
+    if (msg.t === 'hello') return;
+    if (G.phase === 'roundEnd') {
+      if (msg.t==='next' && from===MY) { G.round++; startRound(G.round-1); syncAll(); }
+      return;
+    }
+    if (G.phase !== 'playing' || from !== G.turn) return;
+
+    if (G.sub === 'play') {
+      if (msg.t === 'play' && msg.card && canPlay(from, msg.card) && removeFromHand(from, msg.card)) {
+        G.routes[from][msg.card.c].push(msg.card);
+        G.routes[from][msg.card.c].sort((a,b)=>a.v-b.v);
+        G.banner = G.names[from]+' played '+cardLabel(msg.card)+' on '+msg.card.c;
+        G.sub = 'draw';
+      } else if (msg.t === 'discard' && msg.card && removeFromHand(from, msg.card)) {
+        G.discards[msg.card.c].push(msg.card);
+        G.lastDiscard = { pid:from, color:msg.card.c };
+        G.banner = G.names[from]+' discarded '+cardLabel(msg.card);
+        G.sub = 'draw';
+      }
+    } else if (G.sub === 'draw' && msg.t === 'draw') {
+      let card = null;
+      if (msg.from === 'deck') {
+        card = G.deck.pop();
+      } else if (G.discards[msg.from] && G.discards[msg.from].length
+                 && !(G.lastDiscard && G.lastDiscard.pid===from && G.lastDiscard.color===msg.from)) {
+        card = G.discards[msg.from].pop();
+      }
+      if (!card) return;
+      G.hands[from].push(card);
+      G.lastDiscard = null;
+      if (G.deck.length === 0) { endRound(); syncAll(); return; }
+      G.turn = G.order.find(id => id !== from);
+      G.sub = 'play';
+      G.banner = G.names[G.turn]+"'s turn";
+    }
+    syncAll();
+  }
+
+  function endRound() {
+    const detail = {};
+    G.order.forEach(id => { detail[id] = roundScore(id); G.totals[id] += detail[id]; });
+    G.lastRound = detail;
+    if (G.round >= ROUNDS) {
+      const ranked = G.order.slice().sort((a,b)=>G.totals[b]-G.totals[a]);
+      G.phase = 'gameOver';
+      Table.endGame({
+        winnerId: ranked[0],
+        standings: ranked.map(id => ({ playerId:id, score:G.totals[id],
+          detail: (G.lastRound[id]>=0?'+':'')+G.lastRound[id]+' final round' }))
+      });
+    } else {
+      G.phase = 'roundEnd';
+      G.banner = 'Round '+G.round+' complete';
+    }
+  }
+
+  function publicState() {
+    return {
+      phase:G.phase, round:G.round, banner:G.banner, turn:G.turn, sub:G.sub,
+      deckCount:G.deck.length,
+      totals:{...G.totals}, lastRound:G.lastRound||null,
+      names:{...G.names}, emojis:{...G.emojis}, order:G.order.slice(),
+      routes: JSON.parse(JSON.stringify(G.routes)),
+      discards: Object.fromEntries(ROUTES.map(r =>
+        [r.k, { top: G.discards[r.k].length ? G.discards[r.k][G.discards[r.k].length-1] : null,
+                count: G.discards[r.k].length }])),
+      blocked: G.lastDiscard,
+      handCounts: Object.fromEntries(G.order.map(id => [id, G.hands[id].length])),
+    };
+  }
+  function syncAll() {
+    const s = publicState();
+    Table.broadcast({ t:'state', s });
+    G.order.forEach(id => {
+      if (id === MY) { myHand = G.hands[id].slice(); }
+      else Table.sendTo(id, { t:'hand', hand:G.hands[id] });
+    });
+    view = s; sel = null; render();
+  }
+
+  // ---------- wiring ----------
+  if (Table.isHost) {
+    Table.onStart(players => { initGame(players); syncAll(); });
+    Table.onMessage((from, msg) => handleIntent(from, msg));
+    Table.onPlayerLeave(() => { /* 2p game: results screen still reachable via shell Leave */ });
+  } else {
+    Table.onStart(() => { view = null; render(); Table.send({ t:'hello' }); });
+    Table.onMessage((_f, msg) => {
+      if (msg.t === 'state') { view = msg.s; sel = null; render(); }
+      else if (msg.t === 'hand') { myHand = msg.hand; render(); }
+    });
+  }
+
+  // ---------- rendering ----------
+  const R = k => ROUTES.find(r=>r.k===k);
+  const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  function cardLabel(card){ return card.v===0 ? '⭐' : String(card.v); }
+
+  function routesHTML(pid, mine) {
+    return `<div class="routes">` + ROUTES.map(r => {
+      const pile = view.routes[pid][r.k];
+      const pts = routeScoreView(pile);
+      return `<div class="route" style="border-color:${pile.length?r.color:'var(--line)'}">
+        <div class="icon">${r.icon}</div>
+        <div class="cards" style="color:${r.color}">${pile.map(cardLabel).join(' ')||'&nbsp;'}</div>
+        <div class="pts">${pile.length ? (pts>=0?'+':'')+pts : ''}</div>
+      </div>`;
+    }).join('') + `</div>`;
+  }
+  function routeScoreView(pile) {
+    if (!pile.length) return 0;
+    const wagers = pile.filter(x=>x.v===0).length;
+    let s = (pile.reduce((a,x)=>a+x.v,0) - 20) * (1 + wagers);
+    if (pile.length >= 8) s += 20;
+    return s;
+  }
+
+  function render() {
+    if (!view) { root.innerHTML = '<span class="wait">Connecting to base camp…</span>'; return; }
+    const v = view;
+    const opp = v.order.find(id => id !== MY);
+    const meTurn = v.turn === MY && v.phase === 'playing';
+    const selCard = sel != null ? myHand[sel] : null;
+
+    let h = `<div class="hdr"><span class="brand">SUMMIT</span>
+      <span class="sub">Round ${v.round}/3</span>
+      <span class="deck">🎴 ${v.deckCount} left</span></div>
+      <div class="banner">${esc(v.banner||'')}</div>`;
+
+    h += `<div class="sec">${v.emojis[opp]} ${esc(v.names[opp])} — ${v.totals[opp]} pts · ${v.handCounts[opp]} in hand</div>`;
+    h += routesHTML(opp, false);
+
+    h += `<div class="sec">Discards ${meTurn && v.sub==='draw' ? '· tap to take' : ''}</div><div class="discards">`;
+    ROUTES.forEach(r => {
+      const d = v.discards[r.k];
+      const blocked = v.blocked && v.blocked.pid===MY && v.blocked.color===r.k;
+      const canTake = meTurn && v.sub==='draw' && d.count>0 && !blocked;
+      h += `<div class="dpile ${canTake?'canTake':''}" data-take="${r.k}">
+        <div class="top" style="color:${r.color}">${d.top?cardLabel(d.top):r.icon}</div>
+        <div class="cnt">${d.count||'empty'}</div></div>`;
+    });
+    h += `</div>`;
+
+    h += `<div class="sec">Your routes — ${v.totals[MY]} pts total</div>`;
+    h += routesHTML(MY, true);
+
+    h += `<div class="hand">` + myHand.map((c,i) =>
+      `<div class="card ${sel===i?'sel':''}" data-hand="${i}" style="background:${R(c.c).color}">
+        <span>${cardLabel(c)}</span><span class="ri">${R(c.c).icon}</span></div>`).join('') + `</div>`;
+
+    if (v.phase === 'playing') {
+      if (meTurn && v.sub === 'play') {
+        const canPlaySel = selCard && canPlayView(selCard);
+        h += `<div class="ctrl">
+          <button class="primary" data-act="play" ${canPlaySel?'':'disabled'}>Climb ▲</button>
+          <button data-act="discard" ${selCard?'':'disabled'}>Discard</button></div>`;
+      } else if (meTurn && v.sub === 'draw') {
+        h += `<div class="ctrl"><button class="primary" data-act="drawdeck">Draw from deck (${v.deckCount})</button></div>`;
+      } else {
+        h += `<span class="wait">Waiting for ${v.emojis[v.turn]} ${esc(v.names[v.turn])}…</span>`;
+      }
+    } else if (v.phase === 'roundEnd') {
+      let rows = v.order.map(id => `<div class="srow"><span>${v.emojis[id]} ${esc(v.names[id])}</span>
+        <span>${(v.lastRound[id]>=0?'+':'')+v.lastRound[id]} → <b>${v.totals[id]}</b></span></div>`).join('');
+      const cta = Table.isHost ? `<button class="primary cta" data-act="next">Next Round</button>`
+                               : `<span class="wait">Waiting for the host…</span>`;
+      h += `<div class="overlay"><div class="sheet"><h2>Round ${v.round} complete</h2>${rows}${cta}</div></div>`;
+    }
+
+    root.innerHTML = h;
+
+    root.querySelectorAll('[data-hand]').forEach(el => el.onclick = () => {
+      sel = (sel === +el.dataset.hand) ? null : +el.dataset.hand; render();
+    });
+    root.querySelectorAll('[data-take]').forEach(el => el.onclick = () => {
+      if (el.classList.contains('canTake')) Table.send({ t:'draw', from:el.dataset.take });
+    });
+    root.querySelectorAll('button[data-act]').forEach(b => b.onclick = () => {
+      const a = b.dataset.act;
+      if (a==='play' && selCard) Table.send({ t:'play', card:selCard });
+      else if (a==='discard' && selCard) Table.send({ t:'discard', card:selCard });
+      else if (a==='drawdeck') Table.send({ t:'draw', from:'deck' });
+      else if (a==='next') Table.send({ t:'next' });
+    });
+  }
+  function canPlayView(card) {
+    const pile = view.routes[MY][card.c];
+    if (card.v === 0) return pile.every(x => x.v === 0);
+    return card.v > Math.max(0, ...pile.map(x => x.v));
+  }
+
+  render();
+}

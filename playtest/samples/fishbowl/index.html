@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>FISHBOWL</title>
+<style>
+  :root{
+    --bg1:#123742; --bg2:#0a222b; --panel:#17444f; --line:#28626f;
+    --text:#eaf6f8; --muted:#8fb7be; --accent:#5ad0e0; --good:#69d896; --bad:#e0695c;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(circle at 50% 0%,#1a4a58,var(--bg1) 55%,var(--bg2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 14px 12px}
+  .hdr{display:flex; align-items:baseline; gap:8px}
+  .brand{font-size:20px; letter-spacing:.14em; font-weight:800; color:var(--accent)}
+  .hdr .sub{color:var(--muted); font-size:12.5px; margin-left:auto}
+
+  .scorebar{display:flex; gap:8px; margin:8px 0}
+  .tscore{flex:1; border-radius:12px; padding:7px 10px; color:#fff; font-weight:800; display:flex; justify-content:space-between; align-items:center; opacity:.85}
+  .tscore.active{opacity:1; box-shadow:0 0 12px rgba(255,255,255,.25)}
+  .tscore .n{font-size:13px} .tscore .s{font-size:19px}
+
+  .roundlbl{text-align:center; color:var(--muted); font-size:12.5px; letter-spacing:.06em; margin:2px 0 8px}
+  .roundlbl b{color:var(--text)}
+
+  .big{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:0 8px}
+  .phrasecard{background:#fdf6e3; color:#173; border-radius:20px; padding:26px 20px; width:100%; max-width:340px;
+    font-size:26px; font-weight:800; color:#14343c; box-shadow:0 12px 34px rgba(0,0,0,.4); min-height:110px;
+    display:flex; align-items:center; justify-content:center}
+  .timer{width:100%; max-width:340px; height:10px; background:#0d2c35; border-radius:6px; overflow:hidden}
+  .timer i{display:block; height:100%; background:var(--accent); border-radius:6px; transition:width .2s linear}
+  .timer.low i{background:var(--bad)}
+  .timenum{font-size:30px; font-weight:900; font-variant-numeric:tabular-nums}
+  .hint{color:var(--muted); font-size:14px; line-height:1.5}
+
+  input[type=text]{width:100%; font:inherit; font-size:16px; background:#0d2c35; color:var(--text);
+    border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:9px}
+  button{font:inherit; cursor:pointer; border:1px solid var(--line); background:#1d5563; color:var(--text);
+    border-radius:14px; padding:14px 12px; font-size:16px; font-weight:700}
+  button:disabled{opacity:.35}
+  button.primary{background:var(--accent); color:#08343c; border-color:var(--accent)}
+  button.good{background:var(--good); color:#08341c; border-color:var(--good)}
+  .btnrow{display:flex; gap:10px; width:100%; max-width:340px}
+  .btnrow button{flex:1}
+  .wait{color:var(--muted); font-size:13.5px; text-align:center}
+  .entrywrap{width:100%; max-width:340px}
+  .fish{font-size:42px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>

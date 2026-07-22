@@ -29,7 +29,10 @@ directory picker or hot-reload.)
 
 1. **Load a game** — click **Open game folder…** and pick a folder containing
    `manifest.json` + `index.html` + `game.js` (+ any assets), **drag that folder** onto the
-   page, or pick a built-in **Sample** (STREAK, BLITZ).
+   page, or pick a built-in **Sample** — STREAK 🔥 (push-your-luck), BLITZ ⚡️ (tap race),
+   SUMMIT 🏔 (2-player expeditions), FISHBOWL 🐟 (team party game — shows off team
+   support), MELTDOWN ☢️ (co-op shouting), TAPAS 🫒 (simultaneous drafting), and
+   TEMPO 🎵 (rhythm, solo-friendly).
 2. **Set up players** — add/remove seats (bounded by the manifest's `minPlayers`/
    `maxPlayers`), rename, cycle emoji, reorder (seat order = turn order), and choose which
    seat is the authoritative **host**.
