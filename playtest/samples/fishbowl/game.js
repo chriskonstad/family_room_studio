@@ -1,11 +1,13 @@
 /* FISHBOWL — the classic party game, phones instead of paper slips.
-   Everyone secretly enters 3 phrases; teams alternate 60-second turns across
-   three rounds with the SAME phrases: 1) Describe it  2) One word  3) Act it out.
+   Everyone secretly drops AS MANY phrases as they like into the bowl (a live
+   shared counter shows the bowl filling up); teams then alternate 60-second
+   turns across three rounds with the SAME phrases:
+   1) Describe it  2) One word  3) Act it out.
    Uses the shell's team support (Table.teams). Host authoritative. */
 
 function createGame(Table, root) {
   const MY = Table.me.id;
-  const PHRASES_PER_PLAYER = 3;
+  const MAX_PHRASES_PER_PLAYER = 25;   // sanity cap, not a target
   const TURN_SECONDS = 60;
   const ROUNDS = [
     { name:'Describe it!',  hint:'Say anything except the words on the card.' },
@@ -14,6 +16,8 @@ function createGame(Table, root) {
   ];
   let view = null;
   let myEntryDone = false;
+  let myAdded = 0;            // phrases I've dropped in (local echo)
+  let lastPhase = null;       // to patch (not rebuild) the entry screen on updates
   let localDeadline = null;   // giver countdown (device-local clock)
   let tick = null;
   let G = null;
@@ -26,14 +30,14 @@ function createGame(Table, root) {
     G = {
       phase:'entry', names:{}, emojis:{},
       teams: teams.map(t => ({ id:t.id, name:t.name, color:t.color, playerIds:t.playerIds.slice(), score:0, giverIdx:0 })),
-      submitted:{}, phrases:[],
+      done:{}, counts:{}, phrases:[],
       round:0, teamIdx:0, bowl:[], current:null, turnEndsAt:null,
     };
-    players.forEach(p => { G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.submitted[p.id]=false; });
-    G.banner = 'Write your phrases!';
+    players.forEach(p => { G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.done[p.id]=false; G.counts[p.id]=0; });
+    G.banner = 'Fill the bowl!';
   }
 
-  function everyoneSubmitted(){ return Object.values(G.submitted).every(Boolean); }
+  function everyoneDone(){ return Object.values(G.done).every(Boolean); }
   function currentTeam(){ return G.teams[G.teamIdx % G.teams.length]; }
   function currentGiver(){ const t=currentTeam(); return t.playerIds[t.giverIdx % t.playerIds.length]; }
 
@@ -82,12 +86,17 @@ function createGame(Table, root) {
 
   function handleIntent(from, msg) {
     if (msg.t === 'hello') { return; }
-    if (G.phase === 'entry' && msg.t === 'phrases' && !G.submitted[from]) {
-      const cleaned = (msg.phrases||[]).map(s => String(s).trim()).filter(Boolean).slice(0, PHRASES_PER_PLAYER);
-      if (cleaned.length < PHRASES_PER_PLAYER) return;
-      G.phrases.push(...cleaned);
-      G.submitted[from] = true;
-      if (everyoneSubmitted()) { G.phrases = shuffle(G.phrases); startRound(); }
+    if (G.phase === 'entry' && msg.t === 'addPhrase' && !G.done[from]
+        && G.counts[from] < MAX_PHRASES_PER_PLAYER) {
+      const phrase = String(msg.phrase||'').trim().slice(0, 40);
+      if (!phrase) return;
+      G.phrases.push(phrase);
+      G.counts[from]++;
+      return;
+    }
+    if (G.phase === 'entry' && msg.t === 'doneEntry' && G.counts[from] > 0) {
+      G.done[from] = true;
+      if (everyoneDone()) { G.phrases = shuffle(G.phrases); startRound(); }
       return;
     }
     if (G.phase === 'turnReady' && msg.t === 'begin' && from === currentGiver()) { beginTurn(); return; }
@@ -104,9 +113,10 @@ function createGame(Table, root) {
       phase:G.phase, round:G.round, roundName:ROUNDS[G.round].name, roundHint:ROUNDS[G.round].hint,
       names:G.names, emojis:G.emojis,
       teams: G.teams.map(t => ({ id:t.id, name:t.name, color:t.color, score:t.score })),
-      submittedCount: Object.values(G.submitted).filter(Boolean).length,
-      totalPlayers: Object.keys(G.submitted).length,
-      mySubmitted: null,   // filled per-device below
+      totalPhrases: G.phrases.length,
+      counts: {...G.counts},
+      dones: {...G.done},
+      writing: Object.keys(G.done).filter(id => !G.done[id]),
       activeTeamId: (G.phase==='turnReady'||G.phase==='turn') ? currentTeam().id : null,
       giver: (G.phase==='turnReady'||G.phase==='turn') ? currentGiver() : null,
       bowlLeft: G.bowl.length,
@@ -134,7 +144,7 @@ function createGame(Table, root) {
       if (!G) return;
       G.teams.forEach(t => { t.playerIds = t.playerIds.filter(p => p !== id); });
       G.teams = G.teams.filter(t => t.playerIds.length);
-      if (G.phase === 'entry') { delete G.submitted[id]; if (everyoneSubmitted() && G.phrases.length) startRound(); }
+      if (G.phase === 'entry') { delete G.done[id]; if (everyoneDone() && G.phrases.length) { G.phrases = shuffle(G.phrases); startRound(); } }
       syncAll();
     });
   } else {
@@ -143,6 +153,25 @@ function createGame(Table, root) {
       if (msg.t === 'state') { view = msg.s; startLocalTimer(msg.s.secondsLeft); render(); }
       else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase}; startLocalTimer(msg.secondsLeft); render(); }
     });
+  }
+
+  // While someone is typing a phrase, other players' adds must NOT rebuild the
+  // DOM (it would wipe the input) — patch just the counters in place.
+  function patchEntryCounters() {
+    const v = view;
+    const bowl = root.querySelector('#bowlcount');
+    if (bowl) bowl.textContent = v.totalPhrases;
+    const mine = root.querySelector('#minecount');
+    if (mine) mine.textContent = 'You’ve added ' + (v.counts[MY] ?? myAdded);
+    const wait = root.querySelector('#writingline');
+    if (wait) wait.innerHTML = writingLine();
+  }
+  function writingLine() {
+    const v = view;
+    const writing = (v.writing||[]).map(id => (v.emojis[id]||'') + ' ' + esc(v.names[id]||''));
+    return writing.length
+      ? 'still writing: ' + writing.join(' · ')
+      : 'everyone’s done!';
   }
 
   function startLocalTimer(secondsLeft) {
@@ -177,23 +206,32 @@ function createGame(Table, root) {
   function render() {
     if (!view) { root.innerHTML = '<div class="big"><span class="wait">Filling the bowl…</span></div>'; return; }
     const v = view;
+
+    // in-place patch while typing (see patchEntryCounters)
+    if (v.phase === 'entry' && lastPhase === 'entry') { patchEntryCounters(); return; }
+    lastPhase = v.phase;
+
     let h = `<div class="hdr"><span class="brand">FISHBOWL</span>
       <span class="sub">Round ${v.round+1}/3 · ${esc(v.roundName)}</span></div>` + teamBar();
 
     if (v.phase === 'entry') {
-      h += `<div class="big"><div class="fish">🐟</div>`;
+      h += `<div class="big">
+        <div class="bowlbig">🐟 <b id="bowlcount">${v.totalPhrases}</b></div>
+        <div class="hint" style="margin-top:-8px">phrases in the bowl</div>`;
       if (!myEntryDone) {
-        h += `<div class="hint">Enter <b>3 words or phrases</b>. They'll be guessed by everyone — across all three rounds.</div>
+        h += `<div class="hint">Drop in <b>as many words or phrases as you like</b> — movies,
+            people, inside jokes. The whole bowl gets guessed in all three rounds.</div>
           <div class="entrywrap">
-            <input type="text" id="ph0" placeholder="e.g. Moonwalk" maxlength="40">
-            <input type="text" id="ph1" placeholder="e.g. Taco Tuesday" maxlength="40">
-            <input type="text" id="ph2" placeholder="e.g. Beyoncé" maxlength="40">
-            <button class="primary" id="submitPhrases" style="width:100%">Drop them in the bowl</button>
-          </div>`;
+            <input type="text" id="ph" placeholder="e.g. Moonwalk" maxlength="40" autocomplete="off">
+            <button class="primary" id="addPhrase" style="width:100%">Drop it in the bowl</button>
+            <button id="doneEntry" style="width:100%;margin-top:8px" ${myAdded===0?'disabled':''}>I'm done writing</button>
+          </div>
+          <div class="wait" id="minecount">You’ve added ${v.counts[MY] ?? myAdded}</div>`;
       } else {
-        h += `<div class="hint">Your phrases are in the bowl.</div>`;
+        h += `<div class="hint">You’re done — the bowl is still filling…</div>
+          <div class="wait" id="minecount">You’ve added ${v.counts[MY] ?? myAdded}</div>`;
       }
-      h += `<div class="wait">${v.submittedCount}/${v.totalPlayers} players ready</div></div>`;
+      h += `<div class="wait" id="writingline">${writingLine()}</div></div>`;
     }
     else if (v.phase === 'turnReady') {
       const giverMe = v.giver === MY;
@@ -240,12 +278,29 @@ function createGame(Table, root) {
     }
 
     root.innerHTML = h;
-    const sub = root.querySelector('#submitPhrases');
-    if (sub) sub.onclick = () => {
-      const phrases = [0,1,2].map(i => root.querySelector('#ph'+i).value.trim());
-      if (phrases.some(p => !p)) { sub.textContent = 'Fill in all 3!'; return; }
+    const addBtn = root.querySelector('#addPhrase');
+    if (addBtn) {
+      const input = root.querySelector('#ph');
+      const add = () => {
+        const phrase = input.value.trim();
+        if (!phrase) return;
+        myAdded++;
+        Table.send({ t:'addPhrase', phrase });
+        input.value = '';
+        input.focus();
+        const mine = root.querySelector('#minecount');
+        if (mine) mine.textContent = 'You’ve added ' + myAdded;   // instant local echo
+        root.querySelector('#doneEntry')?.removeAttribute('disabled');
+      };
+      addBtn.onclick = add;
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+    }
+    const doneBtn = root.querySelector('#doneEntry');
+    if (doneBtn) doneBtn.onclick = () => {
+      if (myAdded === 0) return;
       myEntryDone = true;
-      Table.send({ t:'phrases', phrases });
+      lastPhase = null;               // force a full re-render into the waiting view
+      Table.send({ t:'doneEntry' });
       render();
     };
     const b = root.querySelector('#begin'); if (b) b.onclick = () => Table.send({ t:'begin' });
