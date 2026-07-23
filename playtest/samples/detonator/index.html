@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>The Detonator</title>
+<style>
+  :root{
+    --bg1:#241a33; --bg2:#0f0a18; --panel:#31264a; --line:#4d3d6e;
+    --text:#f0ecfa; --muted:#a99cc4; --accent:#c79bff; --bad:#ff5a4d; --good:#5fd6a0;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(circle at 50% 0%,#33264d,var(--bg1) 55%,var(--bg2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 14px 14px}
+  .hdr{display:flex; align-items:baseline; gap:8px}
+  .brand{font-size:19px; letter-spacing:.13em; font-weight:800; color:var(--accent)}
+  .hdr .sub{color:var(--muted); font-size:12.5px; margin-left:auto}
+
+  .banner{text-align:center; font-size:15px; font-weight:700; min-height:20px; margin:8px 0 6px}
+  .banner.boom{color:var(--bad)}
+
+  .players{display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-bottom:6px}
+  .pl{font-size:20px; padding:3px 5px; border-radius:10px; opacity:.85}
+  .pl.out{opacity:.28; filter:grayscale(1)}
+  .pl.turn{background:rgba(199,155,255,.2); box-shadow:0 0 0 2px var(--accent); opacity:1}
+
+  .big{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px}
+  .plungers{display:flex; gap:12px; flex-wrap:wrap; justify-content:center; max-width:360px}
+  button.plunger{width:92px; height:104px; border-radius:18px; font-size:34px; font-weight:800;
+    border:2px solid var(--c,#555); background:#20182f; color:var(--text);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    box-shadow:inset 0 -6px 0 rgba(0,0,0,.35)}
+  button.plunger:disabled{cursor:default}
+  button.plunger:not(:disabled){background:color-mix(in srgb,var(--c) 22%,#20182f); animation:breathe 1.6s ease-in-out infinite}
+  button.plunger:not(:disabled):active{transform:translateY(4px); box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)}
+  @keyframes breathe{50%{box-shadow:inset 0 -6px 0 rgba(0,0,0,.35),0 0 14px color-mix(in srgb,var(--c) 60%,transparent)}}
+  button.plunger.safe{background:rgba(95,214,160,.16); border-color:var(--good); color:var(--good); opacity:.85; animation:none}
+  button.plunger.boom{background:rgba(255,90,77,.22); border-color:var(--bad); color:var(--bad); animation:blast .5s ease-out}
+  button.plunger.live{background:rgba(255,90,77,.22); border-color:var(--bad); color:var(--bad)}
+  @keyframes blast{0%{transform:scale(.6)}50%{transform:scale(1.25)}100%{transform:scale(1)}}
+
+  .hint{color:var(--muted); font-size:15px; text-align:center; max-width:320px; line-height:1.5}
+  .wait{color:var(--muted); font-size:14px; text-align:center}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>

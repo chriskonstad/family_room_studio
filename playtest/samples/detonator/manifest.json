@@ -1,0 +1,10 @@
+{
+  "id": "com.chris.detonator",
+  "version": "1.0.0",
+  "name": "The Detonator",
+  "entry": "index.html",
+  "iconEmoji": "🧨",
+  "minPlayers": 2,
+  "maxPlayers": 6,
+  "author": "Chris"
+}

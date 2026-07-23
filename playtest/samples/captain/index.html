@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Captain Says</title>
+<style>
+  :root{
+    --bg1:#0e2a3a; --bg2:#071722; --panel:#153a4e; --line:#265d72;
+    --text:#eaf6fb; --muted:#9dc0cf; --accent:#ffd166; --bad:#ff6b5c; --good:#5fd6a0;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(circle at 50% 0%,#154763,var(--bg1) 55%,var(--bg2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 14px 14px}
+  .hdr{display:flex; align-items:baseline; gap:8px}
+  .brand{font-size:19px; letter-spacing:.13em; font-weight:800; color:var(--accent)}
+  .hdr .sub{color:var(--muted); font-size:12.5px; margin-left:auto}
+
+  .crew{display:flex; flex-wrap:wrap; gap:5px; justify-content:center; margin:8px 0 4px}
+  .cm{font-size:19px; opacity:.9}
+  .cm.out{opacity:.26; filter:grayscale(1)}
+
+  .banner{text-align:center; font-weight:800; font-size:21px; min-height:26px; margin:8px 0 2px; line-height:1.25}
+  .banner.says{color:var(--good)}
+  .banner.trap{color:var(--accent)}
+
+  .tbar{width:100%; max-width:360px; height:9px; background:#0a2230; border-radius:6px; overflow:hidden; margin:6px auto 0}
+  .tbar i{display:block; height:100%; width:100%; background:var(--accent); border-radius:6px}
+
+  .big{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center}
+  .ic{font-size:74px; line-height:1}
+  .hint{color:var(--muted); font-size:14.5px; line-height:1.5; max-width:330px}
+  .hint b{color:var(--text)}
+
+  .colors{flex:1; display:grid; grid-template-columns:1fr 1fr; gap:14px; align-content:center; width:100%; max-width:360px; margin:10px auto 0}
+  button{font:inherit; cursor:pointer; border:none; border-radius:20px; font-size:44px; font-weight:800}
+  button.col{min-height:96px; background:color-mix(in srgb,var(--c) 26%,#0a2230); border:3px solid var(--c); box-shadow:inset 0 -5px 0 rgba(0,0,0,.3)}
+  button.col:active{transform:scale(.95)}
+  button.col.picked{box-shadow:0 0 0 4px #fff, inset 0 -5px 0 rgba(0,0,0,.3); transform:scale(1.02)}
+  button.col:disabled{opacity:.3}
+  button.primary{background:var(--accent); color:#093042; border-radius:15px; padding:15px 22px; font-size:17px; min-height:52px}
+  .wait{color:var(--muted); font-size:14px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>

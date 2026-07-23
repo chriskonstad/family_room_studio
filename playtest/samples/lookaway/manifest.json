@@ -1,0 +1,10 @@
+{
+  "id": "com.chris.lookaway",
+  "version": "1.0.0",
+  "name": "Look Away",
+  "entry": "index.html",
+  "iconEmoji": "👀",
+  "minPlayers": 2,
+  "maxPlayers": 8,
+  "author": "Chris"
+}

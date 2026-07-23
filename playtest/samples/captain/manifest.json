@@ -1,0 +1,10 @@
+{
+  "id": "com.chris.captain",
+  "version": "1.0.0",
+  "name": "Captain Says",
+  "entry": "index.html",
+  "iconEmoji": "🫡",
+  "minPlayers": 2,
+  "maxPlayers": 8,
+  "author": "Chris"
+}

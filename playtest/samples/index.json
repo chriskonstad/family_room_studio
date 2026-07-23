@@ -61,5 +61,41 @@
       "index.html",
       "game.js"
     ]
+  },
+  {
+    "id": "passbomb",
+    "label": "Pass the Bomb \ud83d\udca3",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "detonator",
+    "label": "The Detonator \ud83e\udde8",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "captain",
+    "label": "Captain Says \ud83e\udee1",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
+    "id": "lookaway",
+    "label": "Look Away \ud83d\udc40",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
   }
 ]

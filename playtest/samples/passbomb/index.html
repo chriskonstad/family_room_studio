@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Pass the Bomb</title>
+<style>
+  :root{
+    --bg1:#3a1220; --bg2:#1a0810; --panel:#4a1a24; --line:#7a2c34;
+    --text:#fdeef0; --muted:#d69aa2; --accent:#ff7a4d; --hot:#ff4d3d; --good:#69d896;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(circle at 50% 0%,#5a1a26,var(--bg1) 55%,var(--bg2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 14px 14px}
+  .hdr{display:flex; align-items:baseline; gap:8px}
+  .brand{font-size:19px; letter-spacing:.13em; font-weight:800; color:var(--accent)}
+  .hdr .sub{color:var(--muted); font-size:12.5px; margin-left:auto}
+
+  .heat{height:10px; background:#2a0e14; border-radius:6px; overflow:hidden; margin:9px 0 4px}
+  .heat i{display:block; height:100%; width:0; border-radius:6px;
+    background:linear-gradient(90deg,#ffb04d,#ff7a4d); transition:width .25s linear}
+  .heat.hot i{background:linear-gradient(90deg,#ff7a4d,var(--hot)); animation:heatpulse .5s infinite alternate}
+  @keyframes heatpulse{to{opacity:.6}}
+
+  .banner{text-align:center; font-size:15px; font-weight:700; min-height:20px; margin:4px 0 2px; color:var(--text)}
+
+  .big{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center; padding:0 6px}
+  .bomb{font-size:96px; line-height:1; filter:drop-shadow(0 8px 20px rgba(0,0,0,.5))}
+  .bomb.hold{animation:shake .3s infinite}
+  .bomb.boom{animation:boom .5s ease-out}
+  @keyframes shake{0%,100%{transform:translate(0,0) rotate(-3deg)}25%{transform:translate(-4px,2px) rotate(3deg)}50%{transform:translate(4px,-2px) rotate(-2deg)}75%{transform:translate(-2px,-3px) rotate(2deg)}}
+  @keyframes boom{0%{transform:scale(.4);opacity:.2}50%{transform:scale(1.4)}100%{transform:scale(1)}}
+  .hint{color:var(--muted); font-size:14.5px; line-height:1.5; max-width:340px}
+  .hint b{color:var(--text)}
+
+  .throws{display:flex; flex-wrap:wrap; gap:10px; justify-content:center; width:100%; max-width:360px}
+  button{font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--panel); color:var(--text);
+    border-radius:15px; padding:15px 16px; font-size:16px; font-weight:700; min-height:52px}
+  button:active{transform:scale(.96)}
+  button.throw{flex:1 1 44%; background:linear-gradient(180deg,#ff8a5d,#e0563d); border-color:#ff8a5d; color:#3a1008}
+  button.primary{background:var(--accent); color:#3a1008; border-color:var(--accent); min-width:220px}
+  .wait{color:var(--muted); font-size:14px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>
