@@ -17,6 +17,7 @@ function createGame(Table, root) {
   let view = null;         // shared state everyone renders
   let myPanel = [];        // my controls [{id,label,type,value}]
   let myOrder = null;      // my current instruction {text, deadline}
+  let prevIntegrity = null;
   let localTick = null;
   let G = null;
 
@@ -190,9 +191,11 @@ function createGame(Table, root) {
   function render() {
     if (!view) { root.innerHTML = '<div class="big"><span class="wait">Powering up…</span></div>'; return; }
     const v = view;
+    const hurt = prevIntegrity != null && v.integrity < prevIntegrity;
+    prevIntegrity = v.integrity;
     let h = `<div class="hdr"><span class="brand">MELTDOWN</span>
       <span class="lvl">LEVEL <b>${v.level}</b> · ${v.progress}/${v.goal}</span></div>
-      <div class="integrity ${v.integrity<35?'low':''}"><i style="width:${Math.max(0,v.integrity)}%"></i></div>`;
+      <div class="integrity ${v.integrity<35?'low':''}${hurt?' hurt':''}"><i style="width:${Math.max(0,v.integrity)}%"></i></div>`;
 
     if (v.phase === 'briefing') {
       h += `<div class="big"><div class="icon">☢️</div>

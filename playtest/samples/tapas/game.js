@@ -24,6 +24,7 @@ function createGame(Table, root) {
   let myHand = [];
   let sel = null;
   let picked = false;
+  let lastHandSig = '';   // pop animation fires only when a NEW hand arrives
   let G = null;
 
   const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
@@ -192,9 +193,12 @@ function createGame(Table, root) {
     h += `</div>`;
 
     if (v.phase === 'drafting') {
+      const handSig = myHand.join(',');
+      const fresh = handSig !== lastHandSig;
+      lastHandSig = handSig;
       h += `<div class="sec">Your hand — pick one</div><div class="hand">`;
       myHand.forEach((k,i) => {
-        h += `<div class="card ${sel===i?'sel':''}" data-i="${i}">
+        h += `<div class="card ${sel===i?'sel':''}${fresh?' pop':''}" data-i="${i}" style="animation-delay:${fresh ? i*40 : 0}ms">
           <span class="ic">${T(k).ic}</span><span class="nm">${esc(T(k).nm)}</span><span class="sc">${esc(T(k).sc)}</span></div>`;
       });
       h += `</div><div class="ctrl">`;

@@ -15,6 +15,8 @@ function createGame(Table, root) {
   let view = null;     // public state (both devices render this)
   let myHand = [];     // private hand (sent by host via sendTo)
   let sel = null;      // selected hand index
+  let prevHandLen = 0; // pop-in animation: only NEW cards animate
+  let seenPlay = '';   // route-glow animation: only on a fresh play
   let G = null;        // authoritative (host only)
 
   // ---------- host: rules ----------
@@ -86,6 +88,7 @@ function createGame(Table, root) {
         G.routes[from][msg.card.c].push(msg.card);
         G.routes[from][msg.card.c].sort((a,b)=>a.v-b.v);
         G.banner = G.names[from]+' played '+cardLabel(msg.card)+' on '+msg.card.c;
+        G.lastPlay = { pid:from, color:msg.card.c, n:(G.playSeq=(G.playSeq||0)+1) };
         G.sub = 'draw';
       } else if (msg.t === 'discard' && msg.card && removeFromHand(from, msg.card)) {
         G.discards[msg.card.c].push(msg.card);
@@ -134,6 +137,7 @@ function createGame(Table, root) {
     return {
       phase:G.phase, round:G.round, banner:G.banner, turn:G.turn, sub:G.sub,
       deckCount:G.deck.length,
+      lastPlay:G.lastPlay||null,
       totals:{...G.totals}, lastRound:G.lastRound||null,
       names:{...G.names}, emojis:{...G.emojis}, order:G.order.slice(),
       routes: JSON.parse(JSON.stringify(G.routes)),
@@ -173,10 +177,13 @@ function createGame(Table, root) {
   function cardLabel(card){ return card.v===0 ? '⭐' : String(card.v); }
 
   function routesHTML(pid, mine) {
+    const lp = view.lastPlay;
+    const freshPlay = lp && ('p'+lp.n) !== seenPlay;
     return `<div class="routes">` + ROUTES.map(r => {
       const pile = view.routes[pid][r.k];
       const pts = routeScoreView(pile);
-      return `<div class="route" style="border-color:${pile.length?r.color:'var(--line)'}">
+      const glow = freshPlay && lp.pid === pid && lp.color === r.k;
+      return `<div class="route ${glow?'justplayed':''}" style="border-color:${pile.length?r.color:'var(--line)'}">
         <div class="icon">${r.icon}</div>
         <div class="cards" style="color:${r.color}">${pile.map(cardLabel).join(' ')||'&nbsp;'}</div>
         <div class="pts">${pile.length ? (pts>=0?'+':'')+pts : ''}</div>
@@ -221,7 +228,7 @@ function createGame(Table, root) {
     h += routesHTML(MY, true);
 
     h += `<div class="hand">` + myHand.map((c,i) =>
-      `<div class="card ${sel===i?'sel':''}" data-hand="${i}" style="background:${R(c.c).color}">
+      `<div class="card ${sel===i?'sel':''}${i>=prevHandLen?' pop':''}" data-hand="${i}" style="background:${R(c.c).color}">
         <span>${cardLabel(c)}</span><span class="ri">${R(c.c).icon}</span></div>`).join('') + `</div>`;
 
     if (v.phase === 'playing') {
@@ -244,6 +251,10 @@ function createGame(Table, root) {
     }
 
     root.innerHTML = h;
+
+    // animation bookkeeping: pops/glows fire once per event, not on every render
+    prevHandLen = myHand.length;
+    if (view.lastPlay) seenPlay = 'p'+view.lastPlay.n;
 
     root.querySelectorAll('[data-hand]').forEach(el => el.onclick = () => {
       sel = (sel === +el.dataset.hand) ? null : +el.dataset.hand; render();

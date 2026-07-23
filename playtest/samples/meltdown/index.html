@@ -24,6 +24,8 @@
   .integrity{height:14px; background:#160e04; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:8px 0 4px}
   .integrity i{display:block; height:100%; background:linear-gradient(90deg,var(--good),#b3d34a); transition:width .3s}
   .integrity.low i{background:linear-gradient(90deg,var(--bad),#f07a32)}
+  .integrity.hurt{animation:hurtflash .5s}
+  @keyframes hurtflash{0%{box-shadow:0 0 0 rgba(224,86,75,.95)}50%{box-shadow:0 0 20px rgba(224,86,75,.85)}100%{box-shadow:0 0 0 rgba(224,86,75,0)}}
   body.shake{animation:bodyshake .4s}
   @keyframes bodyshake{20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
 
@@ -43,10 +45,10 @@
   .ctl button{font:inherit; border:0; border-radius:10px; padding:10px 6px; font-weight:800; cursor:pointer}
   .ctl .push{background:var(--warn); color:#2a1600}
   .ctl .push:active{transform:scale(.96)}
-  .ctl .sw{background:#3a2a12; color:var(--muted)}
+  .ctl .sw{background:#3a2a12; color:var(--muted); padding:13px 6px}
   .ctl .sw.on{background:var(--good); color:#06300f}
   .ctl .dialrow{display:flex; gap:5px; justify-content:center}
-  .ctl .dialrow button{flex:1; background:#3a2a12; color:var(--muted); padding:9px 0}
+  .ctl .dialrow button{flex:1; background:#3a2a12; color:var(--muted); padding:13px 0}
   .ctl .dialrow button.cur{background:var(--warn); color:#2a1600}
   .flash-good{animation:okflash .5s}
   @keyframes okflash{0%{box-shadow:0 0 0 rgba(105,216,118,.9)}100%{box-shadow:0 0 22px rgba(105,216,118,0)}}

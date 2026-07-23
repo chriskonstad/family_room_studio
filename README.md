@@ -14,6 +14,7 @@ game. A **game** is just a bundle of HTML + JS + assets written against one inje
 | | |
 |---|---|
 | **[GAME-AUTHORING.md](GAME-AUTHORING.md)** | The complete author's guide — bundle/archive format, the full `Table` SDK, assets, a copy-paste starter game, and the rules every game must follow. Start here (and hand this to an LLM writing a game). |
+| **[skills/game-dev/](skills/game-dev/SKILL.md)** | A Claude Code **skill** for game development — drop it into a project's `.claude/skills/` and Claude follows the canonical dev/test/version/ship workflow and UX standards automatically. |
 | **[playtest/](playtest/)** | The **Playtest Studio** — a zero-dependency web tool that runs your game across multiple simulated players in iPhone-sized frames, with a wire-message log, disconnect testing, hot reload, and one-click **Export .zip**. |
 
 ## Quick start
