@@ -25,28 +25,36 @@
 
   .routes{display:flex; gap:5px}
   .route{flex:1; border-radius:10px; padding:4px 3px; text-align:center; background:var(--panel); border:1px solid var(--line); min-height:44px}
-  .route .icon{font-size:14px}
-  .route .cards{font-size:11.5px; font-weight:700; letter-spacing:.02em; line-height:1.45; min-height:16px}
-  .route .pts{font-size:10px; color:var(--muted)}
+  .route .icon{font-size:15px}
+  .route .cards{font-size:13.5px; font-weight:800; letter-spacing:.04em; line-height:1.4; min-height:17px}
+  .route .pts{font-size:10.5px; color:var(--muted)}
   .sec{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:7px 2px 3px}
   .route.justplayed{animation:routeglow .9s ease-out}
   @keyframes routeglow{0%{box-shadow:0 0 0 rgba(232,193,90,.9); transform:scale(1.06)}100%{box-shadow:0 0 14px rgba(232,193,90,0); transform:scale(1)}}
 
   .discards{display:flex; gap:5px}
-  .dpile{flex:1; border-radius:10px; padding:5px 3px; text-align:center; background:#0e1a2e; border:1px dashed var(--line); min-height:44px}
+  .dpile{flex:1; border-radius:10px; padding:6px 3px; text-align:center; background:#0e1a2e; border:1px dashed var(--line); min-height:50px}
   .dpile.canTake{border-color:var(--gold); border-style:solid; box-shadow:0 0 8px rgba(232,193,90,.35)}
-  .dpile .top{font-size:15px; font-weight:800}
+  .dpile.canTake .top{transform:scale(1.05)}
+  .dpile .top{font-size:19px; font-weight:800}
   .dpile .cnt{font-size:9.5px; color:var(--muted)}
 
-  .hand{display:flex; flex-wrap:wrap; gap:6px; padding:6px 0; min-height:60px; justify-content:center}
-  .card{width:44px; height:58px; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center;
-    font-weight:800; font-size:19px; color:#fff; box-shadow:0 2px 0 rgba(0,0,0,.4); border:2px solid transparent}
-  .card .ri{font-size:12px}
-  .card.sel{transform:translateY(-8px); border-color:#fff}
-  .card.pop{animation:pop .3s ease-out}
+  /* hand grouped into 5 color columns (aligned under the routes above), each
+     sorted low→high so you can skim what you hold at a glance */
+  .hand{flex:1; display:flex; gap:6px; padding:5px 0 2px; min-height:0; overflow-y:auto; align-items:flex-start}
+  .handcol{flex:1; display:flex; flex-direction:column; gap:6px; min-width:0}
+  .colhead{font-size:19px; text-align:center; height:24px; line-height:22px; opacity:.55;
+    border-bottom:2px solid transparent; padding-bottom:2px; margin-bottom:1px}
+  .colhead.has{opacity:1}
+  .card{height:52px; border-radius:11px; display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:27px; color:#fff; box-shadow:0 2px 0 rgba(0,0,0,.4);
+    border:2px solid rgba(255,255,255,.14); letter-spacing:.01em}
+  .card.wager{font-size:23px}
+  .card.sel{border-color:#fff; box-shadow:0 0 0 3px #fff, 0 5px 13px rgba(0,0,0,.55); filter:brightness(1.1); transform:translateY(-2px)}
+  .card.pop{animation:pop .3s ease-out backwards}
   @keyframes pop{0%{transform:scale(.4);opacity:0}100%{transform:scale(1);opacity:1}}
 
-  .ctrl{display:flex; gap:8px; padding-top:6px}
+  .ctrl{display:flex; gap:8px; padding-top:6px; flex-shrink:0}
   button{font:inherit; cursor:pointer; border:1px solid var(--line); background:#22375c; color:var(--text);
     border-radius:12px; padding:12px 10px; font-size:15px; font-weight:700; flex:1}
   button:disabled{opacity:.35}

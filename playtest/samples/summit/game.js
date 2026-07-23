@@ -227,9 +227,21 @@ function createGame(Table, root) {
     h += `<div class="sec">Your routes — ${v.totals[MY]} pts total</div>`;
     h += routesHTML(MY, true);
 
-    h += `<div class="hand">` + myHand.map((c,i) =>
-      `<div class="card ${sel===i?'sel':''}${i>=prevHandLen?' pop':''}" data-hand="${i}" style="background:${R(c.c).color}">
-        <span>${cardLabel(c)}</span><span class="ri">${R(c.c).icon}</span></div>`).join('') + `</div>`;
+    // hand grouped into per-route columns (aligned under the routes), each sorted
+    // low→high with wagers first, so you can skim what you hold at a glance
+    const byRoute = {}; ROUTES.forEach(r => byRoute[r.k] = []);
+    myHand.forEach((c,i) => byRoute[c.c].push({ c, i }));
+    ROUTES.forEach(r => byRoute[r.k].sort((a,b) => a.c.v - b.c.v));
+    h += `<div class="sec">Your hand — tap a card, then Climb or Discard</div>`;
+    h += `<div class="hand">` + ROUTES.map(r => {
+      const col = byRoute[r.k];
+      const cards = col.map(({ c, i }) =>
+        `<div class="card ${c.v===0?'wager ':''}${sel===i?'sel':''}${i>=prevHandLen?' pop':''}"
+              data-hand="${i}" style="background:${r.color}">${cardLabel(c)}</div>`).join('');
+      return `<div class="handcol">
+        <div class="colhead ${col.length?'has':''}" style="color:${r.color}; border-bottom-color:${col.length?r.color:'transparent'}">${r.icon}</div>
+        ${cards}</div>`;
+    }).join('') + `</div>`;
 
     if (v.phase === 'playing') {
       if (meTurn && v.sub === 'play') {
