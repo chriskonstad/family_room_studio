@@ -38,6 +38,17 @@ New built-in game? Also add `<key>` to `GameLibrary.embeddedGameKeys` and its id
   (standings entries take `playerId` OR `teamId`). Restart is the shell's job.
 - Teams: manifest `"teams": "required"`; read `Table.teams` / `me.teamId`; never build a team picker.
 - Solo games: set `"minPlayers": 1` (the shell allows solo start).
+- **Disconnect/pause is the shell's job, not yours.** When anyone drops, the shell
+  pauses every device (input-blocking overlay) and *freezes all JS timers* —
+  `setTimeout`/`setInterval` are shimmed in the injected SDK, so fuses and round
+  clocks stop and resume where they left off with zero game code. Optional hooks:
+  `Table.onPause(cb)` / `Table.onResume(cb)` / `Table.isPaused` (only for cosmetics).
+  Never measure elapsed time with bare `Date.now()` deltas across a frame you don't
+  control — a paused game must not "catch up" on resume.
+- **Reconnect state is also handled**: the host shell caches your last `broadcast`
+  and last per-player `sendTo`, and replays them to a player who rejoins, so they
+  land mid-game instead of a blank board. Still handle `hello` with a full state
+  publish if you can — it's cheap and makes the resync instant.
 - Offline only. No runtime `fetch()` of bundle files (breaks in studio) — inline data.
 
 ## UX standards (learned from the review passes)

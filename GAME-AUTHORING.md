@@ -203,12 +203,36 @@ build your own team picker:
 ```js
 Table.onStart((players) => { … })       // session begins (or restarts). Roster is final. Init here.
 Table.onMessage((fromId, payload) => {}) // a message arrived
-Table.onPlayerLeave((playerId) => { … }) // a player dropped mid-game
+Table.onPlayerLeave((playerId) => { … }) // a player LEFT FOR GOOD (see pause, below)
 Table.onPlayerJoin((player) => { … })    // a player (re)joined mid-game
+Table.onPause(() => { … })               // optional: play frozen (someone dropped)
+Table.onResume(() => { … })              // optional: play resumed
+Table.isPaused                           // optional: current freeze state
 ```
 - **`onStart` fires once when the game begins and again on every restart** (Play Again
   reloads the bundle). Treat it as "initialize a brand-new game." Do all setup here.
 - Register your handlers synchronously at top level so they exist when `onStart` fires.
+
+### Disconnects, pause and reconnect (the shell handles this — don't reinvent it)
+
+If anyone's phone backgrounds, sleeps, or drops off the network, the shell **pauses the
+whole table**: every device shows a "Paused — waiting for <player>" overlay that blocks
+input, the dropped player's seat is held, and their app reconnects and resumes that same
+seat automatically. `onPlayerLeave` fires only when they leave for good (they tapped Leave,
+or the host chose "Continue without them") — a brief disconnect never reaches your game.
+
+**Your clocks freeze automatically.** `setTimeout` / `setInterval` are shimmed in the
+injected SDK, so a lit fuse or round timer stops while paused and resumes with the exact
+time remaining — no game code required. The one rule this imposes:
+
+> Never derive game timing from raw `Date.now()` deltas across a pause. Drive time with
+> `setTimeout`/`setInterval` (which freeze) rather than by comparing wall-clock stamps
+> (which don't) — otherwise a paused game "catches up" all at once on resume.
+
+On reconnect the host shell also **replays your last `broadcast` and that player's last
+`sendTo`**, so a returning player lands mid-game rather than on an empty board. Handling
+`{type:'hello'}` with a state publish (below) is still recommended — it makes the resync
+immediate and is the documented contract.
 
 ### Messaging (your game → shell → wire)
 ```js
