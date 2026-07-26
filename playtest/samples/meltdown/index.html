@@ -26,6 +26,10 @@
   .integrity.low i{background:linear-gradient(90deg,var(--bad),#f07a32)}
   .integrity.hurt{animation:hurtflash .5s}
   @keyframes hurtflash{0%{box-shadow:0 0 0 rgba(224,86,75,.95)}50%{box-shadow:0 0 20px rgba(224,86,75,.85)}100%{box-shadow:0 0 0 rgba(224,86,75,0)}}
+  .banner{text-align:center; font-size:13px; font-weight:700; min-height:17px; margin:5px 2px 2px; color:var(--muted)}
+  .banner.bad{color:var(--bad)}
+  .banner.up{color:var(--accent); animation:bannerpulse .9s ease-in-out 2}
+  @keyframes bannerpulse{50%{transform:scale(1.06)}}
   body.shake{animation:bodyshake .4s}
   @keyframes bodyshake{20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
 

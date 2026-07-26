@@ -188,14 +188,28 @@ function createGame(Table, root) {
     }, 100);
   }
 
+  /// Banner styling follows the message, so tone can't drift from text.
+  function bannerTone(text) {
+    if (!text) return '';
+    if (text.indexOf('💥') === 0) return ' bad';
+    if (text.indexOf('⬆️') === 0) return ' up';
+    return '';
+  }
+
   function render() {
     if (!view) { root.innerHTML = '<div class="big"><span class="wait">Powering up…</span></div>'; return; }
     const v = view;
     const hurt = prevIntegrity != null && v.integrity < prevIntegrity;
     prevIntegrity = v.integrity;
+    // Damage should be felt, not just seen on a 14px bar — shake the whole reactor.
+    if (hurt) {
+      document.body.classList.add('shake');
+      setTimeout(() => document.body.classList.remove('shake'), 420);
+    }
     let h = `<div class="hdr"><span class="brand">MELTDOWN</span>
       <span class="lvl">LEVEL <b>${v.level}</b> · ${v.progress}/${v.goal}</span></div>
-      <div class="integrity ${v.integrity<35?'low':''}${hurt?' hurt':''}"><i style="width:${Math.max(0,v.integrity)}%"></i></div>`;
+      <div class="integrity ${v.integrity<35?'low':''}${hurt?' hurt':''}"><i style="width:${Math.max(0,v.integrity)}%"></i></div>
+      <div class="banner${bannerTone(v.banner)}">${esc(v.banner || '')}</div>`;
 
     if (v.phase === 'briefing') {
       h += `<div class="big"><div class="icon">☢️</div>

@@ -379,7 +379,182 @@ requests are blocked. Everything the game needs ships in the bundle.
 
 ---
 
-## 9. Rules & limits (read before you write)
+## 9. Game feel: making state legible
+
+§5 gets you a *correct* game. This chapter is what makes it a *readable* one. Copy
+**STREAK** (turn-based, board of players) or **FISHBOWL** (timed, teams, private info) —
+not the §3 minimal example, which is a protocol demo with no game feel at all.
+
+The whole chapter is one rule: **a player who looks up mid-game must be able to tell, in
+one glance, what just happened, whose move it is, and what they can do.**
+
+### Say what happened, in the state
+
+Put a `banner` string in your authoritative state and set it **on the same line you
+mutate**. Every branch gets one — including the boring ones.
+
+```js
+if (line.nums.includes(card.v)) {
+  G.status[pid]='busted'; G.banner = '💥 '+G.names[pid]+' drew a second '+card.v+' — BUST!';
+}
+…
+G.banner = 'No valid target — '+label(card.act)+' discarded';   // even non-events
+```
+
+Name the **person**, the **action**, and the **consequence**. "Ava busted" is half a
+banner; "💥 Ava drew a second 7 — BUST!" is a whole one. Then derive the banner's style
+from the message, so tone can never drift from text:
+
+```js
+const bannerCls = v.banner.indexOf('💥')===0 ? ' bust' : v.banner.indexOf('🧊')===0 ? ' frozen' : '';
+```
+
+And **render it**. A banner that only exists in `publicState()` explains nothing.
+
+### Make status a row style, not a word
+
+Set the raw status as a class and let CSS carry it. Colour and border read faster than
+text; the text is confirmation.
+
+```css
+.prow.active-turn{border-color:var(--gold); animation:turnglow 2s ease-in-out infinite}
+.prow.busted{border-color:rgba(217,105,92,.7); background:rgba(217,105,92,.13)}
+.prow.stayed{opacity:.7}
+```
+```js
+`<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}">`
+```
+
+Conventions the built-in games share — follow them: **gold** = your turn or primary
+action · **red** = bust/damage/out · **blue** = frozen/locked · **green** = safe/banked ·
+**muted grey** = inactive, spectating, waiting. Always mark the local player (a `YOU`
+chip, a bolder row). Always use the player's emoji as their token.
+
+### Animation vocabulary
+
+Pick from this set; don't invent new meanings.
+
+| Animation | Means | Use for |
+|---|---|---|
+| `pop` (0.3–0.4s) | *arrived* | a new card, chip, tile |
+| `shake` (0.4–0.6s) | *you lost something* | bust, caught, damage |
+| colour `flash` | *done to you* | frozen, hit, penalised |
+| `glow` pulse (infinite) | *you may act now* | active turn, tappable target |
+| `blink` (infinite) | *time is running out* | last seconds of a clock |
+| `swap` / slide | *the thing under you was replaced* | new phrase, new prompt |
+| stagger (`animation-delay: i*40ms`) | *a whole new set* | a freshly dealt hand |
+
+**One-shot = an event happened. Infinite = a standing invitation.** Never mix the two.
+Dual-encode time pressure: a bar *and* a number *and* a threshold class (`.timer.low`
+at ≤10s). Bind intensity to stakes where you can — Pass the Bomb ties the bomb's shake
+speed to the fuse: `const dur = Math.max(120, 320 - v.heat*260);`
+
+### Animations must fire once per event, never per render
+
+`root.innerHTML = h` replays every CSS animation underneath it. Two defences, best first:
+
+**1. Only call `render()` on events.** Route clock ticks through a text patcher:
+
+```js
+setInterval(() => renderTimerOnly(), 200);
+function renderTimerOnly() {                       // patches, never rebuilds
+  root.querySelector('.timenum').textContent = s;
+  root.querySelector('.timer i').style.width = (s/TURN_SECONDS*100)+'%';
+}
+```
+
+**2. Bookkeeping, updated AFTER you write the DOM.** Pick the cheapest that fits, and put
+the update *below* `root.innerHTML = h`:
+
+```js
+const justBusted = p.status==='busted' && seenStatus[p.id] !== 'busted';  // transition
+`<i class="c${i >= seenChips[p.id] ? ' pop' : ''}">`                      // count watermark
+const fresh = myHand.join(',') !== lastHandSig;                          // signature
+G.lastPlay = { pid, color, n: ++G.playSeq };  /* host */                 // sequence no.
+root.innerHTML = h;
+v.players.forEach(p => { seenChips[p.id] = p.nums.length; seenStatus[p.id] = p.status; });
+```
+
+Use the **sequence number** when the same event can repeat with identical values — it is
+the only one of the four that survives that.
+
+### Never rebuild the DOM under a finger or a keyboard
+
+If a broadcast can land while someone is typing or aiming at a button, patch text instead:
+
+```js
+if (v.phase === 'entry' && lastPhase === 'entry') { patchEntryCounters(); return; }
+```
+
+Better still, don't broadcast on high-frequency intents at all — let the host absorb them
+silently and publish once at resolution:
+
+```js
+Table.onMessage((f,m)=>{ const wasTap = m.t==='tap'; handleIntent(f,m); if(!wasTap) syncAll(); });
+```
+
+### Confirm my own action locally, immediately
+
+Your own tap must respond before the round trip; everyone else waits for the host. This
+is what makes an authoritative-host game feel latency-free.
+
+```js
+myPick = b.dataset.d;                        // local echo
+Table.send({ t:'look', dir: myPick });
+render();                                    // → .picked class + "Locked ⬅️"
+```
+
+### Give waiting players a subject
+
+No screen may sit idle without naming who we're waiting for.
+
+```js
+`<span class="wait">Waiting for ${t.emoji} ${esc(t.name)}…</span>`
+```
+
+Give timed turns a **ready** phase before the clock starts, with the start button only on
+the acting player's phone — nobody's 60 seconds should begin while they're looking away.
+
+### Public shapes, private values
+
+Broadcast counts and flags; `sendTo` the contents. Then *show the shape* so the table
+stays readable: `handCounts` → "6 in hand"; `pickedFlags` → `✓ picked` vs a dimmed
+`choosing…`. Hide the map entirely until reveal: `taps: G.reveal ? {...G.taps} : null`.
+
+When everyone acted in secret, **spend a screen on the reveal** — all choices side by
+side, outcome marked. That payoff is the reason to play this on phones instead of cards.
+
+### Illegal moves: prevent, then explain
+
+The host ignores illegal intents silently, so the *client* must make them unreachable and
+the *banner* must explain rules-level no-ops.
+
+1. `disabled` on any button whose move is illegal right now.
+2. An affordance class on legal targets, and guard the click with the same class:
+   `if (el.classList.contains('canTake')) Table.send(…)`.
+3. Re-derive the host's legality check client-side for button state. This duplication is
+   intended — keep the two functions adjacent and named alike (`canPlay` / `canPlayView`).
+4. If a rule causes a no-op ("no valid target"), say so in the banner.
+
+### Empty and first-run states
+
+- A **pre-game phase** stating the rules in one or two sentences, verb first, stakes
+  named: *"Whoever's holding the bomb when it blows is **out**. Tap a friend to throw
+  it."* Reprint the per-round rule during play if it changes between rounds.
+- Empty containers **name themselves**: `no cards yet`, `empty plate`, `empty`.
+- A themed connecting state, never a blank screen: *"Connecting to the table…"*.
+
+### Typography
+
+`ui-rounded,-apple-system,system-ui,sans-serif` throughout (monospace only for
+deliberately machine-like text, as in MELTDOWN's order readout). Brand header 19–22px /
+weight 800 / `letter-spacing:.14em`, accent-coloured, with a muted right-aligned sub for
+round and progress. **`font-variant-numeric: tabular-nums` on every number that changes
+in place** — scores and clocks must not jitter.
+
+---
+
+## 10. Rules & limits (read before you write)
 
 A checklist. Violating these produces code that runs but misbehaves.
 
