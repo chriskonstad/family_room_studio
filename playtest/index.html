@@ -417,8 +417,14 @@ function sdkScript(player, roster){
       teams:${JSON.stringify(teams)},
       onStart:cb=>handlers.start=cb, onPlayerJoin:cb=>handlers.join=cb,
       onPlayerLeave:cb=>handlers.leave=cb, onMessage:cb=>handlers.message=cb,
+      onPause:cb=>handlers.pause=cb, onResume:cb=>handlers.resume=cb,
+      get isPaused(){ return !!window.__tablePaused; },
       send:p=>H.send(PID,p), broadcast:p=>H.broadcast(PID,p), sendTo:(id,p)=>H.sendTo(PID,id,p),
       endGame:r=>H.endGame(PID,r),
+      // Room feedback is device hardware; in the studio it logs so you can SEE
+      // that your game asked for it, and the API shape stays identical to the app.
+      haptic:s=>H.feedback(PID,'haptic',String(s||'light')),
+      sound:n=>H.feedback(PID,'sound',String(n||'')),
       saveState:o=>H.saveState(PID,o), loadState:()=>H.loadState(PID)
     };
     window.__tableDispatch=(ev,a,b)=>{ const cb=handlers[ev]; if(cb){ try{cb(a,b);}catch(e){ H.error(PID,String(e&&e.stack||e)); } } };
@@ -448,6 +454,11 @@ const HarnessBus = {
     if(from!==this.hostId()){ log('error', from, to, 'sendTo ignored (not host)'); return; }
     log('sendTo', from, to, payload);
     this._deliver(to, from, payload);
+  },
+  /// Haptics and sound are real hardware on device. Here we just log them, so you
+  /// can verify your game is asking for feedback at the right moments without a phone.
+  feedback(from, kind, name){
+    log(kind, from, 'device', name);
   },
   endGame(from, result){                  // host ends the game → shell shows results everywhere
     if(from!==this.hostId()){ log('error', from, '*', 'endGame ignored (not host)'); return; }

@@ -31,6 +31,7 @@ function createGame(Table, root) {
     G.deck = shuffle(buildDeck()); G.discard = [];
     G.order.forEach(id => { G.lines[id] = { nums:[], mods:[], hasSave:false }; G.status[id]='active'; });
     G.pending = null; G.work = []; G.roundOver = false; G.winner = null;
+    clearTimeout(G.workTimer);            // no stale forced flips across rounds
     G.turn = nextActiveFrom(G.dealer % G.order.length, true);
     G.phase = 'playing';
     G.banner = 'Round ' + G.round + ' — ' + G.names[curId()] + ' starts';
@@ -80,8 +81,12 @@ function createGame(Table, root) {
     else { G.banner = G.names[chooser]+' makes '+G.names[target]+' flip three!';   // triple
            G.work.unshift({t:'flip',pid:target},{t:'flip',pid:target},{t:'flip',pid:target}); }
   }
-  function pump() {                                  // process forced work until it needs input or ends
-    while (G.work.length && !G.pending && !G.roundOver) {
+  /// Beat between forced flips. Flip 3 resolving instantly threw away the best
+  /// moment in the game — watching the second card land is the whole tension.
+  const FORCED_FLIP_DELAY = 800;
+
+  function pump() {                                  // one forced task per beat
+    if (G.work.length && !G.pending && !G.roundOver) {
       const task = G.work.shift();
       if (task.t === 'flip') doFlip(task.pid);
     }
@@ -106,7 +111,15 @@ function createGame(Table, root) {
     pump();
     if (G.roundOver) { endRound(); return; }
     if (G.pending) return;                 // waiting on a target choice
-    if (G.work.length === 0) endTurnOrRound();
+    if (G.work.length) {
+      // More forced flips queued (Flip 3): show this one, then land the next
+      // after a beat. `publish()` here is what makes each card visible on its own.
+      publish();
+      clearTimeout(G.workTimer);
+      G.workTimer = setTimeout(resolveWork, FORCED_FLIP_DELAY);
+      return;
+    }
+    endTurnOrRound();
   }
   function endTurnOrRound() {
     if (activeIds().length === 0) { endRound(); return; }
@@ -185,6 +198,15 @@ function createGame(Table, root) {
   // and shake/flash a row only on the transition into busted/frozen.
   let seenChips = {};    // pid -> chip count last render
   let seenStatus = {};   // pid -> status last render
+  let seenSave = {};     // pid -> had a Second Chance last render
+  let seenChipTotal = 0; // my card count last render (for the flip thump)
+
+  /// Room feedback. Optional-chained so a game bundle still runs on any harness
+  /// that predates these APIs (and in a plain browser).
+  function fb(haptic, sound) {
+    try { if (haptic && Table.haptic) Table.haptic(haptic); } catch (e) {}
+    try { if (sound && Table.sound) Table.sound(sound); } catch (e) {}
+  }
 
   function chipsHTML(p) {
     const prev = (seenChips[p.id] != null) ? seenChips[p.id] : 0;
@@ -221,6 +243,12 @@ function createGame(Table, root) {
                   : p.roundPts+' pts';
       const justBusted = p.status==='busted' && seenStatus[p.id] !== 'busted';
       const justFrozen = p.status==='frozen' && seenStatus[p.id] !== 'frozen';
+      // Feel it, don't just see it. Your own disasters hit hardest; someone
+      // else's are a lighter nudge so a 6-player table isn't a buzzing mess.
+      if (justBusted) { fb(mine ? 'error' : 'light', mine ? 'boom' : 'thud'); }
+      else if (justFrozen) { fb(mine ? 'warning' : 'light', 'buzz'); }
+      if (mine && p.hasSave && !seenSave[p.id]) { fb('success', 'ding'); }
+      seenSave[p.id] = p.hasSave;
       h += `<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}${justBusted?' shake':''}${justFrozen?' freezeflash':''}">
         <div class="top"><span class="pemoji">${p.emoji}</span><span class="who">${esc(p.name)}</span>
           ${mine?'<span class="you">YOU</span>':''}
@@ -274,6 +302,15 @@ function createGame(Table, root) {
     }
 
     root.innerHTML = h;
+
+    // A card landing in MY line gets a tick — during Flip 3 that becomes a
+    // drumbeat, one thump per card, which is exactly the tension we're after.
+    const me = v.players.find(p => p.id === MY);
+    if (me) {
+      const myChips = me.nums.length + me.mods.length;
+      if (myChips > seenChipTotal && me.status === 'active') fb('light', 'pop');
+      seenChipTotal = myChips;
+    }
 
     // update animation bookkeeping AFTER building the DOM
     v.players.forEach(p => {

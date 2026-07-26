@@ -20,6 +20,14 @@ function createGame(Table, root) {
   let lastPhase = null;       // to patch (not rebuild) the entry screen on updates
   let localDeadline = null;   // giver countdown (device-local clock)
   let tick = null;
+  let lastSpokenSecond = null;  // so the countdown beeps once per second, not per tick
+  let seenScore = null;         // team scores last render, for the point/skip cues
+
+  /// Room feedback, optional-chained so the bundle still runs on an older harness.
+  function fb(haptic, sound) {
+    try { if (haptic && Table.haptic) Table.haptic(haptic); } catch (e) {}
+    try { if (sound && Table.sound) Table.sound(sound); } catch (e) {}
+  }
   let G = null;
 
   const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
@@ -201,6 +209,15 @@ function createGame(Table, root) {
     num.textContent = s;
     bar.style.width = (s/TURN_SECONDS*100) + '%';
     root.querySelector('.timer').classList.toggle('low', s <= 10);
+
+    // Audible countdown for the LAST 10 SECONDS, on the giver's phone only.
+    // They're looking at their teammates, not the screen — the clock has to
+    // reach them by ear. One beep per second, and a chime when time is up.
+    if (view && view.giver === MY && s !== lastSpokenSecond) {
+      if (s > 0 && s <= 10) fb(s <= 3 ? 'heavy' : 'light', 'count');
+      else if (s === 0 && lastSpokenSecond === 1) fb('error', 'buzz');
+      lastSpokenSecond = s;
+    }
   }
 
   function render() {
@@ -210,6 +227,17 @@ function createGame(Table, root) {
     // in-place patch while typing (see patchEntryCounters)
     if (v.phase === 'entry' && lastPhase === 'entry') { patchEntryCounters(); return; }
     lastPhase = v.phase;
+
+    // Got it / skipped: the giver has their eyes on the room, so confirm the
+    // outcome by ear. A point is a rising ding for the whole team; a skip is a
+    // flat buzz on the giver's phone only (nobody else needs to hear it).
+    const scoreSig = v.teams.map(t => t.id + ':' + t.score).join('|');
+    if (seenScore !== null && scoreSig !== seenScore) {
+      const mine = v.teams.find(t => (t.playerIds || []).includes(MY));
+      const scoredTeam = v.activeTeamId;
+      fb('success', mine && mine.id === scoredTeam ? 'chime' : 'ding');
+    }
+    seenScore = scoreSig;
 
     let h = `<div class="hdr"><span class="brand">FISHBOWL</span>
       <span class="sub">Round ${v.round+1}/3 · ${esc(v.roundName)}</span></div>` + teamBar();
@@ -304,8 +332,11 @@ function createGame(Table, root) {
       render();
     };
     const b = root.querySelector('#begin'); if (b) b.onclick = () => Table.send({ t:'begin' });
-    const g = root.querySelector('#got');   if (g) g.onclick = () => Table.send({ t:'got' });
-    const k = root.querySelector('#skip');  if (k) k.onclick = () => Table.send({ t:'skip' });
+    // Local echo on the giver's own taps — instant, before the host round-trip.
+    const g = root.querySelector('#got');
+    if (g) g.onclick = () => { fb('medium', null); Table.send({ t:'got' }); };
+    const k = root.querySelector('#skip');
+    if (k) k.onclick = () => { fb('warning', 'buzz'); Table.send({ t:'skip' }); };
     const n = root.querySelector('#next');  if (n) n.onclick = () => Table.send({ t:'next' });
   }
 
