@@ -26,6 +26,12 @@
 (function (global) {
   'use strict';
 
+  /*
+   * PRECEDENCE: this stylesheet is injected at documentStart, so it lands BEFORE
+   * a game's own <style> in document order. On equal specificity the game wins —
+   * these are defaults a game may override freely (verified: a game's
+   * `body{padding:env(top) 0 env(bottom)}` beats the four-inset rule below).
+   */
   var CSS = [
     /* ---- base: what every game was copying ---- */
     '*,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent}',
