@@ -1,10 +1,11 @@
 {
   "id": "com.chris.meltdown",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "MELTDOWN",
   "entry": "index.html",
   "iconEmoji": "☢️",
   "minPlayers": 2,
   "maxPlayers": 6,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "Co-op panic. Everyone sees different switches and dials, and the orders on your screen are for somebody else's panel. Shout them out and act fast — the reactor doesn't wait."
 }

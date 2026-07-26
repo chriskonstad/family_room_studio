@@ -1,10 +1,11 @@
 {
   "id": "com.chris.tempo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "TEMPO",
   "entry": "index.html",
   "iconEmoji": "🎵",
   "minPlayers": 1,
   "maxPlayers": 6,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "A 60-second rhythm blitz. Tap on the beat to stack a combo and blow your streak on a miss. Play it solo or race up to five friends."
 }

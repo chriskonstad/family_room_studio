@@ -1,10 +1,11 @@
 {
   "id": "com.chris.summit",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "SUMMIT",
   "entry": "index.html",
   "iconEmoji": "🏔",
   "minPlayers": 2,
   "maxPlayers": 2,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "A two-player expedition duel. Start a route and you owe 20 points, so only commit to the climbs you can finish. Cards must be played in ascending order, and wagers double everything that follows."
 }

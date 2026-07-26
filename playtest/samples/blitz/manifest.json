@@ -1,10 +1,11 @@
 {
   "id": "com.chris.blitz",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "BLITZ",
   "entry": "index.html",
   "iconEmoji": "⚡️",
   "minPlayers": 2,
   "maxPlayers": 8,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "A frantic tap race — first to the target wins. No strategy, pure speed."
 }

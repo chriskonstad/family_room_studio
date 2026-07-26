@@ -72,9 +72,14 @@ Easiest way to produce a valid archive: open the folder in the Playtest Studio a
   "minPlayers": 2,            // roster lower bound (the shell won't start below this)
   "maxPlayers": 8,            // roster upper bound
   "teams": "required",        // OPTIONAL — declare a team game (see "Teams" below)
-  "author": "You"
+  "author": "You",
+  "description": "One or two sentences on how it plays."  // shown on press-and-hold
 }
 ```
+
+`description` is worth writing: players press and hold a game in the library to get a card
+explaining what it is before they commit to hosting it. Say how it *plays* ("push your luck
+flipping cards…"), not what genre it is.
 
 `id` + `version` uniquely identify a bundle. **Every device in a session must run the exact
 same `id@version`, byte-for-byte** — that's what makes the authoritative-host model safe. If

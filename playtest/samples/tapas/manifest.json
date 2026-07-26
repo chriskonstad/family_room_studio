@@ -1,10 +1,11 @@
 {
   "id": "com.chris.tapas",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "TAPAS",
   "entry": "index.html",
   "iconEmoji": "🫒",
   "minPlayers": 2,
   "maxPlayers": 5,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "Draft one dish, pass the rest, repeat. Sets and combos score big, but every card you pass is a gift to the player beside you."
 }

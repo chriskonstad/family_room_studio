@@ -1,10 +1,11 @@
 {
   "id": "com.chris.passbomb",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Pass the Bomb",
   "entry": "index.html",
   "iconEmoji": "💣",
   "minPlayers": 2,
   "maxPlayers": 6,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "Hot potato with a hidden fuse. Throw the bomb to anyone in the room before it goes off — whoever's holding it when it blows is out. Last one standing wins."
 }

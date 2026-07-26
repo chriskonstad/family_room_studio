@@ -1,10 +1,11 @@
 {
   "id": "com.chris.captain",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Captain Says",
   "entry": "index.html",
   "iconEmoji": "🫡",
   "minPlayers": 2,
   "maxPlayers": 8,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "Obey only when the Captain says. Tap the right colour in time, but act on a plain order and you're out. Every round comes faster than the last."
 }

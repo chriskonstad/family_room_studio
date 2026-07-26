@@ -1,10 +1,11 @@
 {
   "id": "com.chris.streak",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "STREAK",
   "entry": "index.html",
   "iconEmoji": "🔥",
   "minPlayers": 2,
   "maxPlayers": 8,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "Push your luck flipping cards. Every new number extends your streak, but flip a number you already have and you bust, losing the lot. Bank early and safe, or keep flipping and risk it all."
 }

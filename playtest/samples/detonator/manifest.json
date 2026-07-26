@@ -1,10 +1,11 @@
 {
   "id": "com.chris.detonator",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "The Detonator",
   "entry": "index.html",
   "iconEmoji": "🧨",
   "minPlayers": 2,
   "maxPlayers": 6,
-  "author": "Chris"
+  "author": "Chris",
+  "description": "Five plungers, one of them live. Take turns pressing and hope. Press the live one and you're out, then a fresh detonator arms itself for whoever's left."
 }
