@@ -89,13 +89,24 @@ function createGame(Table, root) {
   }
 
   // ---------- local run (audio + judging) ----------
-  function startRun(seed) {
+  /// iOS WKWebView creates an AudioContext in the `suspended` state and only
+  /// honours resume() from inside a user gesture. startRun() runs from a state
+  /// broadcast, NOT a tap — which is why the metronome was silent on device.
+  /// So the context is created and unlocked on the first real touch instead.
+  let sharedAudio = null;
+  function unlockAudio() {
     const AC = window.AudioContext || window.webkitAudioContext;
-    const audio = AC ? new AC() : null;
+    if (!AC) return null;
+    if (!sharedAudio) sharedAudio = new AC();
+    if (sharedAudio.state === 'suspended') sharedAudio.resume();
+    return sharedAudio;
+  }
+
+  function startRun(seed) {
+    const audio = unlockAudio();          // already unlocked by the tap that got us here
     run = { beats: buildBeats(seed), idx:0, score:0, combo:0, best:0, hits:0,
             start: performance.now()/1000 + 0.15, audio, lastSent:0, over:false,
             lastFeel:0, lastCount:null };
-    if (audio && audio.state === 'suspended') audio.resume();
     scheduleLoop();
   }
   function beep(when, freq, dur=0.07, gain=0.25) {
@@ -188,9 +199,9 @@ function createGame(Table, root) {
     if (now - (run.lastFeel || 0) < 110) return;
     run.lastFeel = now;
     if (text === 'DONE!')         feel('win',     { el:'.ring', mine:true });
-    else if (cls === 'perfect')   feel('gain',    { mine:true, silent:true });
-    else if (cls === 'good')      feel('gain',    { silent:true });
-    else                          feel('blocked', { el:'.ring', mine:true, silent:true });
+    else if (cls === 'perfect')   feel('gain',    { mine:true });
+    else if (cls === 'good')      feel('gain');
+    else                          feel('blocked', { el:'.ring', mine:true });
   }
   function updateHud() {
     const c = root.querySelector('.combo');
@@ -227,7 +238,9 @@ function createGame(Table, root) {
 
     root.innerHTML = h;
     const go = root.querySelector('#go');
-    if (go) go.onclick = () => { Table.send({ t:'go' }); };
+    // Unlock audio HERE — this is a genuine user gesture, the only moment iOS
+    // will let us start an AudioContext. Do it before the round exists.
+    if (go) go.onclick = () => { unlockAudio(); Table.send({ t:'go' }); };
     const tz = root.querySelector('#tap');
     if (tz) {
       tz.addEventListener('pointerdown', tap, { passive:true });

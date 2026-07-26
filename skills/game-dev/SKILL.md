@@ -27,8 +27,9 @@ New built-in game? Also add `<key>` to `GameLibrary.embeddedGameKeys` and its id
 - **Bump `manifest.json` version on ANY change** (semver-ish). The app upgrades an
   installed older version to the embedded newer one at launch and never downgrades a
   user-imported newer version. Same id@version must be byte-identical everywhere.
-- The app's `CURRENT_PROJECT_VERSION` (build number) must be bumped per TestFlight upload
-  (`sed -i '' 's/CURRENT_PROJECT_VERSION = N;/CURRENT_PROJECT_VERSION = N+1;/g' GameEngine/GameEngine.xcodeproj/project.pbxproj`).
+- **Don't touch `CURRENT_PROJECT_VERSION` for releases.** Xcode Cloud assigns build
+  numbers itself and overrides the project value (its counter is set clear of the builds
+  1-9 that were uploaded by hand before CI existed).
 
 ## Authoring rules (full reference: tools/GAME-AUTHORING.md)
 
@@ -78,6 +79,13 @@ Use the raw primitives when the feedback isn't a game event: `haptic('medium')` 
 the local player's own tap before the host replies, `sound('count')` for a metronome or
 per-second countdown. Full table in GAME-AUTHORING.md §"Feedback".
 
+**Audio/haptics rule:** use `Table.sound()`/`Table.haptic()`/`feel()` — they need no
+user-gesture unlock and play through the ring/silent switch. `navigator.vibrate` does not
+exist on iOS. Reach for WebAudio ONLY for sample-accurate scheduling (a metronome), and if
+you do, create AND resume the `AudioContext` inside a tap handler — never from `onStart`, a
+broadcast or a timer, or iOS leaves it suspended and your game ships silent (TEMPO did).
+Don't layer a shell cue on top of your own audio for the same event; use `{silent:true}`.
+
 ## UX standards (learned from the review passes)
 
 - **Touch targets ≥ 44pt** (Apple HIG). Buttons: padding ≥ 12-13px vertical. Cards that are
@@ -99,8 +107,10 @@ per-second countdown. Full table in GAME-AUTHORING.md §"Feedback".
 
 ## Test
 
-- **Studio (fast, primary)**: `cd tools/playtest && python3 -m http.server 8777` →
-  `http://localhost:8777`, pick the sample, add players (team chips appear for team games),
+- **Studio (fast, primary)**: `cd tools && python3 -m http.server 8777` →
+  `http://localhost:8777/playtest/` (serve the dev-kit ROOT — from inside `playtest/` the
+  studio can't reach `sdk/fr-feel.js` and games silently lose `Table.feel`), pick the
+  sample, add players (team chips appear for team games),
   play across the phones; watch the wire log; use Drop/Reconnect; verify endGame + Play Again.
 - **Native (spot-check)**: build & install on two booted sims (see project memory for UDIDs),
   drive with `axe` (`--id` for native UI; coordinate taps for webview content — points = px/3).
@@ -109,7 +119,8 @@ per-second countdown. Full table in GAME-AUTHORING.md §"Feedback".
 
 ## Ship checklist
 
-1. Canonical sample edited + version bumped; synced to app flat copies.
+1. Sample edited + manifest version bumped. No sync step — the app folder-references
+   the submodule, so a rebuild picks it up (but commit tools/ AND bump the pointer).
 2. Studio-verified; native spot-check if shell code changed.
 3. Commit app repo AND tools repo; `git push` tools (GitHub).
 4. Bump the app build number, archive/export a distribution build, and upload to

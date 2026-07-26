@@ -456,6 +456,50 @@ countdown` · `turn urgent` (persistent). `Table.feel.events` lists them at runt
    node — it does *not* want a class baked into your HTML string. That is precisely what
    stops animations replaying on every re-render.
 
+#### Audio and haptics: use the harness, not the web APIs
+
+**Default to `Table.feel()` / `Table.sound()` / `Table.haptic()` for everything.** They run
+through the native layer, which means they work on every phone with no setup: no
+user-gesture unlock, audible even with the ring/silent switch on, and one shared palette so
+all games sound like one product.
+
+Two web APIs you might reach for and shouldn't:
+
+- **`navigator.vibrate` does not exist in WebKit on iOS.** There is no way for a game to
+  produce haptics itself. `Table.haptic()` is the only route.
+- **Don't rely on `<audio>` autoplay** or on `new Audio().play()` firing outside a tap.
+
+**WebAudio is justified only for sample-accurate scheduling** — a metronome, a rhythm
+track, anything where "on the beat" matters to the millisecond. `Table.sound()` is fine for
+discrete cues but is not a sequencer. If you genuinely need it:
+
+> **Create *and* resume the `AudioContext` inside a real user gesture** — a tap handler.
+> Never from `onStart`, a state broadcast, or a timer. iOS creates the context in the
+> `suspended` state and refuses `resume()` outside a gesture, silently. TEMPO shipped
+> silent on device for exactly this reason: it built its context when the host broadcast
+> "playing", which is not a gesture.
+
+```js
+let sharedAudio = null;                    // ONE context for the whole game
+function unlockAudio() {                   // call from a tap, before you need sound
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!sharedAudio) sharedAudio = new AC();
+  if (sharedAudio.state === 'suspended') sharedAudio.resume();
+  return sharedAudio;
+}
+startButton.onclick = () => { unlockAudio(); Table.send({ t: 'go' }); };
+```
+
+And **don't double up**: if your own audio already covers an event, pass `{silent:true}` to
+`feel()` for it rather than layering a shell cue on top. But check on a device first — a
+silenced `feel()` plus broken WebAudio equals no feedback at all, which is how TEMPO ended
+up with nothing but its countdown.
+
+*If haptics seem dead on a real phone,* check **Low Power Mode** — iOS disables the Taptic
+Engine entirely while it's on, and "System Haptics" in Settings → Sounds can also be off.
+Neither is something a game can detect or override.
+
 #### When to use the raw primitives instead
 
 `Table.haptic(style)` and `Table.sound(name)` are still there, and they're the right choice
