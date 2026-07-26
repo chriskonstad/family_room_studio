@@ -1,6 +1,6 @@
 {
   "id": "com.chris.passbomb",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Pass the Bomb",
   "entry": "index.html",
   "iconEmoji": "💣",

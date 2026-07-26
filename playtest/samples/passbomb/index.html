@@ -23,8 +23,8 @@
   .heat{height:10px; background:#2a0e14; border-radius:6px; overflow:hidden; margin:9px 0 4px}
   .heat i{display:block; height:100%; width:0; border-radius:6px;
     background:linear-gradient(90deg,#ffb04d,#ff7a4d); transition:width .25s linear}
-  .heat.hot i{background:linear-gradient(90deg,#ff7a4d,var(--hot)); animation:heatpulse .5s infinite alternate}
-  @keyframes heatpulse{to{opacity:.6}}
+  /* the pulse is fr-blink, applied by Table.feel('urgent') once heat passes 0.6 */
+  .heat.hot i{background:linear-gradient(90deg,#ff7a4d,var(--hot))}
 
   .banner{text-align:center; font-size:15px; font-weight:700; min-height:20px; margin:4px 0 2px; color:var(--text)}
 

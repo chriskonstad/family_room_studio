@@ -51,6 +51,33 @@ New built-in game? Also add `<key>` to `GameLibrary.embeddedGameKeys` and its id
   publish if you can — it's cheap and makes the resync instant.
 - Offline only. No runtime `fetch()` of bundle files (breaks in studio) — inline data.
 
+## Game feel: use the shared runtime, don't hand-roll
+
+The harness injects `tools/sdk/fr-feel.js` next to the Table SDK, so every game already has
+a shared animation vocabulary and semantic feedback. **Reach for `Table.feel()` before
+writing CSS keyframes or calling haptic/sound directly.**
+
+```js
+Table.feel('bust', { el: row, mine: true });   // shake + error haptic + boom together
+Table.feel('turn', { el: myRow });             // persistent glow; {off:true} clears it
+Table.feel.deal(root.querySelectorAll('.card'));
+```
+Events: `gain win heal` · `bust eliminate hit freeze blocked` · `arrive pass reveal tick
+countdown` · `turn urgent`. Classes if you need them bare: `fr-pop fr-shake fr-flash-good
+fr-flash-bad fr-flash-cool fr-glow fr-blink fr-deal`. Base reset, safe-area padding,
+rounded font and tabular numerals come with it — don't re-declare them.
+
+**`mine: true` for the local player**, default for everyone else: your own disaster should
+hit harder, and six phones buzzing at full strength is worse than silence.
+
+**Call `feel()` AFTER writing the DOM, with the live element.** It animates a real node
+rather than a class in your HTML string — that is what stops animations replaying on every
+render, and it removes most of the `seen*`/`prev*` bookkeeping older games needed.
+
+Use the raw primitives when the feedback isn't a game event: `haptic('medium')` to confirm
+the local player's own tap before the host replies, `sound('count')` for a metronome or
+per-second countdown. Full table in GAME-AUTHORING.md §"Feedback".
+
 ## UX standards (learned from the review passes)
 
 - **Touch targets ≥ 44pt** (Apple HIG). Buttons: padding ≥ 12-13px vertical. Cards that are

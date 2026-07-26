@@ -23,8 +23,13 @@ function createGame(Table, root) {
   let lastSpokenSecond = null;  // so the countdown beeps once per second, not per tick
   let seenScore = null;         // team scores last render, for the point/skip cues
 
-  /// Room feedback, optional-chained so the bundle still runs on an older harness.
-  function fb(haptic, sound) {
+  /// Semantic feedback via the shared runtime, guarded for older harnesses.
+  function feel(event, opts) {
+    try { if (Table.feel) Table.feel(event, opts || {}); } catch (e) {}
+  }
+  /// Raw pass-through for the two cues that are NOT game events: the per-second
+  /// countdown tick and the instant local confirm of your own tap.
+  function raw(haptic, sound) {
     try { if (haptic && Table.haptic) Table.haptic(haptic); } catch (e) {}
     try { if (sound && Table.sound) Table.sound(sound); } catch (e) {}
   }
@@ -214,8 +219,8 @@ function createGame(Table, root) {
     // They're looking at their teammates, not the screen — the clock has to
     // reach them by ear. One beep per second, and a chime when time is up.
     if (view && view.giver === MY && s !== lastSpokenSecond) {
-      if (s > 0 && s <= 10) fb(s <= 3 ? 'heavy' : 'light', 'count');
-      else if (s === 0 && lastSpokenSecond === 1) fb('error', 'buzz');
+      if (s > 0 && s <= 10) feel('countdown', { mine: s <= 3 });
+      else if (s === 0 && lastSpokenSecond === 1) feel('blocked', { mine: true });
       lastSpokenSecond = s;
     }
   }
@@ -235,7 +240,7 @@ function createGame(Table, root) {
     if (seenScore !== null && scoreSig !== seenScore) {
       const mine = v.teams.find(t => (t.playerIds || []).includes(MY));
       const scoredTeam = v.activeTeamId;
-      fb('success', mine && mine.id === scoredTeam ? 'chime' : 'ding');
+      feel(mine && mine.id === scoredTeam ? 'win' : 'gain');
     }
     seenScore = scoreSig;
 
@@ -334,9 +339,9 @@ function createGame(Table, root) {
     const b = root.querySelector('#begin'); if (b) b.onclick = () => Table.send({ t:'begin' });
     // Local echo on the giver's own taps — instant, before the host round-trip.
     const g = root.querySelector('#got');
-    if (g) g.onclick = () => { fb('medium', null); Table.send({ t:'got' }); };
+    if (g) g.onclick = () => { raw('medium', null); Table.send({ t:'got' }); };
     const k = root.querySelector('#skip');
-    if (k) k.onclick = () => { fb('warning', 'buzz'); Table.send({ t:'skip' }); };
+    if (k) k.onclick = () => { feel('blocked'); Table.send({ t:'skip' }); };
     const n = root.querySelector('#next');  if (n) n.onclick = () => Table.send({ t:'next' });
   }
 

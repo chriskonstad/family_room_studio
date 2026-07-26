@@ -20,10 +20,14 @@ game. A **game** is just a bundle of HTML + JS + assets written against one inje
 ## Quick start
 
 ```sh
-cd playtest
+# serve the dev-kit ROOT, not playtest/ — the studio loads sdk/fr-feel.js
 python3 -m http.server 8777
-# open http://localhost:8777  (localhost is required for the folder picker)
+# open http://localhost:8777/playtest/   (localhost is required for the folder picker)
 ```
+
+Serving `playtest/` directly still works, but the studio can't reach `sdk/fr-feel.js`
+from there, so games lose `Table.feel()` and the shared `fr-*` animations. The console
+says so if it happens.
 
 Then: pick a built-in **Sample** to see a game run, read
 [GAME-AUTHORING.md](GAME-AUTHORING.md), write your own game folder

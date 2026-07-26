@@ -5,6 +5,18 @@ function createGame(Table, root){
   const pick = a=>a[Math.floor(Math.random()*a.length)];
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
+  /// Shared game-feel runtime. Optional-chained so this bundle still runs on a
+  /// harness that predates Table.feel (and in a plain browser).
+  const feel = (e,o)=>{ try{ if(Table.feel) Table.feel(e,o); }catch(_){} };
+
+  // This game re-broadcasts 4x/SECOND to drive the heat bar, so render() runs
+  // ~4x/second. Every cue below is therefore gated on a transition, and these
+  // are updated at the very end of render().
+  let seenPhase = null;      // phase at the previous render
+  let seenHolder = null;     // who held the bomb at the previous render
+  let heatIdx = 0;           // next unfired fuse mark; only ever moves forward
+  const HEAT_MARKS = [0.5, 0.72, 0.88, 0.96];
+
   // ---------- host ----------
   function initGame(players){
     G = {order:players.map(p=>p.id), names:{}, emojis:{}, alive:{}, out:[],
@@ -107,6 +119,31 @@ function createGame(Table, root){
       h += `<div class="big"><div class="bomb boom">💥</div><div class="hint">${esc(v.banner)}</div></div>`;
     }
     root.innerHTML = h;
+
+    // ---------- feedback (after innerHTML, on live nodes) ----------
+    const newBomb    = v.phase==='live' && seenPhase!=='live';
+    const justPassed = v.phase==='live' && seenPhase==='live' && seenHolder && v.holder!==seenHolder;
+    const justBoom   = v.phase==='boom' && seenPhase!=='boom';
+
+    if(newBomb) heatIdx = 0;                       // fresh fuse, re-arm the marks
+    if(newBomb || justPassed){                     // one holder change = one cue
+      if(v.holder===MY) feel('arrive', {el:'.bomb', mine:true});   // it lands in YOUR hands
+      else feel('pass');                                           // whoosh, it went past you
+    }
+    if(justBoom) feel('eliminate', {el:'.big', mine:v.holder===MY});
+
+    // Fuse ticks, for the HOLDER only — five other phones stay quiet. The pointer
+    // never rewinds, so each mark fires once, and at most one tick per render.
+    if(v.phase==='live' && v.holder===MY){
+      let crossed = false;
+      while(heatIdx<HEAT_MARKS.length && (v.heat||0)>=HEAT_MARKS[heatIdx]){ heatIdx++; crossed = true; }
+      if(crossed) feel('tick', {mine:true});
+    }
+    // Silent standing state; re-applied because render() rebuilds the bar 4x/sec.
+    if(v.phase==='live' && (v.heat||0)>0.6) feel('urgent', {el:'.heat i'});
+
+    seenPhase = v.phase; seenHolder = v.holder;     // bookkeeping AFTER the DOM is built
+
     const lb = root.querySelector('#light'); if(lb) lb.onclick=()=>Table.send({t:'light'});
     root.querySelectorAll('[data-to]').forEach(b=>b.onclick=()=>Table.send({t:'pass',to:b.dataset.to}));
   }

@@ -11,6 +11,17 @@ function createGame(Table, root){
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const colIc = k=>{ const c=COLORS.find(x=>x.k===k); return c?c.ic:''; };
 
+  /// Shared game-feel runtime. Optional-chained so this bundle still runs on a
+  /// harness that predates Table.feel (and in a plain browser).
+  const feel = (e,o)=>{ try{ if(Table.feel) Table.feel(e,o); }catch(_){} };
+
+  // Feedback bookkeeping. render() runs on every state AND on my own tap, so
+  // every cue below is gated on a TRANSITION and these are updated after render.
+  let seenAlive = {};        // id -> alive at the previous render
+  let seenPromptRound = 0;   // round whose order we already announced
+  let seenRevealRound = 0;   // round whose result we already resolved
+  let beeps = [];            // countdown thresholds (ms left) still unfired this round
+
   // ---------- host ----------
   function initGame(players){
     G = {order:players.map(p=>p.id), names:{}, emojis:{}, alive:{}, out:[],
@@ -97,11 +108,22 @@ function createGame(Table, root){
     clearInterval(tick);
     if(!view.prompt) return;
     deadlineLocal = Date.now() + view.prompt.win;
+    beeps = [1000, 640, 300];              // one beep each, re-armed per round
     tick = setInterval(()=>{
       const bar = root.querySelector('.tbar i');
       if(!bar || !view || view.phase!=='prompt'){ clearInterval(tick); return; }
-      const left = Math.max(0, (deadlineLocal-Date.now())/view.prompt.win);
+      const remain = Math.max(0, deadlineLocal-Date.now());
+      const left = remain/view.prompt.win;
       bar.style.width = (left*100) + '%';
+      // Final second: three beeps, the last one heavy. Shifting the threshold off
+      // the list is what guarantees each beep fires exactly once per round.
+      while(view.alive[MY] && beeps.length && remain <= beeps[0]){
+        beeps.shift();
+        feel('countdown', {mine: beeps.length===0});
+      }
+      // …and the bar itself starts blinking. Re-applied because render() rebuilds
+      // the node; `urgent` is silent, so this is a class add, never a repeated cue.
+      if(left<=0.25 && !bar.classList.contains('fr-blink')) feel('urgent', {el:bar});
       if(left<=0) clearInterval(tick);
     }, 60);
   }
@@ -132,12 +154,47 @@ function createGame(Table, root){
         : `<div class="wait">💥 you're out — watch the rest</div>`;
     } else if(v.phase==='reveal'){
       const ok = (v.banner||'').indexOf('💥') < 0;
-      h += `<div class="big"><div class="ic">${ok?'✅':'💥'}</div><div class="hint">${esc(v.banner)}</div></div>`;
+      // Show what everybody actually tapped — a reaction round is unreadable
+      // without it. "Was in this round" = alive now, or alive at the last render.
+      const played = v.taps ? v.order.filter(id=>v.alive[id] || seenAlive[id]) : [];
+      const taps = played.map(id=>`${v.emojis[id]}${v.taps[id]!=null?colIc(v.taps[id]):'—'}`).join('  ');
+      h += `<div class="big"><div class="ic">${ok?'✅':'💥'}</div>
+        ${taps?`<div class="hint" style="font-size:20px;letter-spacing:.05em">${taps}</div>`:''}
+        <div class="hint">${esc(v.banner)}</div></div>`;
     }
     root.innerHTML = h;
+
+    // ---------- feedback (after innerHTML, on live nodes) ----------
+    const chips = root.querySelectorAll('.crew .cm');      // index-aligned with v.order
+    const chipOf = id => chips[v.order.indexOf(id)] || null;
+
+    if(v.phase==='prompt' && seenPromptRound!==v.round){
+      seenPromptRound = v.round;                           // once per round
+      feel('arrive', {el:'.banner'});                      // a new order just landed
+    }
+    if(v.phase==='reveal' && seenRevealRound!==v.round){
+      seenRevealRound = v.round;                           // once per round
+      feel('reveal', {el:'.big .ic'});
+      const outs = v.order.filter(id => !v.alive[id] && seenAlive[id]===true);
+      const iAmOut = outs.indexOf(MY) >= 0;
+      // Shake EVERY chip that just went out, but make a noise only once — yours
+      // if you're in it, otherwise the first — so a 6-player table isn't a mess.
+      outs.forEach((id,i)=>{
+        const lead = iAmOut ? id===MY : i===0;
+        feel('eliminate', {el:chipOf(id), mine:iAmOut && id===MY, silent:!lead, quiet:!lead});
+      });
+      if(v.alive[MY] && seenAlive[MY]===true){             // you survived the round
+        feel('gain', {el:chipOf(MY), mine:true, silent:outs.length>0, quiet:outs.length>0});
+      }
+    }
+    // bookkeeping AFTER the DOM is built and the reveal list has been read
+    v.order.forEach(id=>{ seenAlive[id] = !!v.alive[id]; });
+
     const g = root.querySelector('#go'); if(g) g.onclick=()=>Table.send({t:'go'});
     root.querySelectorAll('[data-c]').forEach(b=>{ if(!b.disabled) b.onclick=()=>{
-      if(myTap) return; myTap = b.dataset.c; Table.send({t:'tap',color:b.dataset.c}); render();
+      if(myTap) return; myTap = b.dataset.c; Table.send({t:'tap',color:b.dataset.c});
+      feel('tick', {mine:true});                           // guarded by the myTap latch
+      render();
     };});
   }
   render();

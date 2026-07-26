@@ -50,8 +50,8 @@
   .rlooker{font-size:22px; font-weight:800; color:var(--accent)}
   .rgrid{display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:340px}
   .rp{font-size:20px; padding:7px 11px; border-radius:12px; background:var(--panel)}
-  .rp.caught{background:rgba(255,92,138,.25); box-shadow:0 0 0 2px var(--bad); animation:shk .4s}
-  @keyframes shk{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+  /* the hit animation is fr-flash-bad, fired once per reveal by Table.feel('hit') */
+  .rp.caught{background:rgba(255,92,138,.25); box-shadow:0 0 0 2px var(--bad)}
   .wait{color:var(--muted); font-size:14px}
 </style>
 </head>

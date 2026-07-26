@@ -71,6 +71,19 @@ sandbox.window.addEventListener = () => {};
 
 vm.createContext(sandbox);
 vm.runInContext(boot, sandbox);
+
+// The studio injects fr-feel.js into every phone; do the same here or the
+// conformance run would report a difference the real studio doesn't have.
+const feel = readFileSync(join(repo, 'tools/sdk/fr-feel.js'), 'utf8');
+sandbox.document = {
+  getElementById: () => null,
+  createElement: () => ({ setAttribute() {}, appendChild() {}, style: {}, classList: { add(){}, remove(){} } }),
+  querySelector: () => null,
+  head: { appendChild() {} },
+  documentElement: { appendChild() {} }
+};
+vm.runInContext(feel, sandbox);
+vm.runInContext('__frFeel.install(window.Table, document)', sandbox);
 vm.runInContext(suite, sandbox);
 const report = vm.runInContext('__tableConformance.run(window.Table)', sandbox);
 

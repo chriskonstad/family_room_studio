@@ -9,6 +9,16 @@ function createGame(Table, root){
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const dic = k=>{ const d=DIRS.find(x=>x.k===k); return d?d.ic:''; };
 
+  /// Shared game-feel runtime. Optional-chained so this bundle still runs on a
+  /// harness that predates Table.feel (and in a plain browser).
+  const feel = (e,o)=>{ try{ if(Table.feel) Table.feel(e,o); }catch(_){} };
+  const dealIn = (n,s)=>{ try{ if(Table.feel && Table.feel.deal) Table.feel.deal(n,s); }catch(_){} };
+
+  // Feedback bookkeeping — render() also runs on my own pick, so every cue is
+  // gated on a transition. Updated at the END of render().
+  let seenRevealRound = 0;   // round whose reveal we already scored
+  let seenLooker = null;     // looker at the previous render
+
   // ---------- host ----------
   function initGame(players){
     G = {order:players.map(p=>p.id), names:{}, emojis:{}, lives:{},
@@ -98,7 +108,8 @@ function createGame(Table, root){
     if(!view){ root.innerHTML='<div class="big"><span class="wait">Peeking…</span></div>'; return; }
     const v = view;
     const meLooker = v.looker===MY, meAlive = v.lives[MY]>0;
-    let h = `<div class="hdr"><span class="brand">LOOK AWAY</span><span class="sub">round ${v.round}</span></div>`;
+    let revealIds = [];     // dodgers shown in .rgrid, in render order
+    let h =`<div class="hdr"><span class="brand">LOOK AWAY</span><span class="sub">round ${v.round}</span></div>`;
     h += `<div class="lives">` + v.order.map(id=>
       `<span class="lf ${v.lives[id]>0?'':'out'} ${id===v.looker?'looker':''}">${v.emojis[id]} ${'❤️'.repeat(v.lives[id])||'💀'}</span>`).join('') + `</div>`;
     h += `<div class="banner">${esc(v.banner||'')}</div>`;
@@ -120,13 +131,46 @@ function createGame(Table, root){
         : `<div class="wait">💀 out of hearts — spectating</div>`;
     } else if(v.phase==='reveal'){
       const ld = v.picks[v.looker];
+      revealIds = v.order.filter(id=>id!==v.looker && v.picks[id]!=null);
       h += `<div class="reveal"><div class="rlooker">${v.emojis[v.looker]} looked ${dic(ld)}</div><div class="rgrid">` +
-        v.order.filter(id=>id!==v.looker && v.picks[id]!=null).map(id=>{
+        revealIds.map(id=>{
           const caught = v.picks[id]===ld;
           return `<div class="rp ${caught?'caught':''}">${v.emojis[id]} ${dic(v.picks[id])}${caught?' 😵':''}</div>`;
         }).join('') + `</div><div class="hint">${esc(v.banner)}</div></div>`;
     }
     root.innerHTML = h;
+
+    // ---------- feedback (after innerHTML, on live nodes) ----------
+    const lifeChips = root.querySelectorAll('.lives .lf');   // index-aligned with v.order
+    const lifeOf = id => lifeChips[v.order.indexOf(id)] || null;
+
+    if(v.phase==='pick' && v.looker){
+      // Standing glow on the looker. The chip is a fresh node every render so the
+      // class must be re-applied; the haptic is gated to the moment it becomes YOURS.
+      feel('turn', {el:lifeOf(v.looker), quiet: !(v.looker!==seenLooker && v.looker===MY)});
+    }
+    if(v.phase==='reveal' && seenRevealRound!==v.round){
+      seenRevealRound = v.round;                             // once per round
+      const ld = v.picks[v.looker];
+      const rps = root.querySelectorAll('.rgrid .rp');       // index-aligned with revealIds
+      feel('reveal', {el:'.rlooker'});
+      // Dodgers deal in one after another; the caught get flashed instead, so no
+      // node ends up with two competing fr-* animations.
+      dealIn(Array.prototype.filter.call(rps, (_el,i)=>v.picks[revealIds[i]]!==ld), 55);
+      const caught = revealIds.filter(id=>v.picks[id]===ld);
+      const iCaught = caught.indexOf(MY) >= 0;
+      caught.forEach((id,n)=>{
+        const lead = iCaught ? id===MY : n===0;              // one noise per reveal
+        feel('hit', {el:rps[revealIds.indexOf(id)], mine:id===MY, silent:!lead, quiet:!lead});
+      });
+      if(v.lives[MY]>0 && !iCaught && !meLooker){            // you dodged
+        feel('gain', {el:lifeOf(MY), mine:true, silent:caught.length>0, quiet:caught.length>0});
+      } else if(meLooker && caught.length){                  // your stare landed
+        feel('gain', {el:lifeOf(MY), mine:true, silent:true, quiet:true});
+      }
+    }
+    seenLooker = v.looker || null;    // bookkeeping AFTER the DOM is built
+
     const g = root.querySelector('#go'); if(g) g.onclick=()=>Table.send({t:'go'});
     root.querySelectorAll('[data-d]').forEach(b=>{ if(!b.disabled) b.onclick=()=>{
       if(myPick) return; myPick = b.dataset.d; Table.send({t:'look',dir:b.dataset.d}); render();

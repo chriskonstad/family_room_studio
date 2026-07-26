@@ -235,6 +235,7 @@ const TEAMS = [
 // ---- state ----
 const state = {
   vfs:null,            // { path: Uint8Array }
+  feelRuntime:null,    // tools/sdk/fr-feel.js source, fetched once (see loadFeelRuntime)
   manifest:null,
   entryHtmlBase:null,  // rewritten entry HTML with a <!--__TABLE_SDK__--> marker
   dirHandle:null,      // FileSystemDirectoryHandle for hot reload (if available)
@@ -616,7 +617,11 @@ function renderStage(){
     stage.appendChild(wrap);
 
     const iframe = wrap.querySelector('iframe');
-    const html = state.entryHtmlBase.replace('<!--__TABLE_SDK__-->', '<script>'+sdkScript(p, roster)+'<\/script>');
+    // Same fr-feel.js the iOS shell bundles — one copy, so the two harnesses
+    // can't drift on animations or Table.feel.
+    const html = state.entryHtmlBase.replace('<!--__TABLE_SDK__-->',
+      '<script>'+sdkScript(p, roster)+'<\/script>' +
+      (state.feelRuntime ? '<script>'+state.feelRuntime+'\nwindow.__frFeel.install(window.Table, document);<\/script>' : ''));
     loads.push(new Promise(res=>{ iframe.onload = ()=>res(p); iframe.srcdoc = html; }));
   });
 
@@ -814,6 +819,23 @@ function fail(err){ console.error(err); alert('Could not load game:\n\n'+(err.me
 
 // load sample list (built-in demos)
 let SAMPLES = [];
+// The shared game-feel runtime (tools/sdk/fr-feel.js) — the exact file the iOS
+// shell bundles, so the two harnesses can't drift on animations or Table.feel.
+// Try both locations: served from the dev-kit root (../sdk/) or from inside
+// playtest/ as the README suggests (sdk/ would then be out of reach, so we also
+// accept a copy alongside). Without this the studio silently loses Table.feel.
+(async () => {
+  for (const url of ['../sdk/fr-feel.js', 'sdk/fr-feel.js', '/sdk/fr-feel.js']) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) { state.feelRuntime = await r.text(); return; }
+    } catch (e) { /* try the next one */ }
+  }
+  console.warn('fr-feel.js not found — no Table.feel/fr-* animations in the studio. '
+             + 'Serve the dev-kit ROOT (python3 -m http.server 8777 from tools/) '
+             + 'and open /playtest/.');
+})();
+
 fetch('samples/index.json').then(r=>r.ok?r.json():[]).then(list=>{
   SAMPLES = list||[];
   const sel=$('#sampleSel');

@@ -24,22 +24,19 @@
   .integrity{height:14px; background:#160e04; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:8px 0 4px}
   .integrity i{display:block; height:100%; background:linear-gradient(90deg,var(--good),#b3d34a); transition:width .3s}
   .integrity.low i{background:linear-gradient(90deg,var(--bad),#f07a32)}
-  .integrity.hurt{animation:hurtflash .5s}
-  @keyframes hurtflash{0%{box-shadow:0 0 0 rgba(224,86,75,.95)}50%{box-shadow:0 0 20px rgba(224,86,75,.85)}100%{box-shadow:0 0 0 rgba(224,86,75,0)}}
+  /* reactor damage flashes the bar via feel('hit') -> fr-flash-bad, and shakes
+     the whole body via fr-shake */
   .banner{text-align:center; font-size:13px; font-weight:700; min-height:17px; margin:5px 2px 2px; color:var(--muted)}
   .banner.bad{color:var(--bad)}
-  .banner.up{color:var(--accent); animation:bannerpulse .9s ease-in-out 2}
+  .banner.up{color:var(--good); animation:bannerpulse .9s ease-in-out 2}
   @keyframes bannerpulse{50%{transform:scale(1.06)}}
-  body.shake{animation:bodyshake .4s}
-  @keyframes bodyshake{20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
 
   .order{background:#000; border:2px solid var(--warn); border-radius:14px; padding:12px 14px; margin:8px 0;
     font-family:ui-monospace,Menlo,monospace; font-size:17px; font-weight:700; color:#7CFC9E; min-height:64px;
     display:flex; align-items:center; gap:10px}
   .order .t{flex:1}
   .order .clock{font-size:22px; color:var(--warn); font-variant-numeric:tabular-nums}
-  .order.urgent{border-color:var(--bad); animation:blink .5s infinite}
-  @keyframes blink{50%{border-color:#7a1e15}}
+  .order.urgent{border-color:var(--bad)}   /* the blink itself is feel('urgent') -> fr-blink */
   .order .done{color:var(--good)}
 
   .panel{flex:1; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-content:start; padding-top:6px}
@@ -54,8 +51,7 @@
   .ctl .dialrow{display:flex; gap:5px; justify-content:center}
   .ctl .dialrow button{flex:1; background:#3a2a12; color:var(--muted); padding:13px 0}
   .ctl .dialrow button.cur{background:var(--warn); color:#2a1600}
-  .flash-good{animation:okflash .5s}
-  @keyframes okflash{0%{box-shadow:0 0 0 rgba(105,216,118,.9)}100%{box-shadow:0 0 22px rgba(105,216,118,0)}}
+  /* a control that satisfied an order flashes green via feel('heal') -> fr-flash-good */
 
   .big{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center}
   .big .icon{font-size:46px}

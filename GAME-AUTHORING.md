@@ -430,9 +430,53 @@ action · **red** = bust/damage/out · **blue** = frozen/locked · **green** = s
 **muted grey** = inactive, spectating, waiting. Always mark the local player (a `YOU`
 chip, a bolder row). Always use the player's emoji as their token.
 
+### Feedback: reach for `Table.feel()` first
+
+The harness injects a **game-feel runtime** (`tools/sdk/fr-feel.js`) alongside the SDK.
+It gives you a shared animation vocabulary as CSS *and* one call that fires the right
+animation, haptic and sound together:
+
+```js
+Table.feel('bust',      { el: row, mine: true });   // shake + error haptic + boom
+Table.feel('gain',      { el: chip });              // pop   + light haptic + ding
+Table.feel('turn',      { el: myRow });             // glow pulse (persistent)
+Table.feel('turn',      { el: myRow, off: true });  // ...and clear it
+Table.feel.deal(root.querySelectorAll('.card'));    // staggered pop for a new hand
+```
+
+Events: `gain win heal` · `bust eliminate hit freeze blocked` · `arrive pass reveal tick
+countdown` · `turn urgent` (persistent). `Table.feel.events` lists them at runtime.
+
+**Two rules that matter more than adding lots of effects:**
+
+1. **`mine: true` when it happened to the local player.** Your own bust is an error buzz;
+   somebody else's is a light nudge. Six phones all buzzing at full strength is worse than
+   no haptics at all.
+2. **Call it after you write the DOM, with the live element.** `feel()` animates a real
+   node — it does *not* want a class baked into your HTML string. That is precisely what
+   stops animations replaying on every re-render.
+
+#### When to use the raw primitives instead
+
+`Table.haptic(style)` and `Table.sound(name)` are still there, and they're the right choice
+when the feedback isn't tied to a semantic game event:
+
+| Use | Reach for |
+|---|---|
+| A game event happened (someone busted, scored, was eliminated, it's your turn) | **`feel()`** — you get the matching animation + haptic + sound, weighted by `mine` |
+| Confirming the local player's own tap *before* the host replies | **`haptic('medium')`** — pure latency masking, no state changed yet |
+| A per-second countdown tick, a metronome, a drum pattern | **`sound('count'/'tick')`** — rhythmic, not an event; `feel('countdown')` also works if you want the haptic paired |
+| Something with no visual anchor (nothing to animate) | **raw** — `feel()` without `el` works, but if you never want an animation the intent is clearer raw |
+| A bespoke animation `feel()` doesn't cover | Your own CSS, plus `haptic`/`sound` to match |
+
+Haptics and sound are shell-owned because WebKit on iOS has **no** vibrate API and gates
+web audio behind a per-device user gesture — a game genuinely cannot do either itself.
+
 ### Animation vocabulary
 
-Pick from this set; don't invent new meanings.
+`feel()` applies these for you. Use the classes directly (`fr-pop`, `fr-shake`,
+`fr-flash-good`, `fr-flash-bad`, `fr-flash-cool`, `fr-glow`, `fr-blink`, `fr-deal`) only
+when you need an animation without the paired feedback. Either way, keep the meanings:
 
 | Animation | Means | Use for |
 |---|---|---|

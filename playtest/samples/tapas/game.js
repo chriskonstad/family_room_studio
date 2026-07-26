@@ -25,7 +25,13 @@ function createGame(Table, root) {
   let sel = null;
   let picked = false;
   let lastHandSig = '';   // pop animation fires only when a NEW hand arrives
+  let seenReveal = 0;     // draft step whose reveal we've already popped
   let G = null;
+
+  /// Game-feel shim, so a bundle still runs on a harness that predates
+  /// Table.feel (and in a plain browser).
+  const feel = (ev, o) => { if (Table.feel) Table.feel(ev, o); };
+  const dealIn = (nodes, step) => { if (Table.feel && Table.feel.deal) Table.feel.deal(nodes, step); };
 
   const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 
@@ -46,6 +52,7 @@ function createGame(Table, root) {
     G.hands = {}; G.tableau = {}; G.picks = {};
     const size = HAND_SIZE[G.order.length] || 8;
     G.order.forEach(id => { G.hands[id] = G.deck.splice(0, size); G.tableau[id] = []; G.picks[id] = null; });
+    G.reveal = null;
     G.phase = 'drafting';
     G.banner = 'Round '+G.round+' — pick a plate!';
   }
@@ -53,20 +60,28 @@ function createGame(Table, root) {
   function everyonePicked(){ return G.order.every(id => G.picks[id] != null); }
   function resolvePicks() {
     // reveal all picks, move to tableaus
+    const took = {};
     G.order.forEach(id => {
       const idx = G.picks[id];
       const card = G.hands[id][idx];
       G.hands[id].splice(idx, 1);
       G.tableau[id].push(card);
+      took[id] = card;
       if (card === 'churro') G.churros[id]++;
       G.picks[id] = null;
     });
+    // THE REVEAL. Simultaneous drafting has no payoff unless everyone gets to see
+    // what everyone else grabbed, so publish a per-player "just took" marker,
+    // stamped with a sequence number: each device pops those chips exactly once.
+    G.reveal = took;
+    G.revealSeq = (G.revealSeq || 0) + 1;
     // rotate hands (to the next player in seat order)
     const rotated = {};
     G.order.forEach((id, i) => { rotated[G.order[(i+1) % G.order.length]] = G.hands[id]; });
     G.hands = rotated;
     if (G.hands[G.order[0]].length === 0) endRound();
-    else G.banner = 'Plates passed — pick again!';
+    else G.banner = '🍽️ ' + G.order.map(id => G.emojis[id] + TYPES[took[id]].ic).join('  ')
+                  + ' — plates passed!';
   }
 
   function scoreTableau(cards) {
@@ -130,6 +145,7 @@ function createGame(Table, root) {
       names:G.names, emojis:G.emojis, order:G.order,
       totals:{...G.totals}, lastRound:G.lastRound||null, churros:{...G.churros},
       tableau: JSON.parse(JSON.stringify(G.tableau)),
+      reveal: G.reveal || null, revealSeq: G.revealSeq || 0,
       pickedFlags: Object.fromEntries(G.order.map(id => [id, G.picks[id] != null])),
       handCount: G.hands[G.order[0]] ? G.hands[G.order[0]].length : 0,
     };
@@ -172,19 +188,20 @@ function createGame(Table, root) {
     const counts = {};
     view.tableau[id].forEach(c => counts[c] = (counts[c]||0)+1);
     return Object.entries(counts).map(([k,n]) =>
-      `<span class="mini">${T(k).ic}${n>1?'×'+n:''}</span>`).join('') || '<span class="mini" style="opacity:.4">empty plate</span>';
+      `<span class="mini" data-mini="${k}">${T(k).ic}${n>1?'×'+n:''}</span>`).join('') || '<span class="mini" style="opacity:.4">empty plate</span>';
   }
 
   function render() {
     if (!view) { root.innerHTML = '<span class="wait">Setting the table…</span>'; return; }
     const v = view;
+    let freshHand = false;
     let h = `<div class="hdr"><span class="brand">TAPAS</span>
       <span class="sub">Round ${v.round}/3 · ${v.handCount} cards left</span></div>
       <div class="banner">${esc(v.banner||'')}</div>`;
 
     h += `<div class="plates">`;
     v.order.forEach(id => {
-      h += `<div class="prow ${id===MY?'me':''}">
+      h += `<div class="prow ${id===MY?'me':''}" data-pid="${id}">
         <div class="top"><span>${v.emojis[id]}</span><span class="who">${esc(v.names[id])}</span>
           ${v.phase==='drafting' ? (v.pickedFlags[id] ? '<span class="picked">✓ picked</span>' : '<span class="picked" style="opacity:.35">choosing…</span>') : ''}
           <span class="pts">${v.totals[id]}</span></div>
@@ -194,11 +211,11 @@ function createGame(Table, root) {
 
     if (v.phase === 'drafting') {
       const handSig = myHand.join(',');
-      const fresh = handSig !== lastHandSig;
+      freshHand = handSig !== lastHandSig;
       lastHandSig = handSig;
       h += `<div class="sec">Your hand — pick one</div><div class="hand">`;
       myHand.forEach((k,i) => {
-        h += `<div class="card ${sel===i?'sel':''}${fresh?' pop':''}" data-i="${i}" style="animation-delay:${fresh ? i*40 : 0}ms">
+        h += `<div class="card ${sel===i?'sel':''}" data-i="${i}">
           <span class="ic">${T(k).ic}</span><span class="nm">${esc(T(k).nm)}</span><span class="sc">${esc(T(k).sc)}</span></div>`;
       });
       h += `</div><div class="ctrl">`;
@@ -215,6 +232,28 @@ function createGame(Table, root) {
     }
 
     root.innerHTML = h;
+
+    // ---- game feel, on the live nodes we just wrote ----
+    // render() also runs on a plain card tap, so both blocks are guarded.
+
+    // The reveal beat: pop the chip each player just added to their plate.
+    // revealSeq only advances when picks actually resolved.
+    if (v.reveal && v.revealSeq !== seenReveal) {
+      seenReveal = v.revealSeq;
+      Object.keys(v.reveal).forEach(id => {
+        const row = [...root.querySelectorAll('.prow')].find(n => n.dataset.pid === id);
+        const chip = row && row.querySelector('[data-mini="'+v.reveal[id]+'"]');
+        if (id === MY) feel('gain', { el: chip, mine:true });  // your pick landing
+        else feel('reveal', { el: chip });                     // theirs: silent pop
+      });
+    }
+    // A freshly passed (or dealt) hand slides in staggered, with one whoosh for
+    // the pass itself.
+    if (freshHand && myHand.length) {
+      dealIn(root.querySelectorAll('.hand .card'), 40);
+      feel('pass');
+    }
+
     root.querySelectorAll('[data-i]').forEach(el => el.onclick = () => {
       if (picked) return;
       sel = (sel === +el.dataset.i) ? null : +el.dataset.i; render();

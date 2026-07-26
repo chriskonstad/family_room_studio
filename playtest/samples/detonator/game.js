@@ -4,6 +4,15 @@ function createGame(Table, root){
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const PLCOLORS = ['#e0564b','#e0a52e','#43b06b','#4a90e0','#9b6ee0'];
 
+  /// Shared game-feel runtime. Optional-chained so this bundle still runs on a
+  /// harness that predates Table.feel (and in a plain browser).
+  const feel = (e,o)=>{ try{ if(Table.feel) Table.feel(e,o); }catch(_){} };
+
+  // Feedback bookkeeping — cues fire on plunger/turn TRANSITIONS, not per render.
+  // Updated at the end of render().
+  let seenPlungers = null;   // plunger states at the previous render
+  let seenTurn = null;       // whose turn it WAS — i.e. whoever just pressed
+
   // ---------- host ----------
   function initGame(players){
     G = {order:players.map(p=>p.id), names:{}, emojis:{}, alive:{}, out:[],
@@ -92,6 +101,30 @@ function createGame(Table, root){
                 : (v.phase==='playing' ? `<div class="wait">Waiting for ${esc(v.names[v.turn]||'')} to press…</div>` : '');
     h += `</div>`;
     root.innerHTML = h;
+
+    // ---------- feedback (after innerHTML, on live nodes) ----------
+    const btns    = root.querySelectorAll('.plungers .plunger');   // aligned with v.plungers
+    const plChips = root.querySelectorAll('.players .pl');         // aligned with v.order
+    const prev = seenPlungers, presser = seenTurn, mine = presser===MY;
+
+    if(prev){
+      let safeI = -1, boomI = -1;
+      v.plungers.forEach((st,i)=>{                      // only 0 -> pressed counts
+        if(prev[i]===0 && st===1) safeI = i; else if(prev[i]===0 && st===2) boomI = i;
+      });
+      if(safeI>=0) feel('gain', {el:btns[safeI], mine});
+      if(boomI>=0) feel('eliminate', {el:'.plungers', mine});   // the .boom blast plays too
+      // A fresh detonator: every plunger back to unpressed.
+      if(prev.some(s=>s!==0) && v.plungers.every(s=>s===0)) feel('arrive', {el:'.plungers'});
+    }
+    if(v.phase==='playing' && v.turn && plChips.length){
+      // Standing glow on the active player. Re-applied because render() rebuilds
+      // the chips; the selection haptic only when the turn newly becomes YOURS.
+      const el = plChips[v.order.indexOf(v.turn)];
+      if(el) feel('turn', {el, quiet: !(v.turn!==seenTurn && v.turn===MY)});
+    }
+    seenPlungers = v.plungers.slice(); seenTurn = v.turn;   // AFTER the DOM is built
+
     root.querySelectorAll('[data-i]').forEach(b=>{ if(!b.disabled) b.onclick=()=>Table.send({t:'press',i:+b.dataset.i}); });
   }
   render();

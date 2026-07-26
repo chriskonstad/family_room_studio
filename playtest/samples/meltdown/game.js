@@ -18,8 +18,16 @@ function createGame(Table, root) {
   let myPanel = [];        // my controls [{id,label,type,value}]
   let myOrder = null;      // my current instruction {text, deadline}
   let prevIntegrity = null;
+  let seenAct = 0;         // panel outcome we've already reacted to
   let localTick = null;
   let G = null;
+
+  /// Game-feel shim, so a bundle still runs on a harness that predates
+  /// Table.feel (and in a plain browser).
+  const feel = (ev, o) => { if (Table.feel) Table.feel(ev, o); };
+  /// Confirming the local player's own tap BEFORE the host rules on it — pure
+  /// latency masking, not a game event, so it stays a raw haptic.
+  const tapAck = () => { try { if (Table.haptic) Table.haptic('medium'); } catch (e) {} };
 
   const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
   const pick = a => a[Math.floor(Math.random()*a.length)];
@@ -99,13 +107,17 @@ function createGame(Table, root) {
         G.progress++;
         G.integrity = Math.min(100, G.integrity + 1);
         G.banner = '✅ '+o.text.replace('!','')+' — nice.';
+        // Who flipped what, and did it work: the flipper's own phone needs this
+        // to answer their tap, and it's the only place that attribution exists.
+        G.lastAct = { pid:from, control:ctl.id, ok:true, n:(G.actSeq=(G.actSeq||0)+1) };
         if (G.progress >= SUCCESSES_PER_LEVEL) { levelUp(); }
         else newOrderFor(pid);
         syncAll();
         return;
       }
     }
-    // wrong action: small penalty
+    // wrong action: small penalty (and, at last, a NO for the person who flipped)
+    G.lastAct = { pid:from, control:ctl.id, ok:false, n:(G.actSeq=(G.actSeq||0)+1) };
     G.integrity -= 2;
     if (G.integrity <= 0) { gameOver(); }
     syncAll();
@@ -135,7 +147,7 @@ function createGame(Table, root) {
     return {
       phase:G.phase, level:G.level, integrity:G.integrity,
       progress:G.progress, goal:SUCCESSES_PER_LEVEL, banner:G.banner,
-      names:G.names, emojis:G.emojis,
+      names:G.names, emojis:G.emojis, lastAct:G.lastAct||null,
     };
   }
   function syncAll() {
@@ -177,14 +189,21 @@ function createGame(Table, root) {
   // ---------- rendering ----------
   const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
+  let urgentOn = false;   // last urgency we applied, so the blink flips once, not 10×/s
   function startClock() {
     clearInterval(localTick);
+    urgentOn = false;     // render() rebuilt .order, so nothing is applied to it yet
     localTick = setInterval(() => {
       const el = root.querySelector('.order .clock');
       if (!el || !myOrder) { clearInterval(localTick); return; }
       const s = Math.max(0, (myOrder.deadline - Date.now())/1000);
       el.textContent = s.toFixed(1);
-      root.querySelector('.order')?.classList.toggle('urgent', s < 2.5);
+      const ord = root.querySelector('.order');
+      if (ord && (s < 2.5) !== urgentOn) {
+        urgentOn = s < 2.5;
+        ord.classList.toggle('urgent', urgentOn);        // red border (our palette)
+        feel('urgent', { el: ord, off: !urgentOn });      // ...and the shared blink
+      }
     }, 100);
   }
 
@@ -201,14 +220,9 @@ function createGame(Table, root) {
     const v = view;
     const hurt = prevIntegrity != null && v.integrity < prevIntegrity;
     prevIntegrity = v.integrity;
-    // Damage should be felt, not just seen on a 14px bar — shake the whole reactor.
-    if (hurt) {
-      document.body.classList.add('shake');
-      setTimeout(() => document.body.classList.remove('shake'), 420);
-    }
     let h = `<div class="hdr"><span class="brand">MELTDOWN</span>
       <span class="lvl">LEVEL <b>${v.level}</b> · ${v.progress}/${v.goal}</span></div>
-      <div class="integrity ${v.integrity<35?'low':''}${hurt?' hurt':''}"><i style="width:${Math.max(0,v.integrity)}%"></i></div>
+      <div class="integrity ${v.integrity<35?'low':''}"><i style="width:${Math.max(0,v.integrity)}%"></i></div>
       <div class="banner${bannerTone(v.banner)}">${esc(v.banner || '')}</div>`;
 
     if (v.phase === 'briefing') {
@@ -236,21 +250,45 @@ function createGame(Table, root) {
     root.innerHTML = h;
     startClock();
 
+    // ---- game feel, on the live nodes we just wrote ----
+    // Your own flip lands on the control you touched; a crewmate's success just
+    // nudges the shared progress readout. Guarded by the host's act sequence, so
+    // it fires once per flip even though render() also runs on local taps.
+    const la = v.lastAct;
+    const freshAct = !!la && la.n !== seenAct;
+    const myWrongFlip = freshAct && la.pid === MY && !la.ok;
+    if (freshAct) {
+      seenAct = la.n;
+      if (la.pid === MY) feel(la.ok ? 'heal' : 'blocked', { el: document.getElementById(la.control), mine:true });
+      else if (la.ok) feel('gain', { el: root.querySelector('.lvl') });
+    }
+    // Damage should be felt, not just seen on a 14px bar — flash it and shake the
+    // whole reactor. prevIntegrity keeps it to the one render where the bar drops.
+    // When the damage IS our own wrong flip, stay visual: the buzz above said it.
+    if (hurt) {
+      feel('hit', { el: root.querySelector('.integrity'), mine:true,
+                    silent: myWrongFlip, quiet: myWrongFlip });
+      document.body.classList.add('fr-shake');
+      setTimeout(() => document.body.classList.remove('fr-shake'), 460);
+    }
+
     const b = root.querySelector('#begin'); if (b) b.onclick = () => Table.send({ t:'begin' });
     root.querySelectorAll('[data-act]').forEach(el => el.onclick = () => {
       Table.send({ t:'act', control:el.dataset.act });
-      el.closest('.ctl').classList.add('flash-good');
+      tapAck();
     });
     root.querySelectorAll('[data-sw]').forEach(el => el.onclick = () => {
       const c = myPanel.find(x=>x.id===el.dataset.sw);
       c.value = !c.value;
       Table.send({ t:'act', control:c.id, value:c.value });
+      tapAck();
       render();
     });
     root.querySelectorAll('[data-dial]').forEach(el => el.onclick = () => {
       const c = myPanel.find(x=>x.id===el.dataset.dial);
       c.value = +el.dataset.v;
       Table.send({ t:'act', control:c.id, value:c.value });
+      tapAck();
       render();
     });
   }

@@ -12,6 +12,10 @@ function createGame(Table, root) {
   let G = null;            // host: scores/finished
   let run = null;          // local run state {seed, beats:[times], idx, score, combo, best, timer, audio}
 
+  /// Game-feel shim, so a bundle still runs on a harness that predates
+  /// Table.feel (and in a plain browser).
+  const feel = (ev, o) => { if (Table.feel) Table.feel(ev, o); };
+
   // ---------- deterministic track from a shared seed ----------
   function rng(seed){ let s = seed >>> 0; return () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296; }
   function buildBeats(seed) {
@@ -89,7 +93,8 @@ function createGame(Table, root) {
     const AC = window.AudioContext || window.webkitAudioContext;
     const audio = AC ? new AC() : null;
     run = { beats: buildBeats(seed), idx:0, score:0, combo:0, best:0, hits:0,
-            start: performance.now()/1000 + 0.15, audio, lastSent:0, over:false };
+            start: performance.now()/1000 + 0.15, audio, lastSent:0, over:false,
+            lastFeel:0, lastCount:null };
     if (audio && audio.state === 'suspended') audio.resume();
     scheduleLoop();
   }
@@ -130,6 +135,13 @@ function createGame(Table, root) {
     }
     // stream score to host once per second
     if (nowS - run.lastSent > 1) { run.lastSent = nowS; Table.send({ t:'score', score:run.score }); }
+    // last three seconds of the track — keyed on the whole second, so it can't
+    // fire per frame the way anything else in this loop would
+    const left = TRACK_SECONDS - nowS;
+    if (left > 0 && left <= 3) {
+      const whole = Math.ceil(left);
+      if (whole !== run.lastCount) { run.lastCount = whole; feel('countdown'); }
+    }
     if (nowS >= TRACK_SECONDS) { finishRun(); return; }
     run.raf = requestAnimationFrame(scheduleLoop);
   }
@@ -158,7 +170,27 @@ function createGame(Table, root) {
     if (!v) return;
     v.textContent = text; v.className = 'verdict show '+cls;
     v.onanimationend = () => v.classList.remove('show');
+    feelVerdict(cls, text);
     updateHud();
+  }
+  /// Judging is entirely local here, so "once per event" is just "once per
+  /// verdict" — no seen*/prev* bookkeeping needed. The one hazard is the expiry
+  /// loop in scheduleLoop(): it runs on requestAnimationFrame, which the pause
+  /// shim does NOT freeze, so a stalled frame can retire several beats at once.
+  /// The 110ms floor turns that into one buzz instead of five.
+  /// Sound stays with the game's own WebAudio beeps — a shell ding layered over
+  /// the metronome muddies the beat — so these are haptic-only, and the
+  /// PERFECT/GOOD split rides `mine` for intensity (in a solo-judged game that
+  /// is the only meaningful weighting left).
+  function feelVerdict(cls, text) {
+    if (!run) return;
+    const now = performance.now();
+    if (now - (run.lastFeel || 0) < 110) return;
+    run.lastFeel = now;
+    if (text === 'DONE!')         feel('win',     { el:'.ring', mine:true });
+    else if (cls === 'perfect')   feel('gain',    { mine:true, silent:true });
+    else if (cls === 'good')      feel('gain',    { silent:true });
+    else                          feel('blocked', { el:'.ring', mine:true, silent:true });
   }
   function updateHud() {
     const c = root.querySelector('.combo');

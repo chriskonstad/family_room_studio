@@ -48,6 +48,10 @@
     // room feedback (shell-owned: WebKit on iOS has no vibrate API)
     { path: 'haptic',        type: 'function', arity: 1 },
     { path: 'sound',         type: 'function', arity: 1 },
+    // game feel: semantic layer over animation + haptic + sound (fr-feel.js)
+    { path: 'feel',          type: 'function', arity: 2 },
+    { path: 'feel.events',   type: 'array',    note: 'names accepted by feel()' },
+    { path: 'feel.deal',     type: 'function', arity: 2 },
 
     // persistence
     { path: 'saveState',     type: 'function', arity: 1 },
@@ -131,6 +135,23 @@
       try { fn.call(Table, '__nonexistent__'); } catch (e) { threwUnknown = String(e); }
       record(pair[0] + '() tolerates an unknown name', threwUnknown === null, threwUnknown || '');
     });
+
+    // feel() must be safe with no element, an unknown event, and every documented
+    // event name — a game calling it must never be able to crash on a harness.
+    if (typeof Table.feel === 'function') {
+      var feelThrew = null;
+      try {
+        Table.feel('gain');
+        Table.feel('__nonexistent__', {});
+        (Table.feel.events || []).forEach(function (name) { Table.feel(name, {}); });
+      } catch (e) { feelThrew = String(e); }
+      record('feel() tolerates missing element / unknown event / all events',
+             feelThrew === null, feelThrew || '');
+      record('feel.events lists the documented set',
+             (Table.feel.events || []).indexOf('bust') >= 0
+             && (Table.feel.events || []).indexOf('turn') >= 0,
+             'got: ' + JSON.stringify(Table.feel.events));
+    }
 
     // saveState/loadState round-trip.
     if (typeof Table.saveState === 'function' && typeof Table.loadState === 'function') {

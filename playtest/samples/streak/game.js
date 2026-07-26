@@ -201,11 +201,12 @@ function createGame(Table, root) {
   let seenSave = {};     // pid -> had a Second Chance last render
   let seenChipTotal = 0; // my card count last render (for the flip thump)
 
-  /// Room feedback. Optional-chained so a game bundle still runs on any harness
-  /// that predates these APIs (and in a plain browser).
-  function fb(haptic, sound) {
-    try { if (haptic && Table.haptic) Table.haptic(haptic); } catch (e) {}
-    try { if (sound && Table.sound) Table.sound(sound); } catch (e) {}
+  /// Semantic feedback. No `el` is passed: STREAK's shake/freezeflash/pop are tuned
+  /// in its own CSS and applied from the template, so we want feel()'s centrally
+  /// maintained haptic+sound pairing without a second animation on top.
+  /// Guarded so the bundle still runs on a harness that predates fr-feel.
+  function feel(event, mine) {
+    try { if (Table.feel) Table.feel(event, { mine: !!mine }); } catch (e) {}
   }
 
   function chipsHTML(p) {
@@ -245,9 +246,9 @@ function createGame(Table, root) {
       const justFrozen = p.status==='frozen' && seenStatus[p.id] !== 'frozen';
       // Feel it, don't just see it. Your own disasters hit hardest; someone
       // else's are a lighter nudge so a 6-player table isn't a buzzing mess.
-      if (justBusted) { fb(mine ? 'error' : 'light', mine ? 'boom' : 'thud'); }
-      else if (justFrozen) { fb(mine ? 'warning' : 'light', 'buzz'); }
-      if (mine && p.hasSave && !seenSave[p.id]) { fb('success', 'ding'); }
+      if (justBusted) feel('bust', mine);
+      else if (justFrozen) feel('freeze', mine);
+      if (mine && p.hasSave && !seenSave[p.id]) feel('heal', true);
       seenSave[p.id] = p.hasSave;
       h += `<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}${justBusted?' shake':''}${justFrozen?' freezeflash':''}">
         <div class="top"><span class="pemoji">${p.emoji}</span><span class="who">${esc(p.name)}</span>
@@ -308,7 +309,7 @@ function createGame(Table, root) {
     const me = v.players.find(p => p.id === MY);
     if (me) {
       const myChips = me.nums.length + me.mods.length;
-      if (myChips > seenChipTotal && me.status === 'active') fb('light', 'pop');
+      if (myChips > seenChipTotal && me.status === 'active') feel('arrive');
       seenChipTotal = myChips;
     }
 

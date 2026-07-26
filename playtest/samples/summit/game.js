@@ -17,7 +17,14 @@ function createGame(Table, root) {
   let sel = null;      // selected hand index
   let prevHandLen = 0; // pop-in animation: only NEW cards animate
   let seenPlay = '';   // route-glow animation: only on a fresh play
+  let seenDeal = null; // round whose hand we've already staggered in
+  let seenTurn = '';   // "it's your move" nudge: once per turn, not per render
   let G = null;        // authoritative (host only)
+
+  /// Game-feel shim. Everything below funnels through here so a bundle still
+  /// runs on a harness that predates Table.feel (and in a plain browser).
+  const feel = (ev, o) => { if (Table.feel) Table.feel(ev, o); };
+  const dealIn = (nodes, step) => { if (Table.feel && Table.feel.deal) Table.feel.deal(nodes, step); };
 
   // ---------- host: rules ----------
   const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
@@ -176,14 +183,14 @@ function createGame(Table, root) {
   const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   function cardLabel(card){ return card.v===0 ? '⭐' : String(card.v); }
 
+  // No animation classes are baked into this string — the route that was just
+  // played on is found by [data-owner]/[data-route] after render and popped by
+  // feel('gain'), so it can't replay on an unrelated re-render.
   function routesHTML(pid, mine) {
-    const lp = view.lastPlay;
-    const freshPlay = lp && ('p'+lp.n) !== seenPlay;
-    return `<div class="routes">` + ROUTES.map(r => {
+    return `<div class="routes" data-owner="${pid}">` + ROUTES.map(r => {
       const pile = view.routes[pid][r.k];
       const pts = routeScoreView(pile);
-      const glow = freshPlay && lp.pid === pid && lp.color === r.k;
-      return `<div class="route ${glow?'justplayed':''}" style="border-color:${pile.length?r.color:'var(--line)'}">
+      return `<div class="route" data-route="${r.k}" style="border-color:${pile.length?r.color:'var(--line)'}">
         <div class="icon">${r.icon}</div>
         <div class="cards" style="color:${r.color}">${pile.map(cardLabel).join(' ')||'&nbsp;'}</div>
         <div class="pts">${pile.length ? (pts>=0?'+':'')+pts : ''}</div>
@@ -236,7 +243,7 @@ function createGame(Table, root) {
     h += `<div class="hand">` + ROUTES.map(r => {
       const col = byRoute[r.k];
       const cards = col.map(({ c, i }) =>
-        `<div class="card ${c.v===0?'wager ':''}${sel===i?'sel':''}${i>=prevHandLen?' pop':''}"
+        `<div class="card ${c.v===0?'wager ':''}${sel===i?'sel':''}"
               data-hand="${i}" style="background:${r.color}">${cardLabel(c)}</div>`).join('');
       return `<div class="handcol">
         <div class="colhead ${col.length?'has':''}" style="color:${r.color}; border-bottom-color:${col.length?r.color:'transparent'}">${r.icon}</div>
@@ -264,6 +271,34 @@ function createGame(Table, root) {
 
     root.innerHTML = h;
 
+    // ---- game feel, on the live nodes we just wrote ----
+    // render() also runs on a plain card tap, so every call here is behind a
+    // guard that only flips when the underlying EVENT happened.
+
+    // A whole new hand staggers in once per round; a single drawn card arrives.
+    const handEls = root.querySelectorAll('.hand [data-hand]');
+    if (myHand.length) {
+      if (v.round !== seenDeal) { dealIn(handEls, 40); seenDeal = v.round; }
+      else handEls.forEach(el => {
+        if (+el.dataset.hand >= prevHandLen) feel('arrive', { el, mine:true });
+      });
+    }
+
+    // The card that just landed on a route. Yours hits harder than theirs.
+    const lp = v.lastPlay;
+    if (lp && ('p'+lp.n) !== seenPlay) {
+      const owner = [...root.querySelectorAll('.routes')].find(n => n.dataset.owner === lp.pid);
+      const routeEl = owner && owner.querySelector('[data-route="'+lp.color+'"]');
+      feel('gain', { el: routeEl, mine: lp.pid === MY });
+    }
+
+    // Standing invitation: your controls glow while it's your move. The class has
+    // to be re-applied every render (innerHTML replaced the node), but the haptic
+    // is quieted unless the turn itself just changed hands.
+    const turnKey = v.phase + ':' + v.turn;
+    if (meTurn) feel('turn', { el: root.querySelector('.ctrl'), quiet: turnKey === seenTurn });
+    seenTurn = turnKey;
+
     // animation bookkeeping: pops/glows fire once per event, not on every render
     prevHandLen = myHand.length;
     if (view.lastPlay) seenPlay = 'p'+view.lastPlay.n;
@@ -273,6 +308,9 @@ function createGame(Table, root) {
     });
     root.querySelectorAll('[data-take]').forEach(el => el.onclick = () => {
       if (el.classList.contains('canTake')) Table.send({ t:'draw', from:el.dataset.take });
+      // Rejected taps used to be silent. Say no: an empty pile, or the pile you
+      // just fed and may not immediately take back.
+      else if (meTurn && v.sub === 'draw') feel('blocked', { el, mine:true });
     });
     root.querySelectorAll('button[data-act]').forEach(b => b.onclick = () => {
       const a = b.dataset.act;
