@@ -246,7 +246,9 @@ function createGame(Table, root) {
                     : v.banner && v.banner.indexOf('🔥')===0 ? ' streak' : '';
 
     let h = `<div class="hdr"><span class="brand">STREAK</span>
-      <span class="roundlbl">Round ${v.round}</span><span class="goal">first to 200</span></div>
+      <span class="roundlbl">Round ${v.round}</span>
+      <span class="deckcount ${v.deckLeft <= 12 ? 'low' : ''}" title="cards left before the deck reshuffles">🎴 ${v.deckLeft}</span>
+      <span class="goal">first to 200</span></div>
       <div class="banner${bannerCls}">${esc(v.banner||'')}</div><div class="board">`;
 
     v.players.forEach(p => {
