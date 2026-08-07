@@ -83,11 +83,11 @@
     heal:      { anim: 'fr-flash-good', haptic: 'success', sound: 'ding' },
 
     // bad things
-    bust:      { anim: 'fr-shake',      haptic: 'light',  sound: 'thud',  strongHaptic: 'error', strongSound: 'boom' },
-    eliminate: { anim: 'fr-shake',      haptic: 'light',  sound: 'thud',  strongHaptic: 'error', strongSound: 'boom' },
-    hit:       { anim: 'fr-flash-bad',  haptic: 'warning', sound: 'thud' },
-    freeze:    { anim: 'fr-flash-cool', haptic: 'warning', sound: 'buzz' },
-    blocked:   { anim: 'fr-shake',      haptic: 'warning', sound: 'buzz' },
+    bust:      { anim: 'fr-shake',      haptic: 'light',  sound: 'thud',  strongHaptic: 'boom', strongSound: 'boom' },
+    eliminate: { anim: 'fr-shake',      haptic: 'light',  sound: 'thud',  strongHaptic: 'boom', strongSound: 'boom' },
+    hit:       { anim: 'fr-flash-bad',  haptic: 'warning', sound: 'thud', strongHaptic: 'thud' },
+    freeze:    { anim: 'fr-flash-cool', haptic: 'warning', sound: 'buzz', strongHaptic: 'buzz' },
+    blocked:   { anim: 'fr-shake',      haptic: 'warning', sound: 'buzz', strongHaptic: 'buzz' },
 
     // neutral / movement
     arrive:    { anim: 'fr-pop',        haptic: 'light',  sound: 'pop' },

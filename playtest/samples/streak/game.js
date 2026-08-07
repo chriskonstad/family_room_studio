@@ -237,9 +237,12 @@ function createGame(Table, root) {
   /// in its own CSS and applied from the template, so we want feel()'s centrally
   /// maintained haptic+sound pairing without a second animation on top.
   /// Guarded so the bundle still runs on a harness that predates fr-feel.
-  function feel(event, mine) {
-    try { if (Table.feel) Table.feel(event, { mine: !!mine }); } catch (e) {}
+  function feel(event, mine, opts) {
+    var o = { mine: !!mine };
+    if (opts) for (var k in opts) o[k] = opts[k];
+    try { if (Table.feel) Table.feel(event, o); } catch (e) {}
   }
+  function haptic(style) { try { if (Table.haptic) Table.haptic(style); } catch (e) {} }
 
   function chipsHTML(p) {
     const prev = (seenChips[p.id] != null) ? seenChips[p.id] : 0;
@@ -282,6 +285,9 @@ function createGame(Table, root) {
       // else's are a lighter nudge so a 6-player table isn't a buzzing mess.
       if (justBusted) feel('bust', mine);
       else if (justFrozen) feel('freeze', mine);
+      // Banking is the whole tension of the game resolving — the moment you stop
+      // pushing your luck deserves to land, not pass in silence.
+      else if (p.status === 'stayed' && seenStatus[p.id] !== 'stayed') feel('gain', mine);
       if (mine && p.hasSave && !seenSave[p.id]) feel('heal', true);
       seenSave[p.id] = p.hasSave;
       h += `<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}${justBusted?' shake':''}${justFrozen?' freezeflash':''}">
@@ -344,10 +350,17 @@ function createGame(Table, root) {
 
     // A card landing in MY line gets a tick — during Flip 3 that becomes a
     // drumbeat, one thump per card, which is exactly the tension we're after.
+    // It gets HEAVIER as the line fills: every extra number is another way to
+    // bust, so the seventh card should feel nothing like the second. The
+    // escalation is the haptic's alone — arrive's own buzz is silenced so the
+    // two don't stack — while the pop and the sound stay constant.
     const me = v.players.find(p => p.id === MY);
     if (me) {
       const myChips = me.nums.length + me.mods.length;
-      if (myChips > seenChipTotal && me.status === 'active') feel('arrive');
+      if (myChips > seenChipTotal && me.status === 'active') {
+        feel('arrive', false, { quiet: true });
+        haptic(me.unique >= 6 ? 'heavy' : me.unique >= 4 ? 'medium' : 'light');
+      }
       seenChipTotal = myChips;
     }
 

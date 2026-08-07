@@ -529,6 +529,31 @@ when the feedback isn't tied to a semantic game event:
 Haptics and sound are shell-owned because WebKit on iOS has **no** vibrate API and gates
 web audio behind a per-device user gesture — a game genuinely cannot do either itself.
 
+#### The haptic vocabulary
+
+`Table.haptic(style)` takes one of these. They run on Core Haptics, so the last group are
+real sustained vibrations, not just harder taps:
+
+| Style | Feels like | For |
+|---|---|---|
+| `light` `medium` `heavy` | one tap, increasing force | a card lands, a tap is confirmed, a big hit |
+| `soft` `rigid` | one tap, dull vs. sharp | texture — a cushioned thump vs. a hard click |
+| `selection` | a faint tick | moving through options, changing a choice |
+| `success` `warning` `error` | two or three quick taps | an outcome announced (see the tight-loop warning above) |
+| **`thud`** | a tap that sinks and fades (~0.2s) | a soft loss — a life, a point, ground given up |
+| **`buzz`** | a rough sustained rattle (~0.3s) | frozen, blocked, rejected — something is *wrong* |
+| **`boom`** | a hard hit falling into a long rumble (~0.6s) | disaster: busting out, being eliminated |
+
+The bottom three are what "more intense" actually means. A sustained, decaying rumble is a
+different *kind* of feedback from a tap, not a louder one — reach for them when the news is
+bad enough that the player should feel it in their hand before they read the screen. They
+share names with the sound vocabulary on purpose: `haptic('boom')` and `sound('boom')` are
+the same event felt and heard.
+
+Escalation is worth the effort where tension builds. STREAK ramps its per-card flip from
+`light` to `medium` to `heavy` as your line fills toward a bust, so the seventh card feels
+nothing like the second — the same event, carrying how much danger you're in.
+
 ### Animation vocabulary
 
 `feel()` applies these for you. Use the classes directly (`fr-pop`, `fr-shake`,
