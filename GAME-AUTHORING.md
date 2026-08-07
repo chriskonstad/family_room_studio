@@ -496,11 +496,16 @@ And **don't double up**: if your own audio already covers an event, pass `{silen
 silenced `feel()` plus broken WebAudio equals no feedback at all, which is how TEMPO ended
 up with nothing but its countdown.
 
-*If haptics seem dead on a real phone,* first tap **Host** or **Join** on the home screen —
-those buzz too. If the shell buzzes and your game doesn't, it's your game; if nothing in the
-app buzzes, it's the phone: check **Low Power Mode** (iOS disables the Taptic Engine entirely
-while it's on) and "System Haptics" in Settings → Sounds. Neither is something a game can
-detect or override.
+*If haptics seem dead on a real phone,* the home screen tells you. Nothing to enable and no
+permission to grant — iOS gates haptics behind no entitlement at all — so the shell just
+reports what it finds:
+
+- **A grey line at the bottom of the home screen** ("Low Power Mode is on…", "This iPhone
+  doesn't have a Taptic Engine", "Haptics engine stopped: …") means the phone is the problem,
+  and it says which. Low Power Mode is the usual one.
+- **No line, and the Host / Join buttons buzz, but your game doesn't** — it's your game.
+- **No line, and nothing in the app buzzes at all** — check "System Haptics" in Settings →
+  Sounds & Haptics. That switch is the one thing no API can see.
 
 *Don't fire notification haptics in a tight loop.* `success` / `warning` / `error` are
 multi-pulse patterns roughly half a second long, and a new one issued while the last is still
