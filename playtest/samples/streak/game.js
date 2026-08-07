@@ -104,22 +104,33 @@ function createGame(Table, root) {
       }
       return;
     }
+    // Forced flips land one per beat, and during those gaps it is NOT the
+    // player's move — accepting a tap here consumed a queued flip early (Flip 3
+    // resolving as 2) or appended a spare one (resolving as 4), and could run
+    // endTurnOrRound() mid-sequence so the buttons reappeared afterwards.
+    if (G.work.length) return;
     if (msg.t==='flip' && from===curId()) { G.work.push({t:'flip',pid:from}); resolveWork(); }
     else if (msg.t==='bank' && from===curId() && canBank(from)) { G.status[from]='stayed'; G.banner = G.names[from]+' banked'; endTurnOrRound(); }
   }
   function resolveWork() {
+    // Publishes are normally driven by incoming intents (see Table.onMessage), but
+    // a forced-flip sequence advances on a TIMER with no intent behind it. Every
+    // exit below therefore publishes: without it the last card of a Flip 3 was
+    // never broadcast, so every device sat on a stale board still showing
+    // "Flipping…" until the next tap — which then both advanced the game and
+    // revealed the missing card, looking like a lost or doubled flip.
     pump();
-    if (G.roundOver) { endRound(); return; }
-    if (G.pending) return;                 // waiting on a target choice
+    if (G.roundOver) { endRound(); publish(); return; }
+    if (G.pending) { publish(); return; }          // waiting on a target choice
     if (G.work.length) {
-      // More forced flips queued (Flip 3): show this one, then land the next
-      // after a beat. `publish()` here is what makes each card visible on its own.
+      // More forced flips queued: show this one, land the next after a beat.
       publish();
       clearTimeout(G.workTimer);
       G.workTimer = setTimeout(resolveWork, FORCED_FLIP_DELAY);
       return;
     }
     endTurnOrRound();
+    publish();
   }
   function endTurnOrRound() {
     if (activeIds().length === 0) { endRound(); return; }
@@ -163,6 +174,8 @@ function createGame(Table, root) {
   function publicState() {
     return {
       phase:G.phase, round:G.round, banner:G.banner, winner:G.winner,
+      resolving: G.work.length > 0,          // forced flips still landing
+      deckLeft: G.deck.length, discardLeft: G.discard.length,
       turn: G.phase==='playing' ? curId() : null,
       pending: G.pending ? { chooserId:G.pending.chooserId, action:G.pending.action, eligible:G.pending.eligible.slice() } : null,
       players: G.order.map(id => ({
@@ -262,6 +275,8 @@ function createGame(Table, root) {
       if (v.pending && !iChoose) {
         const c = v.players.find(p=>p.id===v.pending.chooserId);
         h += `<span class="wait">Waiting for ${c?esc(c.emoji+' '+c.name):'…'} to choose a target…</span>`;
+      } else if (v.resolving) {
+        h += `<span class="wait">Flipping…</span>`;
       } else if (meTurn && !v.pending) {
         const me = v.players.find(p=>p.id===MY);
         h += `<div class="btnrow"><button data-act="flip" class="primary">Flip</button>
