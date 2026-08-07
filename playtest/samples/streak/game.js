@@ -32,6 +32,7 @@ function createGame(Table, root) {
     G.order.forEach(id => { G.lines[id] = { nums:[], mods:[], hasSave:false }; G.status[id]='active'; });
     G.pending = null; G.work = []; G.roundOver = false; G.winner = null;
     clearTimeout(G.workTimer);            // no stale forced flips across rounds
+    clearTimeout(G.endTimer); G.ending = false;
     G.turn = nextActiveFrom(G.dealer % G.order.length, true);
     G.phase = 'playing';
     G.banner = 'Round ' + G.round + ' — ' + G.names[curId()] + ' starts';
@@ -108,7 +109,7 @@ function createGame(Table, root) {
     // player's move — accepting a tap here consumed a queued flip early (Flip 3
     // resolving as 2) or appended a spare one (resolving as 4), and could run
     // endTurnOrRound() mid-sequence so the buttons reappeared afterwards.
-    if (G.work.length) return;
+    if (G.work.length || G.ending) return;
     if (msg.t==='flip' && from===curId()) { G.work.push({t:'flip',pid:from}); resolveWork(); }
     else if (msg.t==='bank' && from===curId() && canBank(from)) { G.status[from]='stayed'; G.banner = G.names[from]+' banked'; endTurnOrRound(); }
   }
@@ -139,7 +140,23 @@ function createGame(Table, root) {
   }
   const canBank = pid => (G.lines[pid].nums.length + G.lines[pid].mods.length) > 0;
 
+  /// Hold on the board before the round-end sheet so everyone can SEE what ended
+  /// the round — the bust, the freeze, the full streak. Cutting straight to the
+  /// scores threw that moment away.
+  const ROUND_END_DELAY = 1700;
+
   function endRound() {
+    if (G.ending) return;                       // already counting down
+    G.ending = true;
+    G.work = [];
+    clearTimeout(G.workTimer);
+    publish();                                  // the triggering banner, held
+    clearTimeout(G.endTimer);
+    G.endTimer = setTimeout(finalizeRound, ROUND_END_DELAY);
+  }
+
+  function finalizeRound() {
+    G.ending = false;
     G.pending = null; G.work = []; G.lastRound = {};
     G.order.forEach(id => {
       if (G.status[id] === 'busted') { G.lastRound[id] = 0; return; }
@@ -160,6 +177,7 @@ function createGame(Table, root) {
         }))
       });
     } else { G.phase='roundEnd'; G.banner = 'Round '+G.round+' complete'; }
+    publish();
   }
   function scoreLine(id) {
     const l = G.lines[id];
@@ -175,6 +193,7 @@ function createGame(Table, root) {
     return {
       phase:G.phase, round:G.round, banner:G.banner, winner:G.winner,
       resolving: G.work.length > 0,          // forced flips still landing
+      ending: !!G.ending,                    // round over, holding on the moment
       deckLeft: G.deck.length, discardLeft: G.discard.length,
       turn: G.phase==='playing' ? curId() : null,
       pending: G.pending ? { chooserId:G.pending.chooserId, action:G.pending.action, eligible:G.pending.eligible.slice() } : null,
@@ -277,6 +296,8 @@ function createGame(Table, root) {
       if (v.pending && !iChoose) {
         const c = v.players.find(p=>p.id===v.pending.chooserId);
         h += `<span class="wait">Waiting for ${c?esc(c.emoji+' '+c.name):'…'} to choose a target…</span>`;
+      } else if (v.ending) {
+        h += `<span class="wait">Round over…</span>`;
       } else if (v.resolving) {
         h += `<span class="wait">Flipping…</span>`;
       } else if (meTurn && !v.pending) {
