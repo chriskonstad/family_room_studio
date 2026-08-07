@@ -15,6 +15,7 @@ function createGame(Table, root) {
   /// Game-feel shim, so a bundle still runs on a harness that predates
   /// Table.feel (and in a plain browser).
   const feel = (ev, o) => { if (Table.feel) Table.feel(ev, o); };
+  const haptic = (s) => { if (Table.haptic) Table.haptic(s); };
 
   // ---------- deterministic track from a shared seed ----------
   function rng(seed){ let s = seed >>> 0; return () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296; }
@@ -201,7 +202,11 @@ function createGame(Table, root) {
     if (text === 'DONE!')         feel('win',     { el:'.ring', mine:true });
     else if (cls === 'perfect')   feel('gain',    { mine:true });
     else if (cls === 'good')      feel('gain');
-    else                          feel('blocked', { el:'.ring', mine:true });
+    // A miss keeps blocked's shake and buzz, but not its haptic: `warning` is a
+    // half-second multi-pulse pattern, and a run of missed beats issues them
+    // faster than that, so each one cancels the last and you feel almost nothing.
+    // A single crisp impact repeats cleanly at beat speed.
+    else { feel('blocked', { el:'.ring', mine:true, quiet:true }); haptic('rigid'); }
   }
   function updateHud() {
     const c = root.querySelector('.combo');

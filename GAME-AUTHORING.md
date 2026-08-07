@@ -496,9 +496,17 @@ And **don't double up**: if your own audio already covers an event, pass `{silen
 silenced `feel()` plus broken WebAudio equals no feedback at all, which is how TEMPO ended
 up with nothing but its countdown.
 
-*If haptics seem dead on a real phone,* check **Low Power Mode** — iOS disables the Taptic
-Engine entirely while it's on, and "System Haptics" in Settings → Sounds can also be off.
-Neither is something a game can detect or override.
+*If haptics seem dead on a real phone,* first tap **Host** or **Join** on the home screen —
+those buzz too. If the shell buzzes and your game doesn't, it's your game; if nothing in the
+app buzzes, it's the phone: check **Low Power Mode** (iOS disables the Taptic Engine entirely
+while it's on) and "System Haptics" in Settings → Sounds. Neither is something a game can
+detect or override.
+
+*Don't fire notification haptics in a tight loop.* `success` / `warning` / `error` are
+multi-pulse patterns roughly half a second long, and a new one issued while the last is still
+playing is simply dropped — fire ten in five seconds and most of them never land. For anything
+rhythmic (a beat, a tick, a rapid streak of hits) use an impact style — `light`, `rigid`,
+`medium` — which is a single crisp tap and repeats cleanly.
 
 #### When to use the raw primitives instead
 
