@@ -14,67 +14,81 @@ function createGame(Table, root){
   let seenTurn = null;       // whose turn it WAS — i.e. whoever just pressed
 
   // ---------- host ----------
+  // FR owns turn order, elimination, the RNG and the timers.
+  const rng   = FR.rng(Table.seed);
+  const seats = FR.seats(Table.players.map(p => p.id));
+  const timer = FR.timers();
+  let table = null;
+
   function initGame(players){
     G = {order:players.map(p=>p.id), names:{}, emojis:{}, alive:{}, out:[],
          phase:'playing', turn:0, banner:'', reveal:false};
-    players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.alive[p.id]=true;});
+    players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji;});
+    seats.startRound();
     newBank(true);
   }
-  const aliveIds = ()=>G.order.filter(id=>G.alive[id]);
-  const curId = ()=>G.order[G.turn];
+  const aliveIds = ()=>seats.remaining;
+  const curId = ()=>seats.current;
   function newBank(first){
     G.plungers = [0,0,0,0,0];               // 0 unpressed · 1 safe · 2 boom
-    G.live = Math.floor(Math.random()*5);
+    G.live = rng.int(5);
     G.reveal = false;
     G.banner = (first?'':'💣 New detonator armed — ') + G.names[curId()] + ', press a plunger';
   }
-  function advanceTurn(){
-    const n = G.order.length;
-    for(let s=1;s<=n;s++){ const i=(G.turn+s)%n; if(G.alive[G.order[i]]){ G.turn=i; return; } }
-  }
-  function handleIntent(from,msg){
-    if(msg.t==='hello') return;
-    if(G.phase!=='playing') return;
-    if(msg.t==='press' && from===curId() && G.plungers[msg.i]===0){
-      if(msg.i===G.live){
-        G.plungers[msg.i]=2; G.reveal=true;
-        G.alive[from]=false; G.out.push(from);
-        G.banner = '💥 ' + G.names[from] + ' hit the detonator!';
-        syncAll();
-        if(aliveIds().length<=1){ setTimeout(finish,1500); return; }
-        setTimeout(()=>{ advanceTurn(); newBank(false); syncAll(); }, 2000);
-      } else {
-        G.plungers[msg.i]=1;
-        advanceTurn();
-        G.banner = G.names[curId()] + "'s turn — press a plunger";
-        syncAll();
-      }
-    }
-  }
   function finish(){
-    const w = aliveIds()[0] || null;
-    const ranked = [...(w?[w]:[]), ...G.out.slice().reverse()];
+    timer.cancelAll();
     G.phase='over';
-    Table.endGame({winnerId:w, standings:ranked.map((id,i)=>({
-      playerId:id, score:i===0?'survived':'💥',
-      detail:i===0?'nerves of steel':('out #'+(ranked.length-i)) }))});
+    const r = FR.standings.byElimination(seats, {
+      detail:(id,place)=>place===1 ? 'nerves of steel' : ('out #'+(seats.all.length-place+1))
+    });
+    Table.endGame({winnerId:r.winnerId, standings:r.standings.map((row,i)=>
+      Object.assign({}, row, {score: i===0 ? 'survived' : '💥'}))});
   }
   function publicState(){
+    const alive = {};
+    G.order.forEach(id => { alive[id] = seats.status(id) !== 'out'; });
     return {phase:G.phase, banner:G.banner, turn:curId(), plungers:G.plungers.slice(),
-      live:G.reveal?G.live:-1, names:G.names, emojis:G.emojis, order:G.order, alive:{...G.alive}};
+      live:G.reveal?G.live:-1, names:G.names, emojis:G.emojis, order:G.order, alive};
   }
   function syncAll(){ const s=publicState(); Table.broadcast({t:'state',s}); view=s; render(); }
 
   if(Table.isHost){
-    Table.onStart(p=>{ initGame(p); syncAll(); });
-    Table.onMessage((f,m)=>handleIntent(f,m));
+    Table.onStart(p=>{
+      initGame(p);
+      table = FR.host({
+        state:G, seats, timers:timer, hostId:MY,
+        phase:()=>G.phase,
+        publish:syncAll,
+        intents:{
+          hello: ()=>{},
+          // turn:true IS the out-of-turn guard — FR checks it before run() is reached.
+          press: { turn:true, phase:'playing', run:(ctx)=>{
+            const i = ctx.msg.i;
+            if (!(i >= 0 && i < 5) || G.plungers[i] !== 0) return;   // already pressed
+            if (i === G.live) {
+              G.plungers[i]=2; G.reveal=true;
+              seats.eliminate(ctx.from);
+              G.banner = '💥 ' + G.names[ctx.from] + ' hit the detonator!';
+              if (seats.settled) { timer.after('finish', 1500, finish); return; }
+              // Freeze the table while the blast is on screen, then rearm.
+              table.hold(2000, ()=>{ seats.next(); newBank(false); });
+            } else {
+              G.plungers[i]=1;
+              seats.next();
+              G.banner = G.names[curId()] + "'s turn — press a plunger";
+            }
+          } }
+        }
+      });
+      syncAll();
+    });
+    Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
     Table.onPlayerLeave(id=>{
-      if(!G) return;
-      if(G.alive[id]){
-        G.alive[id]=false; G.out.push(id);
-        if(curId()===id) advanceTurn();
-        if(aliveIds().length<=1 && G.phase!=='over') return finish();
-      }
+      if(!G || seats.status(id)==='out') return;
+      const wasTheirTurn = curId()===id;
+      seats.eliminate(id);
+      if(wasTheirTurn) seats.next();
+      if(seats.settled && G.phase!=='over') return finish();
       syncAll();
     });
   } else {

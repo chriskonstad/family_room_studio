@@ -26,6 +26,9 @@
     { path: 'me.emoji',      type: 'string' },
     { path: 'isHost',        type: 'boolean' },
     { path: 'players',       type: 'array',    note: 'final roster at onStart' },
+    // Every harness must hand the table the same seed, or a game that draws from it
+    // can't be replayed — which is what makes a fuzz failure actionable.
+    { path: 'seed',          type: 'number',   note: 'shared RNG seed for this session' },
     { path: 'teams',         type: 'array-or-null', note: 'null when the game is not a team game' },
 
     // lifecycle registration

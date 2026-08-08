@@ -335,7 +335,9 @@ export async function runGame(opts = {}) {
     sandbox.__cfg = {
       me: { id: p.id, name: p.name, emoji: p.emoji, teamId: p.teamId },
       players: roster.map(r => ({ id: r.id, name: r.name, emoji: r.emoji, teamId: r.teamId })),
-      teams, isHost, saved: null
+      teams, isHost, saved: null,
+      // The whole table shares the run's seed, so `--seed N` replays the exact game.
+      seed: (opts.seed === undefined ? 1 : opts.seed) >>> 0
     };
     sandbox.__io = {
       send: (payload) => bus.send(p.id, payload),

@@ -1,8 +1,6 @@
 function createGame(Table, root){
   const MY = Table.me.id;
   let view = null, G = null;
-  const rnd = (a,b)=>a+Math.random()*(b-a);
-  const pick = a=>a[Math.floor(Math.random()*a.length)];
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
   /// Shared game-feel runtime. Optional-chained so this bundle still runs on a
@@ -18,69 +16,89 @@ function createGame(Table, root){
   const HEAT_MARKS = [0.5, 0.72, 0.88, 0.96];
 
   // ---------- host ----------
+  // Built on FR: seats own who is alive and the elimination order, timers are named
+  // so nothing can be left ticking, and the fuse comes from a seeded RNG so a game
+  // that goes wrong can be replayed exactly.
+  const rng   = FR.rng(Table.seed);
+  const seats = FR.seats(Table.players.map(p => p.id));
+  const timer = FR.timers();
+  let table = null;
+
   function initGame(players){
-    G = {order:players.map(p=>p.id), names:{}, emojis:{}, alive:{}, out:[],
+    G = {order:players.map(p=>p.id), names:{}, emojis:{},
          phase:'ready', holder:null, heat:0, banner:'Light the fuse!'};
-    players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.alive[p.id]=true;});
+    players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji;});
+    seats.startRound();
   }
-  const aliveIds = ()=>G.order.filter(id=>G.alive[id]);
+  const aliveIds = ()=>seats.remaining;
 
   function lightBomb(){
-    G.holder = pick(aliveIds());
+    G.holder = rng.pick(aliveIds());
     G.phase = 'live';
     G.start = Date.now();
-    G.fuse  = rnd(9000, 19000);
+    G.fuse  = rng.range(9000, 19000);
     G.est   = G.fuse * 1.18;
     G.heat  = 0;
     G.banner = '🔥 HOT POTATO — pass it!';
-    clearTimeout(G.boomT); clearInterval(G.heatT);
-    G.boomT = setTimeout(explode, G.fuse);
-    G.heatT = setInterval(()=>{ G.heat = Math.min(1,(Date.now()-G.start)/G.est); syncAll(); }, 250);
+    timer.every('heat', 250, ()=>{ G.heat = Math.min(1,(Date.now()-G.start)/G.est); syncAll(); });
+    timer.after('boom', G.fuse, explode);
     syncAll();
   }
   function explode(){
-    clearInterval(G.heatT); clearTimeout(G.boomT);
+    timer.cancelAll();
     const dead = G.holder;
-    G.alive[dead] = false; G.out.push(dead);
+    seats.eliminate(dead);
     G.heat = 1; G.phase = 'boom';
     G.banner = '💥 ' + G.names[dead] + ' got blown up!';
     syncAll();
-    if(aliveIds().length <= 1) setTimeout(finish, 1500);
-    else setTimeout(()=>{ lightBomb(); }, 1900);
+    if(seats.settled) timer.after('finish', 1500, finish);
+    else timer.after('relight', 1900, lightBomb);
   }
   function finish(){
-    const winner = aliveIds()[0] || null;
-    const ranked = [...(winner?[winner]:[]), ...G.out.slice().reverse()];
+    timer.cancelAll();
     G.phase = 'over';
-    Table.endGame({winnerId:winner, standings:ranked.map((id,i)=>({
-      playerId:id, score:i===0?'survived':'💥',
-      detail:i===0?'last one standing':('out #'+(ranked.length-i)) }))});
-  }
-  function handleIntent(from,msg){
-    if(msg.t==='hello') return;
-    if(G.phase==='ready' && msg.t==='light' && from===MY){ lightBomb(); return; }
-    if(G.phase==='live' && msg.t==='pass' && from===G.holder && G.alive[msg.to] && msg.to!==from){
-      G.holder = msg.to;
-      G.banner = G.names[from] + ' threw it to ' + G.names[msg.to] + '!';
-      syncAll();
-    }
+    const r = FR.standings.byElimination(seats, {
+      detail:(id,place)=>place===1 ? 'last one standing' : ('out #'+(seats.all.length-place+1))
+    });
+    Table.endGame({winnerId:r.winnerId, standings:r.standings.map((row,i)=>
+      Object.assign({}, row, {score: i===0 ? 'survived' : '💥'}))});
   }
   function publicState(){
+    const alive = {};
+    G.order.forEach(id => { alive[id] = seats.status(id) !== 'out'; });
     return {phase:G.phase, banner:G.banner, holder:G.holder, heat:G.heat,
-      names:G.names, emojis:G.emojis, order:G.order, alive:{...G.alive}};
+      names:G.names, emojis:G.emojis, order:G.order, alive};
   }
   function syncAll(){ const s=publicState(); Table.broadcast({t:'state',s}); view=s; render(); }
 
   if(Table.isHost){
-    Table.onStart(p=>{ initGame(p); syncAll(); });
-    Table.onMessage((f,m)=>handleIntent(f,m));
+    Table.onStart(p=>{
+      initGame(p);
+      table = FR.host({
+        state:G, seats, timers:timer, hostId:MY,
+        phase:()=>G.phase,
+        publish:syncAll,
+        intents:{
+          hello: ()=>{},                                   // resync: publish is enough
+          light: { host:true, phase:'ready', run:lightBomb },
+          pass:  { phase:'live', run:(ctx)=>{
+            const to = ctx.msg.to;
+            // Only whoever is holding it can throw it, and only to someone still in.
+            if (ctx.from !== G.holder || to === ctx.from || !seats.isActive(to)) return;
+            G.holder = to;
+            G.banner = G.names[ctx.from] + ' threw it to ' + G.names[to] + '!';
+          } }
+        }
+      });
+      syncAll();
+    });
+    Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
     Table.onPlayerLeave(id=>{
-      if(!G) return;
-      if(G.alive[id]){
-        G.alive[id]=false; G.out.push(id);
-        if(G.holder===id && G.phase==='live'){ const l=aliveIds(); if(l.length) G.holder=pick(l); }
-        if(aliveIds().length<=1 && G.phase!=='over'){ clearTimeout(G.boomT); clearInterval(G.heatT); return finish(); }
-      }
+      if(!G || seats.status(id)==='out') return;
+      seats.eliminate(id);
+      // Don't let the bomb sit in a departed player's hands.
+      if(G.holder===id && G.phase==='live'){ const l=aliveIds(); if(l.length) G.holder=rng.pick(l); }
+      if(seats.settled && G.phase!=='over'){ timer.cancelAll(); return finish(); }
       syncAll();
     });
   } else {

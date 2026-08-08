@@ -424,6 +424,7 @@
    * @param {Object} cfg.intents     name -> handler or { turn, phase, run }.
    *        handler(ctx) where ctx = { from, msg, state, table }.
    *        Options: turn:true   only the current seat may send it
+   *                 host:true   only the host may send it (needs cfg.hostId)
    *                 phase:'x'   only in that phase (string or array)
    *                 run:fn      the handler itself
    * @param {Object} [cfg.seats]     an FR.seats; required for turn:true.
@@ -473,6 +474,11 @@
         if (cfg.seats && cfg.seats.all.indexOf(from) === -1) {
           refuse(name, 'not-seated'); return false;
         }
+
+        // Host-only verbs — "start the round", "deal the next hand", "light the fuse".
+        // Every game hand-wrote `from === Table.me.id` for these and it is easy to leave
+        // out, at which point any player can drive the table's pacing.
+        if (spec.host && from !== cfg.hostId) { refuse(name, 'not-host'); return false; }
 
         if (spec.phase) {
           var want = [].concat(spec.phase);

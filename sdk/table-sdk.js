@@ -167,6 +167,17 @@
 
     var Table = {
       me: Object.assign({}, cfg.me || {}, { isHost: isHost }),
+      /* A seed the whole table agrees on, supplied by the harness.
+       *
+       * A game that seeds itself from Date.now() is reproducible in principle and never
+       * in practice: the test harness can't reproduce a failure it didn't choose the seed
+       * for. With the seed coming from here, `node playtest.mjs streak --seed 137` replays
+       * the exact game, which is the difference between fuzzing that finds bugs and
+       * fuzzing that just reports that something, once, went wrong.
+       *
+       * Use it: `var r = FR.rng(Table.seed);` */
+      seed: (cfg.seed === undefined ? ((Date.now() ^ (Math.random() * 4294967296)) >>> 0)
+                                    : (cfg.seed >>> 0)),
       isHost: isHost,
       players: roster,
       // playerIds are always DERIVED from the roster rather than passed in, so the two

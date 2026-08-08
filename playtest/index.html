@@ -238,6 +238,7 @@ const state = {
   feelRuntime:null,    // tools/sdk/fr-feel.js source, fetched once (see loadFeelRuntime)
   gameRuntime:null,    // tools/sdk/fr-game.js source (FR.deck/seats/host/…), fetched once
   tableSDK:null,       // tools/sdk/table-sdk.js — the ONE Table implementation, shared with iOS
+  seed:0,              // shared RNG seed for this boot; every phone gets the same one
   manifest:null,
   entryHtmlBase:null,  // rewritten entry HTML with a <!--__TABLE_SDK__--> marker
   dirHandle:null,      // FileSystemDirectoryHandle for hot reload (if available)
@@ -423,6 +424,7 @@ function sdkScript(player, roster){
       players:${JSON.stringify(players)},
       teams:${JSON.stringify(teams)},
       isHost:${player.isHost?'true':'false'},
+      seed:${state.seed || 1},
       saved:(window.parent.HarnessBus.loadState(${JSON.stringify(player.id)})),
       clock:clock
     }, {
@@ -594,6 +596,8 @@ function renderStage(){
   const roster = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji,teamId:p.teamId||undefined}));
   const loads = [];
 
+  state.seed = (Date.now() ^ (Math.random()*4294967296)) >>> 0;
+  console.info('[studio] seed ' + state.seed + ' — replay this exact game with: node tools/harness/playtest.mjs <game> --seed ' + state.seed);
   state.players.forEach(p=>{
     const dev = DEVICES[p.device] || DEVICES[DEFAULT_DEVICE];
     const wrap = document.createElement('div');

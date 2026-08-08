@@ -420,6 +420,21 @@ test('hold freezes the table — the Flip 3 bug, made unwritable', () => {
   assert.equal(table.handle('a', { t: 'flip' }), true, 'and input works again afterwards');
 });
 
+test('host:true rejects a non-host, accepts the host', () => {
+  const seats = FR.seats(['a', 'b']);
+  seats.startRound();
+  const state = { started: 0 };
+  const table = FR.host({
+    state, seats, hostId: 'a', timers: FR.timers(fakeClock()), publish: () => {},
+    intents: { begin: { host: true, run: () => { state.started++; } } }
+  });
+  assert.equal(table.handle('b', { t: 'begin' }), false, 'a joiner must not pace the table');
+  assert.equal(table.rejected.pop().why, 'not-host');
+  assert.equal(state.started, 0);
+  assert.equal(table.handle('a', { t: 'begin' }), true);
+  assert.equal(state.started, 1);
+});
+
 test('rejects an intent from an id that is not seated', () => {
   const { table, state } = tinyTable(fakeClock());
   assert.equal(table.handle('ghost', { t: 'shout' }), false);
