@@ -172,13 +172,19 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, ma
   if (table.wire('endGame').length !== 1) {
     return { ok: false, why: `endGame fired ${table.wire('endGame').length} times`, turns, result };
   }
-  if (result.winnerId && !ids.includes(result.winnerId)) {
-    return { ok: false, why: `winner "${result.winnerId}" is not a player`, turns, result };
+  // A team game legitimately names a TEAM as the winner — Table.endGame takes playerId
+  // or teamId in standings, and FISHBOWL's winner is 't1'. Asserting "must be a player"
+  // reported a healthy game as broken.
+  const teamIds = (table.teams || []).map(t => t.id);
+  const valid = ids.concat(teamIds);
+  if (result.winnerId && !valid.includes(result.winnerId)) {
+    return { ok: false, why: `winner "${result.winnerId}" is neither a player nor a team`, turns, result };
   }
   if (Array.isArray(result.standings)) {
     for (const row of result.standings) {
-      if (row.playerId && !ids.includes(row.playerId)) {
-        return { ok: false, why: `standings name "${row.playerId}", who is not a player`, turns, result };
+      const who = row.playerId || row.teamId;
+      if (who && !valid.includes(who)) {
+        return { ok: false, why: `standings name "${who}", who is neither a player nor a team`, turns, result };
       }
     }
   }

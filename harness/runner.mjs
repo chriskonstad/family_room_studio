@@ -91,7 +91,17 @@ function makeDom(clock) {
     // its </div>, and the buttons inside it are never seen — which is exactly why
     // actions() came back empty for a game that was clearly rendering buttons.
     const out = [];
-    for (const tag of ['button', 'i', 'div', 'span']) {
+    // Void elements first: <input id="ph"> has no closing tag, so the paired-tag scan
+    // below can never see it. Games reach their text fields by id, and a null there
+    // crashed the render outright.
+    for (const m of html.matchAll(/<(input|img|br|hr)\b([^>]*)\/?>/gi)) {
+      const attrs = {};
+      const ar = /([a-zA-Z-]+)\s*=\s*"([^"]*)"/g;
+      let a;
+      while ((a = ar.exec(m[2]))) attrs[a[1]] = a[2];
+      out.push({ tag: m[1].toLowerCase(), attrs, raw: m[2], text: '' });
+    }
+    for (const tag of ['button', 'i', 'div', 'span', 'a', 'label', 'p', 'textarea', 'select']) {
       const re = new RegExp('<' + tag + '\\b([^>]*)>([\\s\\S]*?)</' + tag + '>', 'gi');
       let m;
       while ((m = re.exec(html))) {
@@ -117,6 +127,7 @@ function makeDom(clock) {
       removeChild(c) { node.children = node.children.filter(x => x !== c); },
       remove() {},
       addEventListener() {}, removeEventListener() {},
+      value: '',
       focus() {}, blur() {}, click() { if (node.onclick) node.onclick({ preventDefault() {}, stopPropagation() {} }); },
       getBoundingClientRect: () => ({ x: 0, y: 0, width: 320, height: 60, top: 0, left: 0 }),
       get innerHTML() { return node._html; },
@@ -388,6 +399,8 @@ export async function runGame(opts = {}) {
     manifest, log, clock,
     /** How many players actually booted, after the manifest's range was applied. */
     playerCount: roster.length,
+    /** The teams this table was booted with (empty for a non-team game). */
+    teams,
     get result() { return result; },
     get over() { return result !== null; },
     players: roster.map(r => r.id),
@@ -434,7 +447,7 @@ export async function runGame(opts = {}) {
     clickable(playerId) {
       const d = phones.get(playerId)?.document;
       if (!d) return [];
-      return ['button', 'i', 'div', 'span']
+      return ['button', 'i', 'div', 'span', 'a', 'label']
         .flatMap(tag => d.querySelectorAll(tag))
         .filter(h => !h.disabled && (h.onclick ||
                      Object.keys(h.attrs || {}).some(k => k.startsWith('data-'))));
@@ -444,7 +457,7 @@ export async function runGame(opts = {}) {
     handles(playerId) {
       const d = phones.get(playerId)?.document;
       if (!d) return [];
-      return ['button', 'i', 'div', 'span']
+      return ['button', 'i', 'div', 'span', 'input', 'a', 'label']
         .flatMap(tag => d.querySelectorAll(tag))
         .filter(h => h.attrs && Object.keys(h.attrs).length)
         .map(h => ({ tag: h.tagName.toLowerCase(), attrs: h.attrs, text: h.textContent }));

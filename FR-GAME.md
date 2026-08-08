@@ -174,6 +174,44 @@ Every intent is refused unless it passes all of:
 `ctx` is `{ from, msg, state, table }`. `table.rejected` lists recent refusals with a reason,
 which is what you read when an intent mysteriously does nothing.
 
+### `options` — declare the move space, get fuzzing for free
+
+This is the single highest-value thing you can add to a game.
+
+A bot driving through the DOM has to reverse-engineer what's playable from rendered HTML.
+That works until a move is two taps ("pick a card", then "Climb") or typed text — and then
+the bot stalls and your game looks broken when it isn't. SUMMIT, TAPAS and FISHBOWL were all
+untestable headlessly for exactly this reason.
+
+Declare what an intent would accept, and the harness can play the game with **no screen at
+all**:
+
+```js
+play: {
+  phase: 'playing:play',
+  when:    (ctx) => ctx.from === G.turn,
+  options: (ctx) => G.hands[ctx.from].filter(c => canPlay(ctx.from, c))
+                                     .map(c => ({ card: { c: c.c, v: c.v } })),
+  run:     (ctx) => { … }
+}
+```
+
+`table.legalMoves(playerId)` now returns concrete messages — `{t:'play', card:{c:'jungle',v:7}}`
+— filtered by the same turn / host / phase / busy checks `handle()` applies.
+
+| Option | Use it for |
+|---|---|
+| `options(ctx)` | the argument sets this intent accepts right now |
+| `when(ctx)` | any guard `turn`/`host`/`phase` can't express — checked by `handle` **and** `legalMoves`, so they can never disagree |
+| `hidden: true` | keep it out of the move space (`hello`, or free text nothing can enumerate) |
+
+The UI becomes one view of this list rather than the only place it exists. You don't have to
+restructure your game to get it: SUMMIT kept its own deck and scoring and only moved its
+intent handling across.
+
+*Free text* (a typed phrase, a drawn gesture) genuinely can't be enumerated — mark it
+`hidden` and let the bundle's `bot.mjs` supply it. FISHBOWL does exactly that.
+
 ### `hold` and `sequence` — the Flip 3 bug, made unwritable
 
 STREAK's "Flip 3" dealt 2 cards or 4, never 3. The forced flips were 800ms apart, Flip and

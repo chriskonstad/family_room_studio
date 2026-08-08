@@ -1,5 +1,3 @@
 {
-  "_comment": "Bundles the headless harness cannot yet drive, and WHY. These are harness limitations, not game bugs \u2014 each plays fine in the studio and on device. Listed so `--all` stays usable as a CI gate without quietly forgetting them. The durable fix is not a better DOM shim: it is for the game to DECLARE its move space via FR.host `options`, which is how SUMMIT came off this list. A game built on FR.host needs no DOM to be played or fuzzed at all.",
-  "tapas": "Same shape as summit \u2014 pick a card into local state, then confirm.",
-  "fishbowl": "Reaches turnReady with its bot, then needs the giver's own timed guess loop; the shim's element identity isn't stable enough across re-renders for the giver's controls to stay wired."
+  "_comment": "Bundles the headless harness cannot drive, and why. Currently EMPTY: all eleven play. The three that used to be here (summit, tapas, fishbowl) came off not by improving the DOM shim but by declaring their move space through FR.host `options` \u2014 a game built on FR.host needs no DOM to be played or fuzzed at all. If you add an entry here, prefer that route before teaching the shim another trick."
 }

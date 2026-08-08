@@ -97,28 +97,42 @@ function createGame(Table, root) {
     G.round++; startRound();
   }
 
-  function handleIntent(from, msg) {
-    if (msg.t === 'hello') { return; }
-    if (G.phase === 'entry' && msg.t === 'addPhrase' && !G.done[from]
-        && G.counts[from] < MAX_PHRASES_PER_PLAYER) {
-      const phrase = String(msg.phrase||'').trim().slice(0, 40);
-      if (!phrase) return;
-      G.phrases.push(phrase);
-      G.counts[from]++;
-      return;
-    }
-    if (G.phase === 'entry' && msg.t === 'doneEntry' && G.counts[from] > 0) {
-      G.done[from] = true;
-      if (everyoneDone()) { G.phrases = shuffle(G.phrases); startRound(); }
-      return;
-    }
-    if (G.phase === 'turnReady' && msg.t === 'begin' && from === currentGiver()) { beginTurn(); return; }
-    if (G.phase === 'turn' && from === currentGiver()) {
-      if (msg.t === 'got') got();
-      else if (msg.t === 'skip') skip();
-      return;
-    }
-    if (G.phase === 'roundOver' && msg.t === 'next' && from === MY) { nextRoundOrEnd(); return; }
+  // The move space, declared.
+  //
+  // FISHBOWL is the awkward one: its first phase is free TEXT, which no bot can invent
+  // and no `options` should pretend to enumerate. So the split is honest — everything
+  // that is a choice is declared here, and the one thing that is authorship (the phrase
+  // itself) is supplied by the bundle's bot.mjs when the harness plays it.
+  const isGiver = (ctx) => ctx.from === currentGiver();
+  let table = null;
+  function buildTable() {
+    return FR.host({
+      state: G, timers: FR.timers(), hostId: MY,
+      phase: () => G.phase,
+      publish: syncAll,
+      intents: {
+        hello: { hidden: true, run: () => {} },
+        // Free text: playable, but not enumerable. Hidden from legalMoves on purpose.
+        addPhrase: { hidden: true, phase: 'entry',
+          when: (ctx) => !G.done[ctx.from] && G.counts[ctx.from] < MAX_PHRASES_PER_PLAYER,
+          run: (ctx) => {
+            const phrase = String(ctx.msg.phrase||'').trim().slice(0, 40);
+            if (!phrase) return;
+            G.phrases.push(phrase);
+            G.counts[ctx.from]++;
+          } },
+        doneEntry: { phase: 'entry',
+          when: (ctx) => G.counts[ctx.from] > 0 && !G.done[ctx.from],
+          run: (ctx) => {
+            G.done[ctx.from] = true;
+            if (everyoneDone()) { G.phrases = shuffle(G.phrases); startRound(); }
+          } },
+        begin: { phase: 'turnReady', when: isGiver, run: () => beginTurn() },
+        got:   { phase: 'turn',      when: isGiver, run: () => got() },
+        skip:  { phase: 'turn',      when: isGiver, run: () => skip() },
+        next:  { host: true, phase: 'roundOver', run: () => nextRoundOrEnd() }
+      }
+    });
   }
 
   function publicState() {
@@ -151,8 +165,8 @@ function createGame(Table, root) {
 
   // ---------- wiring ----------
   if (Table.isHost) {
-    Table.onStart(players => { initGame(players); syncAll(); });
-    Table.onMessage((from, msg) => { handleIntent(from, msg); syncAll(); });
+    Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
+    Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
     Table.onPlayerLeave(id => {
       if (!G) return;
       G.teams.forEach(t => { t.playerIds = t.playerIds.filter(p => p !== id); });

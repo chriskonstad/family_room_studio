@@ -126,17 +126,32 @@ function createGame(Table, root) {
     });
   }
 
-  function handleIntent(from, msg) {
-    if (msg.t === 'hello') return;
-    if (G.phase === 'drafting' && msg.t === 'pick' && G.picks[from] == null
-        && msg.i >= 0 && msg.i < G.hands[from].length) {
-      G.picks[from] = msg.i;
-      if (everyonePicked()) resolvePicks();
-      return;
-    }
-    if (G.phase === 'roundEnd' && msg.t === 'next' && from === MY) {
-      G.round++; startRound();
-    }
+  // The move space, declared. TAPAS drafts SIMULTANEOUSLY — everyone picks at once, so
+  // there is no "current turn" to key off, and the choice is an index into a hand only
+  // that player can see. A DOM bot could see cards but not which were still pickable;
+  // `options` says exactly which indices are open, for each player independently.
+  let table = null;
+  function buildTable() {
+    return FR.host({
+      state: G, timers: FR.timers(), hostId: MY,
+      phase: () => G.phase,
+      publish: syncAll,
+      intents: {
+        hello: { hidden: true, run: () => {} },
+        pick: { phase: 'drafting',
+                // Already picked this round? Nothing is legal until the round resolves.
+                when: (ctx) => G.picks[ctx.from] == null && !!G.hands[ctx.from],
+                options: (ctx) => G.hands[ctx.from].map((_, i) => ({ i: i })),
+                run: (ctx) => {
+                  const i = ctx.msg.i;
+                  if (!(i >= 0 && i < G.hands[ctx.from].length)) return;
+                  G.picks[ctx.from] = i;
+                  if (everyonePicked()) resolvePicks();
+                } },
+        next: { host: true, phase: 'roundEnd',
+                run: () => { G.round++; startRound(); } }
+      }
+    });
   }
 
   function publicState() {
@@ -162,8 +177,8 @@ function createGame(Table, root) {
 
   // ---------- wiring ----------
   if (Table.isHost) {
-    Table.onStart(players => { initGame(players); syncAll(); });
-    Table.onMessage((from, msg) => { handleIntent(from, msg); syncAll(); });
+    Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
+    Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
     Table.onPlayerLeave(id => {
       if (!G) return;
       // fold the leaver: their unplayed hand vanishes, their picks resolve as no-op

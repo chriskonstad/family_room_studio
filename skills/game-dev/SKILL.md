@@ -76,6 +76,11 @@ reference with a complete example game: **`tools/FR-GAME.md`**.
 - `FR.standings.byScore` / `.byElimination` — the exact `Table.endGame` payload.
 - `FR.timers()` — named; `cancelAll()` when the game ends.
 - `FR.host({...})` — refuses unknown, frozen, unseated, wrong-phase and out-of-turn intents.
+  **Declare `options(ctx)` on each intent** (plus `when(ctx)` for guards the built-ins can't
+  express, `hidden:true` for free text). That is what lets `table.legalMoves()` enumerate the
+  move space, so the harness can play and fuzz your game with no screen — it is how SUMMIT,
+  TAPAS and FISHBOWL went from undriveable to fully tested.
+- `FR.rng(Table.seed)` — seed from the table, never `Date.now()`, or `--seed N` can't replay.
   Use `table.hold(ms, fn)` / `table.sequence(ms, steps)` for timed sequences: they freeze
   input, which is what prevents the Flip-3 class of bug.
 
