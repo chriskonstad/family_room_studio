@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 /*
- * Runs the Table conformance suite against the Playtest Studio's SDK — the same
- * spec the iOS unit test uses, so the two harnesses can't drift apart again.
+ * Runs the Table conformance suite against the shared SDK, under node.
  *
  *   node tools/conformance/run-studio.mjs
  *
- * It extracts the studio's `window.Table = {…}` construction from index.html and
- * evaluates it against stubs, rather than duplicating it here. If the studio's
- * SDK changes shape, this notices.
+ * This used to reach the studio's `Table` by REGEX-SCRAPING a template literal out of
+ * playtest/index.html, substituting the `${…}` placeholders by hand, and evaluating the
+ * result — because the studio and the iOS shell each had their own copy of the SDK and
+ * there was no third place to get one from. Restructuring the studio's HTML broke it.
+ *
+ * There is one implementation now (tools/sdk/table-sdk.js), so this just imports it. The
+ * iOS unit test loads the same file into a real WKWebView, which means both harnesses are
+ * held to this spec against the same source.
+ *
+ * Exit code is 0 when every check passes, 1 when the SDK doesn't conform, 2 when the
+ * harness itself couldn't run.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -16,85 +23,84 @@ import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..', '..');
-const studioHTML = readFileSync(join(repo, 'tools/playtest/index.html'), 'utf8');
-const suite = readFileSync(join(here, 'table-conformance.js'), 'utf8');
-
-// The studio builds the SDK inside a template literal in a function that returns
-// the boot script for each simulated phone. Pull that template out and fill it.
-const match = studioHTML.match(/return `\(function\(\)\{\s*\n\s*const PID=[\s\S]*?\n  \}\)\(\);`;/);
-if (!match) {
-  console.error('✗ Could not find the studio Table bootstrap in tools/playtest/index.html.');
-  console.error('  If the studio was restructured, update the pattern in this script.');
-  process.exit(2);
-}
-
-// Substitute the ${…} interpolations the studio would fill in at runtime.
-const boot = match[0]
-  .replace(/^return `/, '')
-  .replace(/`;$/, '')
-  .replace(/\$\{JSON\.stringify\(player\.id\)\}/g, '"p0"')
-  .replace(/\$\{JSON\.stringify\(me\)\}/g, '{"id":"p0","name":"Ava","emoji":"🦊","isHost":true}')
-  .replace(/\$\{player\.isHost\?'true':'false'\}/g, 'true')
-  .replace(/\$\{JSON\.stringify\(players\)\}/g, '[{"id":"p0","name":"Ava","emoji":"🦊"}]')
-  .replace(/\$\{JSON\.stringify\(teams\)\}/g, 'null');
-
-if (boot.includes('${')) {
-  console.error('✗ Unsubstituted template placeholders remain:',
-                [...boot.matchAll(/\$\{[^}]*\}/g)].map(m => m[0]).join(', '));
-  process.exit(2);
-}
-
-// Stub the studio's parent-window bus. Every call is recorded, none may throw.
-const calls = [];
-const saved = new Map();
-const realBus = {
-  saveState: (pid, obj) => { calls.push(['saveState', pid]); saved.set(pid, structuredClone(obj)); },
-  loadState: (pid) => (saved.has(pid) ? saved.get(pid) : null)
+const read = (rel) => {
+  try { return readFileSync(join(repo, rel), 'utf8'); }
+  catch (e) { console.error(`✗ Missing ${rel} — ${e.message}`); process.exit(2); }
 };
-// Anything the studio calls that we haven't stubbed is recorded and ignored —
-// but real implementations above must win over the catch-all.
-const bus = new Proxy(realBus, {
-  get: (target, prop) =>
-    prop in target ? target[prop] : (...args) => { calls.push([String(prop), ...args]); }
-});
 
+const tableSDK = read('tools/sdk/table-sdk.js');
+const feel     = read('tools/sdk/fr-feel.js');
+const frGame   = read('tools/sdk/fr-game.js');
+const suite    = read('tools/conformance/table-conformance.js');
+
+/* A window-ish sandbox. Nothing here may throw: a game that calls into the SDK on a
+ * harness with no transport behind it should degrade to a no-op, not crash. */
+const calls = [];
 const sandbox = {
-  console,
-  structuredClone,
+  console, structuredClone,
   setTimeout, clearTimeout, setInterval, clearInterval,
+  Map, Set, Date, Math, JSON, Object, Array, String, Number, Boolean, Error,
   window: null
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
-sandbox.window.parent = { HarnessBus: bus };
-sandbox.window.addEventListener = () => {};
-
-vm.createContext(sandbox);
-vm.runInContext(boot, sandbox);
-
-// The studio injects fr-feel.js into every phone; do the same here or the
-// conformance run would report a difference the real studio doesn't have.
-const feel = readFileSync(join(repo, 'tools/sdk/fr-feel.js'), 'utf8');
+sandbox.addEventListener = () => {};
 sandbox.document = {
   getElementById: () => null,
-  createElement: () => ({ setAttribute() {}, appendChild() {}, style: {}, classList: { add(){}, remove(){} } }),
+  createElement: () => ({ setAttribute() {}, appendChild() {}, style: {}, classList: { add() {}, remove() {} } }),
   querySelector: () => null,
   head: { appendChild() {} },
   documentElement: { appendChild() {} }
 };
+
+vm.createContext(sandbox);
+vm.runInContext(tableSDK, sandbox);
+
+// Build a Table exactly the way a harness does: install the timer shim, then create with
+// a transport. Ours just records, which is enough to prove the surface and the host-only
+// guards without a network.
+const saved = new Map();
+sandbox.__io = new Proxy({
+  saveState: (v) => { calls.push(['saveState', v]); saved.set('me', v); }
+}, {
+  get: (t, prop) => (prop in t ? t[prop] : (...args) => { calls.push([String(prop), ...args]); })
+});
+sandbox.__cfg = {
+  me: { id: 'p0', name: 'Ava', emoji: '🦊' },
+  players: [{ id: 'p0', name: 'Ava', emoji: '🦊' }, { id: 'p9', name: 'Ben', emoji: '🐙' }],
+  teams: [],
+  isHost: true,
+  saved: null
+};
+
+vm.runInContext(`
+  var clock = __frTable.installTimerShim(window);
+  window.__tableSetPaused = clock.setPaused;
+  __cfg.clock = clock;
+  window.Table = __frTable.create(__cfg, __io, window);
+`, sandbox);
+
+// Both runtimes the harnesses inject, so this run sees what a real game sees.
 vm.runInContext(feel, sandbox);
 vm.runInContext('__frFeel.install(window.Table, document)', sandbox);
+vm.runInContext(frGame, sandbox);
+
 vm.runInContext(suite, sandbox);
 const report = vm.runInContext('__tableConformance.run(window.Table)', sandbox);
 
 for (const r of report.results) {
   if (!r.ok) console.log(`  ✗ ${r.name}${r.detail ? ' — ' + r.detail : ''}`);
 }
+
+// The library is injected alongside the SDK on both harnesses; if it went missing, games
+// would lose FR.deck/seats/host with no other warning.
+const frOK = vm.runInContext('!!(window.FR && FR.version && FR.rng && FR.seats && FR.host)', sandbox);
+if (!frOK) console.log('  ✗ FR game-structure library missing or incomplete');
+
 const label = `${report.pass}/${report.total} checks passed`;
-if (report.fail === 0) {
-  console.log(`✓ Studio Table conforms — ${label}`);
+if (report.fail === 0 && frOK) {
+  console.log(`✓ Shared Table SDK conforms — ${label}, FR present`);
   process.exit(0);
 }
-console.log(`\n✗ Studio Table does NOT conform — ${label}, ${report.fail} failing`);
-console.log('  The iOS harness is the source of truth; bring the studio up to it.');
+console.log(`\n✗ Shared Table SDK does NOT conform — ${label}, ${report.fail} failing`);
 process.exit(1);

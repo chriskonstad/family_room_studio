@@ -237,6 +237,7 @@ const state = {
   vfs:null,            // { path: Uint8Array }
   feelRuntime:null,    // tools/sdk/fr-feel.js source, fetched once (see loadFeelRuntime)
   gameRuntime:null,    // tools/sdk/fr-game.js source (FR.deck/seats/host/…), fetched once
+  tableSDK:null,       // tools/sdk/table-sdk.js — the ONE Table implementation, shared with iOS
   manifest:null,
   entryHtmlBase:null,  // rewritten entry HTML with a <!--__TABLE_SDK__--> marker
   dirHandle:null,      // FileSystemDirectoryHandle for hot reload (if available)
@@ -403,34 +404,39 @@ function buildEntryBase(entryPath){
 /* ============================ Table SDK (injected per phone) ============================ */
 
 function sdkScript(player, roster){
-  const me = {id:player.id, name:player.name, emoji:player.emoji, isHost:player.isHost, teamId:player.teamId||undefined};
+  const me = {id:player.id, name:player.name, emoji:player.emoji, teamId:player.teamId||undefined};
   const players = roster.map(r=>({id:r.id, name:r.name, emoji:r.emoji, teamId:r.teamId||undefined}));
   const teams = teamsEnabled()
-    ? activeTeams().map(t=>({id:t.id, name:t.name, color:t.color,
-        playerIds: roster.filter(r=>r.teamId===t.id).map(r=>r.id)}))
-    : null;
-  // Same-origin srcdoc iframe → reach the parent router directly. Mirrors the native shell.
+    ? activeTeams().map(t=>({id:t.id, name:t.name, color:t.color}))
+    : [];
+  // Only the TRANSPORT is studio-specific. The Table itself comes from the shared
+  // tools/sdk/table-sdk.js — the same file the iOS shell bundles — so the two harnesses
+  // cannot drift on the SDK surface the way they did before it was extracted.
+  // Same-origin srcdoc iframe → reach the parent router directly, mirroring the shell.
   return `(function(){
     const PID=${JSON.stringify(player.id)};
     const H=window.parent.HarnessBus;
-    const handlers={};
-    window.Table={
-      me:${JSON.stringify(me)}, isHost:${player.isHost?'true':'false'}, players:${JSON.stringify(players)},
+    const clock = window.__frTable.installTimerShim(window);
+    window.__tableSetPaused = clock.setPaused;
+    window.Table = window.__frTable.create({
+      me:${JSON.stringify(me)},
+      players:${JSON.stringify(players)},
       teams:${JSON.stringify(teams)},
-      onStart:cb=>handlers.start=cb, onPlayerJoin:cb=>handlers.join=cb,
-      onPlayerLeave:cb=>handlers.leave=cb, onMessage:cb=>handlers.message=cb,
-      onPause:cb=>handlers.pause=cb, onResume:cb=>handlers.resume=cb,
-      get isPaused(){ return !!window.__tablePaused; },
-      send:p=>H.send(PID,p), broadcast:p=>H.broadcast(PID,p), sendTo:(id,p)=>H.sendTo(PID,id,p),
-      endGame:r=>H.endGame(PID,r),
-      // Room feedback is device hardware; in the studio it logs so you can SEE
-      // that your game asked for it, and the API shape stays identical to the app.
-      haptic:s=>H.feedback(PID,'haptic',String(s||'light')),
-      sound:n=>H.feedback(PID,'sound',String(n||'')),
-      saveState:o=>H.saveState(PID,o), loadState:()=>H.loadState(PID)
-    };
-    window.__tableDispatch=(ev,a,b)=>{ const cb=handlers[ev]; if(cb){ try{cb(a,b);}catch(e){ H.error(PID,String(e&&e.stack||e)); } } };
-    window.addEventListener('error',e=>H.error(PID, e.message));
+      isHost:${player.isHost?'true':'false'},
+      saved:(window.parent.HarnessBus.loadState(${JSON.stringify(player.id)})),
+      clock:clock
+    }, {
+      send:      p     => H.send(PID, p),
+      broadcast: p     => H.broadcast(PID, p),
+      sendTo:    (i,p) => H.sendTo(PID, i, p),
+      endGame:   r     => H.endGame(PID, r),
+      saveState: v     => H.saveState(PID, v),
+      // Room feedback is device hardware; in the studio it logs, so you can SEE that
+      // your game asked for it and the API shape stays identical to the app.
+      haptic:    s     => H.feedback(PID, 'haptic', s),
+      sound:     n     => H.feedback(PID, 'sound', n),
+      error:     m     => H.error(PID, m)
+    });
   })();`;
 }
 
@@ -621,6 +627,7 @@ function renderStage(){
     // Same fr-feel.js the iOS shell bundles — one copy, so the two harnesses
     // can't drift on animations or Table.feel.
     const html = state.entryHtmlBase.replace('<!--__TABLE_SDK__-->',
+      (state.tableSDK ? '<script>'+state.tableSDK+'<\/script>' : '') +
       '<script>'+sdkScript(p, roster)+'<\/script>' +
       (state.feelRuntime ? '<script>'+state.feelRuntime+'\nwindow.__frFeel.install(window.Table, document);<\/script>' : '') +
       (state.gameRuntime ? '<script>'+state.gameRuntime+'<\/script>' : ''));
@@ -839,6 +846,7 @@ async function loadRuntime(file) {
   return null;
 }
 (async () => {
+  state.tableSDK    = await loadRuntime('table-sdk.js');
   state.feelRuntime = await loadRuntime('fr-feel.js');
   state.gameRuntime = await loadRuntime('fr-game.js');
 })();
