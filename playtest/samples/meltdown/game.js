@@ -57,6 +57,10 @@ function createGame(Table, root) {
   function orderTimeLimit(){ return Math.max(4, 12 - G.level); }   // seconds
 
   function newOrderFor(pid) {
+    // Never issue to a player who has left, and never after the reactor is cold: a
+    // ghost's order can't be satisfied, so it expired for damage and re-armed itself
+    // forever. Found once the harness started dropping players mid-game.
+    if (G.phase === 'over' || (G.dead && G.dead[pid])) return;
     // usually target ANOTHER player's control (that's the game)
     const others = G.order.filter(id => id !== pid && !G.dead?.[id]);
     const targetPlayer = (others.length && rng() < 0.8) ? pick(others) : pid;
@@ -128,12 +132,12 @@ function createGame(Table, root) {
   function levelUp() {
     G.level++; G.progress = 0;
     G.banner = '⬆️ LEVEL '+G.level+' — faster!';
-    G.order.forEach(pid => newOrderFor(pid));
+    G.order.forEach(pid => { if (!(G.dead && G.dead[pid])) newOrderFor(pid); });
   }
   function beginGame() {
     G.phase = 'running';
     G.banner = 'Keep it together!';
-    G.order.forEach(pid => newOrderFor(pid));
+    G.order.forEach(pid => { if (!(G.dead && G.dead[pid])) newOrderFor(pid); });
   }
   function gameOver() {
     G.phase = 'over';

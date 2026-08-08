@@ -46,6 +46,7 @@ function createGame(Table, root) {
     G = {
       phase:'entry', names:{}, emojis:{},
       teams: teams.map(t => ({ id:t.id, name:t.name, color:t.color, playerIds:t.playerIds.slice(), score:0, giverIdx:0 })),
+      seats: players.map(p => p.id),   // the roster FR.host checks senders against
       done:{}, counts:{}, phrases:[],
       round:0, teamIdx:0, bowl:[], current:null, turnEndsAt:null,
     };
@@ -65,10 +66,10 @@ function createGame(Table, root) {
     G.phase = 'turn';
     G.current = G.bowl[0];
     G.turnEndsAt = Date.now() + TURN_SECONDS*1000;
-    G.turnTimer = setTimeout(() => { endTurn(); syncAll(); }, TURN_SECONDS*1000);
+    timer.after('turn', TURN_SECONDS*1000, () => { endTurn(); syncAll(); });
   }
   function endTurn() {
-    clearTimeout(G.turnTimer);
+    timer.cancel('turn');
     const t = currentTeam();
     t.giverIdx++;
     G.teamIdx++;
@@ -90,6 +91,7 @@ function createGame(Table, root) {
     if (G.round + 1 >= ROUNDS.length) {
       const ranked = G.teams.slice().sort((a,b)=>b.score-a.score);
       G.phase='gameOver';
+      timer.cancelAll();          // nothing may tick under the results screen
       Table.endGame({
         winnerId: ranked[0].id,
         title: ranked[0].score===ranked[1]?.score ? 'It’s a tie!' : undefined,
@@ -106,12 +108,13 @@ function createGame(Table, root) {
   // and no `options` should pretend to enumerate. So the split is honest — everything
   // that is a choice is declared here, and the one thing that is authorship (the phrase
   // itself) is supplied by the bundle's bot.mjs when the harness plays it.
+  const timer = FR.timers();
   const isGiver = (ctx) => ctx.from === currentGiver();
   let table = null;
   function buildTable() {
     return FR.host({
-      state: G, timers: FR.timers(), hostId: MY,
-      players: G.order,   // so a stale or unseated id can't send anything
+      state: G, timers: timer, hostId: MY,
+      players: G.seats,   // so a stale or unseated id can't send anything
       phase: () => G.phase,
       publish: syncAll,
       intents: {

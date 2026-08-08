@@ -147,8 +147,14 @@
         return out;
       },
 
-      /** Look at the top card without taking it. */
-      peek: function () { return draw.length ? draw[draw.length - 1] : undefined; },
+      /** Look at the top card without taking it.
+       *  Reshuffles first if the draw pile is empty, exactly as draw() would — otherwise
+       *  peek said "empty" while the very next draw() returned a card, and a game gating
+       *  on `if (!deck.peek()) endRound()` ended a round with a full discard pile. */
+      peek: function () {
+        if (!draw.length) api.reshuffle();
+        return draw.length ? draw[draw.length - 1] : undefined;
+      },
 
       /** Put a card on the discard pile. */
       discard: function (card) { discard.push(card); return api; },
@@ -213,12 +219,31 @@
       get active() { return order.filter(function (id) { return status[id] === 'active'; }); },
       /** Eliminated ids, earliest knocked out first. */
       get out() { return out.slice(); },
-      /** Whose turn it is, or null if nobody can play. */
-      get current() { return idx >= 0 && order[idx] ? order[idx] : null; },
-      /** Id of the current dealer/starter, for games that rotate who leads. */
-      get dealer() { return order[dealer] || null; },
-      /** True when exactly one player has not been eliminated — a winner. */
-      get settled() { return api.remaining.length <= 1; },
+      /** Whose turn it is, or null if nobody can play.
+       *
+       *  Status is checked, not just the index. Eliminating the player whose turn it is
+       *  used to leave them as `current` until someone called next() — and FR.host's
+       *  turn guard is `seats.current !== from`, so an eliminated player could still
+       *  take a turn. The Detonator had a live 1500ms window of exactly that. */
+      get current() {
+        var id = idx >= 0 ? order[idx] : null;
+        return (id && status[id] === 'active') ? id : null;
+      },
+      /** Id of the current dealer/starter, for games that rotate who leads.
+       *  Skips eliminated seats — rotation used to advance by one index blindly, so a
+       *  game could render "dealer: Ben" for a player who was knocked out. */
+      get dealer() {
+        var n = order.length;
+        for (var s = 0; s < n; s++) {
+          var id = order[(dealer + s) % n];
+          if (status[id] !== 'out') return id;
+        }
+        return null;
+      },
+      /** True when the game has actually resolved: somebody is out, and at most one
+       *  player is left. Bare `remaining.length <= 1` was true from construction on a
+       *  solo table, so a game polling it declared victory before anything happened. */
+      get settled() { return out.length > 0 && api.remaining.length <= 1; },
       /** Ids that have NOT been eliminated (may be busted, frozen, etc). */
       get remaining() {
         return order.filter(function (id) { return status[id] !== 'out'; });
@@ -239,6 +264,11 @@
        * Cleared by startRound(). Use eliminate() for permanent removal.
        */
       setStatus: function (id, s) {
+        // 'out' is eliminate()'s word, and only eliminate() records the ORDER that
+        // becomes the ranking. Letting a game set it here dropped the player from the
+        // scoreboard entirely: remaining shrank, `out` stayed empty, and byElimination
+        // returned fewer rows than there were seats.
+        if (s === 'out') return api.eliminate(id);
         if (status[id] !== undefined && status[id] !== 'out') status[id] = s;
         return api;
       },
@@ -444,7 +474,26 @@
     cfg = cfg || {};
     var intents = cfg.intents || {};
     var timers = cfg.timers || FR.timers();
-    var busy = false;
+    /* Freezes must COMPOSE. `busy` used to be a single boolean that every hold and
+     * sequence set and cleared unconditionally, which meant the SHORTEST one won: a
+     * 200ms hold started inside a 1000ms hold thawed the table 800ms early, a hold
+     * expiring mid-sequence let a tap land between scripted steps, and a hold cleared a
+     * manual freeze() the game never released. All three are the Flip-3 failure — input
+     * accepted during a scripted moment — reintroduced one level up.
+     *
+     * So: a set of outstanding freeze tokens, plus a separate manual flag. The table is
+     * live only when nothing holds it. */
+    var freezeTokens = {};
+    var freezeSeq = 0;
+    var manualFreeze = false;
+    function isBusy() {
+        if (manualFreeze) return true;
+        for (var k in freezeTokens) if (freezeTokens.hasOwnProperty(k)) return true;
+        return false;
+    }
+    function acquireFreeze() { var id = 'f' + (++freezeSeq); freezeTokens[id] = true; return id; }
+    function releaseFreeze(id) { delete freezeTokens[id]; }
+
     var rejected = [];        // names of intents refused, newest last — for tests
 
     function phaseNow() { return cfg.phase ? cfg.phase() : null; }
@@ -455,8 +504,8 @@
     }
 
     var api = {
-      /** True while a hold() sequence is running and input is frozen. */
-      get busy() { return busy; },
+      /** True while any hold, sequence or manual freeze is holding the table. */
+      get busy() { return isBusy(); },
       /** Why recent intents were refused. Diagnostics for tests and fuzzing. */
       get rejected() { return rejected.slice(); },
       timers: timers,
@@ -473,7 +522,7 @@
         if (typeof spec === 'function') spec = { run: spec };
 
         // Frozen first: during a hold NOTHING gets through, whatever it is.
-        if (busy) { refuse(name, 'busy'); return false; }
+        if (isBusy()) { refuse(name, 'busy'); return false; }
 
         // Is the sender even at this table? Found by the fuzzer, which handed a
         // seatless id to a game whose "next round" intent was open to everyone —
@@ -533,7 +582,7 @@
        * @returns {Array<Object>} messages you can pass straight to handle().
        */
       legalMoves: function (playerId) {
-        if (busy) return [];                       // frozen: nothing is legal
+        if (isBusy()) return [];                   // frozen: nothing is legal
         var out = [];
         Object.keys(intents).forEach(function (name) {
           var spec = intents[name];
@@ -567,10 +616,10 @@
        * Nesting is allowed; the table stays frozen until the last one finishes.
        */
       hold: function (ms, fn) {
-        busy = true;
-        var name = 'fr:hold:' + (api._holds = (api._holds || 0) + 1);
+        var token = acquireFreeze();
+        var name = 'fr:hold:' + token;
         timers.after(name, ms, function () {
-          busy = false;
+          releaseFreeze(token);             // only THIS hold; others keep the table frozen
           if (fn) fn();
           if (cfg.publish) cfg.publish();
         });
@@ -587,17 +636,30 @@
        */
       sequence: function (ms, steps, done) {
         var i = 0;
-        busy = true;
+        var token = acquireFreeze();
+        // A per-sequence timer name. A fixed 'fr:seq' meant a second sequence silently
+        // cancelled the first one's pending step, so its remaining steps and its `done`
+        // never ran — no error, just a game quietly missing half a scripted moment.
+        var name = 'fr:seq:' + token;
         function step() {
           if (i >= steps.length) {
-            busy = false;
+            releaseFreeze(token);
             if (done) done();
             if (cfg.publish) cfg.publish();
             return;
           }
-          steps[i++]();
+          try {
+            steps[i++]();
+          } catch (e) {
+            // A throwing step must not wedge the table frozen forever, which is what
+            // happened before: no timer was armed to clear the flag, so every intent was
+            // refused for the rest of the game with no way back.
+            releaseFreeze(token);
+            if (cfg.publish) cfg.publish();
+            throw e;
+          }
           if (cfg.publish) cfg.publish();
-          timers.after('fr:seq', ms, step);
+          timers.after(name, ms, step);
         }
         step();
         return api;
@@ -615,12 +677,12 @@
        * While frozen, handle() refuses everything and legalMoves() is empty.
        */
       freeze: function (on) {
-        busy = !!on;
+        manualFreeze = !!on;
         return api;
       },
 
       /** Stop every timer this table owns. Call when the game ends. */
-      stop: function () { busy = false; timers.cancelAll(); return api; }
+      stop: function () { freezeTokens = {}; manualFreeze = false; timers.cancelAll(); return api; }
     };
 
     // Publish the live table on the window. The headless harness looks for this to ask

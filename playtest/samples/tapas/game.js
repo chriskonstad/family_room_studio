@@ -148,7 +148,10 @@ function createGame(Table, root) {
                 options: (ctx) => G.hands[ctx.from].map((_, i) => ({ i: i })),
                 run: (ctx) => {
                   const i = ctx.msg.i;
-                  if (!(i >= 0 && i < G.hands[ctx.from].length)) return;
+                  // Integer-only. `true`, 1.5 and "0.5" all satisfy a bare range check
+                  // and then index nothing, so resolvePicks read TYPES[undefined].ic and
+                  // took the whole table down. Never trust a number off the wire.
+                  if (!Number.isInteger(i) || i < 0 || i >= G.hands[ctx.from].length) return;
                   G.picks[ctx.from] = i;
                   if (everyonePicked()) resolvePicks();
                 } },
@@ -186,7 +189,11 @@ function createGame(Table, root) {
     Table.onPlayerLeave(id => {
       if (!G) return;
       // fold the leaver: their unplayed hand vanishes, their picks resolve as no-op
-      G.order = G.order.filter(x => x !== id);
+      // Splice in place: FR.host holds a reference to this array, so rebinding it left
+      // the not-seated guard checking a stale roster that still contained the leaver.
+      const at = G.order.indexOf(id);
+      if (at >= 0) G.order.splice(at, 1);
+      delete G.hands[id];
       delete G.picks[id];
       if (G.phase === 'drafting' && everyonePicked()) resolvePicks();
       syncAll();

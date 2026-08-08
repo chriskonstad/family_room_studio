@@ -119,9 +119,10 @@ function createGame(Table, root){
     Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
     Table.onPlayerLeave(id=>{
       if(!G) return;
-      if(seats.isActive(id) || seats.status(id)!=='out'){
+      if(seats.status(id)!=='out'){
         seats.eliminate(id);
-        if(seats.settled && G.phase!=='over') return finish();
+        if(G.phase==='over'){ timer.cancelAll(); return; }   // results are up: stop the clock
+        if(seats.settled) return finish();
       }
       syncAll();
     });

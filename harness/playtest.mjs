@@ -55,7 +55,7 @@ const HOSTILE_INTENTS = ['flip', 'bank', 'next', 'target', 'tap', 'go', 'ready',
  * Play one game to completion (or until it stalls).
  * @returns {{ok:boolean, why?:string, turns:number, result:object}}
  */
-export async function playOne(game, { seed = 1, players = 3, hostile = false, maxTurns = 4000, verbose = false, bot = null } = {}) {
+export async function playOne(game, { seed = 1, players = 3, hostile = false, leave = false, maxTurns = 4000, verbose = false, bot = null } = {}) {
   const r = rng(seed);
   let table;
   try {
@@ -69,6 +69,10 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, ma
   // can only press `data-act` buttons, which drives STREAK and stalls everything else.
   const vocabulary = discoverIntents(table.source);
   let turns = 0, idleStreak = 0;
+  const uiChecked = {};
+  const dropped = new Set();
+  // A quarter of runs lose a player partway in, at a seeded moment.
+  const dropAt = leave ? (2 + r.int(25)) : 0;
 
   while (!table.over && turns < maxTurns) {
     turns++;
@@ -83,6 +87,24 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, ma
         try { took = !!bot({ table, playerId: id, rng: r, send: (m) => table.send(id, m) }); }
         catch (e) { return { ok: false, why: `bot threw for ${id}: ${e.message}`, turns }; }
         if (took) { acted = true; continue; }
+      }
+
+      // A game driven entirely through legalMoves never touches its own UI — so a build
+      // where nobody can actually PLAY (every onclick deleted, every button disabled)
+      // used to pass green. Whenever the rules say this player may act, the screen has to
+      // offer them something. Checked once per player per game, on the first such moment.
+      if (!uiChecked[id]) {
+        const rulesAllow = (table.legalMoves(id) || []).length > 0;
+        if (rulesAllow) {
+          uiChecked[id] = true;
+          const live = table.clickable(id).filter(h => h.onclick);
+          const acts = table.actions(id);
+          if (!live.length && !acts.length) {
+            return { ok: false, turns,
+              why: `${id} has legal moves but nothing on screen to make them with — `
+                 + `no wired control and no data-act button. The rules work; the game is unplayable.` };
+          }
+        }
       }
 
       // Best case: the game is built on FR.host and can simply TELL us what's legal.
@@ -137,6 +159,19 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, ma
       acted = true;
     }
 
+    // Someone puts their phone down mid-game. This path was NEVER exercised — playOne
+    // never called drop() — and it turned out to hide five confirmed bugs, including a
+    // STREAK deadlock that stranded the whole table forever and a SUMMIT stub that left
+    // the last player on a board they couldn't touch. A game must survive it: still
+    // terminate, still name a winner, never freeze.
+    if (dropAt && turns === dropAt && ids.length > 1) {
+      const victim = r.pick(ids.slice(1));      // never the host: that's a different test
+      try { table.drop(victim); } catch (e) {
+        return { ok: false, why: `threw when ${victim} left: ${e.message}`, turns };
+      }
+      dropped.add(victim);
+    }
+
     // Hostile mode: fire things no UI offered, from anyone, including a ghost.
     if (hostile) {
       const from = r.pick(ids.concat(['ghost-id']));
@@ -175,6 +210,12 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, ma
   // A team game legitimately names a TEAM as the winner — Table.endGame takes playerId
   // or teamId in standings, and FISHBOWL's winner is 't1'. Asserting "must be a player"
   // reported a healthy game as broken.
+  for (const gone of dropped) {
+    if ((table.legalMoves(gone) || []).length) {
+      return { ok: false, turns, result,
+        why: `${gone} left the game but is still being offered legal moves` };
+    }
+  }
   const teamIds = (table.teams || []).map(t => t.id);
   const valid = ids.concat(teamIds);
   if (result.winnerId && !valid.includes(result.winnerId)) {
@@ -190,11 +231,17 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, ma
   }
   // A finished game must stop ticking. Give it a long beat first — endGame legitimately
   // schedules a little settling work — then require silence.
-  table.advance(10000);
-  const before = table.clock.armed;
-  table.advance(60000);
-  if (table.clock.armed > 0 && before > 0) {
-    return { ok: false, why: `left ${table.clock.armed} timers running after the game ended`, turns, result };
+  //
+  // Skipped when somebody left: a disconnected phone never receives the final broadcast,
+  // so its own render loop keeps running, and the shared virtual clock can't attribute a
+  // timer to a device. That is real behaviour, not a leak — the shell pauses or tears
+  // down a device that has gone. Runs without a drop still hold the line.
+  if (dropped.size === 0) {
+    table.advance(10000);
+    table.advance(60000);
+    if (table.clock.armed > 0) {
+      return { ok: false, why: `left ${table.clock.armed} timers running after the game ended`, turns, result };
+    }
   }
   if (verbose) console.log(`    seed ${seed}: ${turns} turns, winner ${result.winnerId}`);
   return { ok: true, turns, result };
@@ -220,7 +267,8 @@ export async function playtest(game, opts = {}) {
   for (let i = 0; i < games; i++) {
     const seed = first + i;
     // Alternate: half honest play, half with hostile input mixed in.
-    const res = await playOne(game, { ...opts, seed, players, hostile: i % 2 === 1 });
+    const res = await playOne(game, { ...opts, seed, players,
+                                      hostile: i % 2 === 1, leave: i % 4 === 3 });
     totalTurns += res.turns;
     if (!res.ok) {
       failures.push({ seed, why: res.why, hostile: i % 2 === 1 });

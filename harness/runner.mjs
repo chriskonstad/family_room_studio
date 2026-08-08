@@ -126,7 +126,20 @@ function makeDom(clock) {
       appendChild(c) { node.children.push(c); return c; },
       removeChild(c) { node.children = node.children.filter(x => x !== c); },
       remove() {},
-      addEventListener() {}, removeEventListener() {},
+      // addEventListener was a no-op, so a game that wires input this way (TEMPO's
+      // tap-to-the-beat surface) looked like it had no controls at all. Click handlers
+      // are recorded so `clickable()` can see them and a bot can press them.
+      addEventListener(type, fn) {
+        // Any of these means "the player presses this thing" — TEMPO's tap surface uses
+        // pointerdown, not click. Treating only 'click' as interaction made a game whose
+        // entire input is a tap zone look like it had no controls.
+        var PRESS = ['click', 'pointerdown', 'touchstart', 'mousedown'];
+        if (PRESS.indexOf(type) !== -1 && typeof fn === 'function' && !node.onclick) {
+          node.onclick = fn;
+        }
+        (node._listeners || (node._listeners = [])).push([type, fn]);
+      },
+      removeEventListener() {},
       value: '',
       focus() {}, blur() {}, click() { if (node.onclick) node.onclick({ preventDefault() {}, stopPropagation() {} }); },
       getBoundingClientRect: () => ({ x: 0, y: 0, width: 320, height: 60, top: 0, left: 0 }),
@@ -299,9 +312,14 @@ export async function runGame(opts = {}) {
       deliver(to, from, payload);
     },
     endGame(from, r) {
-      if (from !== hostId || result) return;
+      if (from !== hostId) return;
+      // Every call is logged, INCLUDING a second one. This used to return early when a
+      // result already existed, which made playtest's "endGame fires once" assertion
+      // unfalsifiable — it could not fail by construction. Neither real harness dedupes:
+      // HostSession.endGame overwrites gameResult and re-broadcasts, so on a real phone a
+      // second call replaces the results screen with a different winner.
       log.push({ t: clock.now, kind: 'endGame', payload: r });
-      result = r;
+      if (!result) result = r;
     },
     feedback(from, kind, value) { log.push({ t: clock.now, kind, from, value }); },
     saveState(from, v) { phones.get(from).saved = v; },
@@ -447,10 +465,16 @@ export async function runGame(opts = {}) {
     clickable(playerId) {
       const d = phones.get(playerId)?.document;
       if (!d) return [];
-      return ['button', 'i', 'div', 'span', 'a', 'label']
+      const rendered = ['button', 'i', 'div', 'span', 'a', 'label']
         .flatMap(tag => d.querySelectorAll(tag))
         .filter(h => !h.disabled && (h.onclick ||
                      Object.keys(h.attrs || {}).some(k => k.startsWith('data-'))));
+      // Controls declared statically in index.html and fetched by id — BLITZ's tap
+      // button, TEMPO's tap surface — are ROOTS in this shim, not children of a
+      // rendered tree, so they were invisible here. A game whose only input is a
+      // static button looked like it had no UI at all.
+      const roots = d._roots().filter(h => h.onclick && !h.disabled);
+      return rendered.concat(roots);
     },
     /** Every rendered element carrying attributes — raw material for a bot deciding
      *  what values an intent's dynamic fields could take (data-i, data-c, data-id…). */

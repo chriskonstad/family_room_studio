@@ -210,7 +210,24 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(() => { /* 2p game: results screen still reachable via shell Leave */ });
+    Table.onPlayerLeave(id => {
+      // This used to be an empty stub with a comment claiming the results screen was
+      // still reachable. It wasn't: endGame was never called, the turn was handed to the
+      // player who had left, and the one remaining player sat on a dead board forever.
+      // A two-player game with one player left is over — score it and show the result.
+      if (!G || G.phase === 'over') return;
+      G.phase = 'over';
+      const survivor = G.order.find(x => x !== id) || null;
+      const totals = {};
+      G.order.forEach(pid => { totals[pid] = G.totals[pid] || 0; });
+      if (survivor) totals[survivor] += 1;      // a walkover still has a winner
+      const r = FR.standings.byScore(totals, {
+        detail: (pid) => pid === id ? 'left the climb' : 'last on the mountain'
+      });
+      Table.endGame({ title: G.names[survivor] + ' takes the summit', winnerId: survivor,
+                      standings: r.standings });
+      syncAll();
+    });
   } else {
     Table.onStart(() => { view = null; render(); Table.send({ t:'hello' }); });
     Table.onMessage((_f, msg) => {

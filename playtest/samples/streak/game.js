@@ -31,6 +31,7 @@ function createGame(Table, root) {
     startRound();
   }
   function startRound() {
+    G.finalized = false;                 // per-round guard; see finalizeRound()
     G.deck = shuffle(buildDeck()); G.discard = [];
     G.order.forEach(id => { G.lines[id] = { nums:[], mods:[], hasSave:false }; G.status[id]='active'; });
     G.pending = null; G.work = []; G.roundOver = false; G.winner = null;
@@ -188,6 +189,11 @@ function createGame(Table, root) {
   }
 
   function finalizeRound() {
+    // Guarded because a leave arriving after the round already resolved used to re-enter
+    // here, re-add every line to the totals and fire a SECOND endGame with a different
+    // winner. `ending` is cleared by this function, so it can't be the guard.
+    if (G.phase === 'gameOver' || G.finalized) return;
+    G.finalized = true;
     G.ending = false;
     G.pending = null; G.work = []; G.lastRound = {};
     G.order.forEach(id => {
@@ -244,8 +250,21 @@ function createGame(Table, root) {
     Table.onStart(players => { initGame(players); table = buildTable(); publish(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
     Table.onPlayerLeave(id => {
-      if (!G) return;
-      if (G.status[id] === 'active') { G.status[id]='stayed'; G.banner = G.names[id]+' left — auto-banked'; if (curId()===id) endTurnOrRound(); }
+      if (!G || G.phase === 'gameOver') return;   // results are up; don't re-score anyone
+      // If they were mid-choice, drop the pending action. It is the ONLY legal move in
+      // the game while it stands, and it belongs to them — leaving it behind froze the
+      // table permanently with no timer to recover. Losing the card is the right trade.
+      if (G.pending && G.pending.chooserId === id) {
+        G.pending = null;
+        G.banner = G.names[id] + ' left — their card is discarded';
+        resolveWork();
+        return;
+      }
+      if (G.status[id] === 'active') {
+        G.status[id]='stayed';
+        G.banner = G.names[id]+' left — auto-banked';
+        if (curId()===id) endTurnOrRound();
+      }
       publish();
     });
   } else {
