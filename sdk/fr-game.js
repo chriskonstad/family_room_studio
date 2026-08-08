@@ -595,6 +595,22 @@
         return api;
       },
 
+      /**
+       * Freeze or thaw input by hand, for a game whose timed sequence is its own.
+       *
+       * `hold` and `sequence` cover the common shapes, but some sequences are variable
+       * length and interruptible — STREAK's forced flips can pause mid-run to ask the
+       * player who to target. Those games still need the guard, and writing it as
+       * `if (myQueue.length || myFlag) return;` at the top of every intent is exactly
+       * the check that gets forgotten, which is how Flip 3 dealt two cards or four.
+       *
+       * While frozen, handle() refuses everything and legalMoves() is empty.
+       */
+      freeze: function (on) {
+        busy = !!on;
+        return api;
+      },
+
       /** Stop every timer this table owns. Call when the game ends. */
       stop: function () { busy = false; timers.cancelAll(); return api; }
     };

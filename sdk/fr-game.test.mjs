@@ -542,6 +542,21 @@ test('a `when` guard is honoured by handle and legalMoves alike', () => {
   assert.equal(table.handle('a', { t: 'enter' }), true, 'open: accepted');
 });
 
+test('freeze() guards a game that runs its own sequence', () => {
+  const state = { n: 0 };
+  const table = FR.host({
+    state, timers: FR.timers(fakeClock()), publish: () => {},
+    intents: { go: (ctx) => { ctx.state.n++; } }
+  });
+  table.freeze(true);
+  assert.equal(table.handle('a', { t: 'go' }), false);
+  assert.deepEqual(table.legalMoves('a'), [], 'nothing is legal while frozen');
+  assert.equal(state.n, 0);
+  table.freeze(false);
+  assert.equal(table.handle('a', { t: 'go' }), true);
+  assert.equal(state.n, 1);
+});
+
 test('hidden intents stay out of the move space', () => {
   const table = FR.host({
     state: {}, timers: FR.timers(fakeClock()), publish: () => {},

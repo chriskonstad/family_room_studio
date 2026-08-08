@@ -16,7 +16,10 @@ function createGame(Table, root) {
     for (let i=0;i<3;i++){ d.push({k:'act',act:'freeze'}); d.push({k:'act',act:'triple'}); d.push({k:'act',act:'save'}); }
     return d; // 94 cards
   }
-  const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+  // Seeded from the table: `--seed N` in the headless harness replays this exact game,
+  // which is what makes a fuzz failure something you can look at rather than a rumour.
+  const rng = FR.rng(Table.seed);
+  const shuffle = a => rng.shuffle(a);
 
   // ---- setup (host only) ----
   function initGame(players) {
@@ -94,25 +97,54 @@ function createGame(Table, root) {
   }
 
   // ---- intents from players (host only) ----
-  function handleIntent(from, msg) {
-    if (msg.t === 'hello') return;                       // client webview came up; publish() follows
-    if (G.phase === 'gameOver') return;                  // shell owns the results screen + "Play Again"
-    if (G.phase === 'roundEnd') { if (msg.t==='next' && from===MY) { G.round++; G.dealer=(G.dealer+1)%G.order.length; G.lastRound={}; startRound(); } return; }
-    if (G.phase !== 'playing') return;
-    if (G.pending) {
-      if (msg.t==='target' && from===G.pending.chooserId && G.pending.eligible.includes(msg.id)) {
-        const act = G.pending.action; G.pending = null; applyAction(act, msg.id, from); resolveWork();
+  //
+  // The guards below used to be hand-written at the top of this function, including the
+  // one that Flip 3 taught us: while forced flips are landing it is NOT the player's
+  // move, and accepting a tap there consumed a queued flip early (Flip 3 resolving as 2)
+  // or appended a spare one (resolving as 4). FR.host owns all of them now, so the check
+  // cannot be dropped by a later edit — and `options` publishes the move space, which is
+  // how this game gets fuzzed with no screen.
+  let table = null;
+  // FR needs to know whose turn it is and who is seated; STREAK already tracks both, so
+  // this is a view over its state rather than a second copy that could disagree.
+  const seatsView = {
+    get current() { return curId(); },
+    get all()     { return G ? G.order : []; }
+  };
+  function buildTable() {
+    return FR.host({
+      state: G, seats: seatsView, timers: FR.timers(), hostId: MY,
+      phase: () => G.phase,
+      publish: publish,
+      intents: {
+        hello: { hidden: true, run: () => {} },
+        next:  { host: true, phase: 'roundEnd', run: () => {
+                   G.round++; G.dealer=(G.dealer+1)%G.order.length; G.lastRound={}; startRound();
+                 } },
+        // A drawn action card asks its owner to pick a victim. Declaring the eligible
+        // list is what lets a bot answer it — this used to be invisible outside the DOM.
+        target:{ phase: 'playing',
+                 when: (ctx) => !!G.pending && ctx.from === G.pending.chooserId,
+                 options: () => G.pending ? G.pending.eligible.map(id => ({ id: id })) : [],
+                 run: (ctx) => {
+                   if (!G.pending.eligible.includes(ctx.msg.id)) return;
+                   const act = G.pending.action; G.pending = null;
+                   applyAction(act, ctx.msg.id, ctx.from); resolveWork();
+                 } },
+        flip:  { phase: 'playing', turn: true,
+                 when: () => !G.pending,
+                 run: (ctx) => { G.work.push({t:'flip',pid:ctx.from}); resolveWork(); } },
+        bank:  { phase: 'playing', turn: true,
+                 when: (ctx) => !G.pending && canBank(ctx.from),
+                 run: (ctx) => {
+                   G.status[ctx.from]='stayed';
+                   G.banner = G.names[ctx.from]+' banked';
+                   endTurnOrRound();
+                 } }
       }
-      return;
-    }
-    // Forced flips land one per beat, and during those gaps it is NOT the
-    // player's move — accepting a tap here consumed a queued flip early (Flip 3
-    // resolving as 2) or appended a spare one (resolving as 4), and could run
-    // endTurnOrRound() mid-sequence so the buttons reappeared afterwards.
-    if (G.work.length || G.ending) return;
-    if (msg.t==='flip' && from===curId()) { G.work.push({t:'flip',pid:from}); resolveWork(); }
-    else if (msg.t==='bank' && from===curId() && canBank(from)) { G.status[from]='stayed'; G.banner = G.names[from]+' banked'; endTurnOrRound(); }
+    });
   }
+
   function resolveWork() {
     // Publishes are normally driven by incoming intents (see Table.onMessage), but
     // a forced-flip sequence advances on a TIMER with no intent behind it. Every
@@ -209,8 +241,8 @@ function createGame(Table, root) {
 
   // ---- role wiring (same bundle, branch on isHost) ----
   if (Table.isHost) {
-    Table.onStart(players => { initGame(players); publish(); });
-    Table.onMessage((from, msg) => { handleIntent(from, msg); publish(); });
+    Table.onStart(players => { initGame(players); table = buildTable(); publish(); });
+    Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
     Table.onPlayerLeave(id => {
       if (!G) return;
       if (G.status[id] === 'active') { G.status[id]='stayed'; G.banner = G.names[id]+' left — auto-banked'; if (curId()===id) endTurnOrRound(); }
@@ -220,7 +252,16 @@ function createGame(Table, root) {
     Table.onStart(() => { view = { phase:'connecting' }; render(); Table.send({ t:'hello' }); });
     Table.onMessage((_from, msg) => { if (msg.t === 'state') { view = msg.s; render(); } });
   }
-  function publish() { const s = publicState(); Table.broadcast({ t:'state', s }); view = s; render(); }
+  function publish() {
+    // Input is frozen exactly while forced flips are landing or the round-end hold is up.
+    // DERIVED from state, in one place: setting it imperatively at each exit meant missing
+    // one — the table stayed frozen after the hold and nobody could start the next round.
+    // A pending target choice is the ONE thing that must get through: the forced-flip
+    // sequence is parked waiting for it, so freezing it deadlocks the round. This mirrors
+    // the original guard's position — it sat after the pending branch, not before it.
+    if (table) table.freeze(!G.pending && (G.work.length > 0 || !!G.ending));
+    const s = publicState(); Table.broadcast({ t:'state', s }); view = s; render();
+  }
 
   // ---- rendering (every device renders the same public state) ----
   const label = a => a==='freeze' ? 'Freeze' : a==='triple' ? 'Flip Three' : 'Second Chance';
