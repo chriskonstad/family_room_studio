@@ -483,6 +483,102 @@ test('stop cancels the timers a finished game left behind', () => {
   assert.ok(!table.busy);
 });
 
+section('FR.host.legalMoves — the move space, without a DOM');
+
+test('enumerates a bare verb and an intent with options', () => {
+  const seats = FR.seats(['a', 'b']);
+  seats.startRound();
+  const state = { phase: 'playing', hand: { a: ['x', 'y'], b: ['z'] } };
+  const table = FR.host({
+    state, seats, hostId: 'a', timers: FR.timers(fakeClock()), publish: () => {},
+    phase: () => state.phase,
+    intents: {
+      hello: { hidden: true, run: () => {} },
+      pass:  { turn: true, run: () => {} },
+      play:  { turn: true,
+               options: (ctx) => state.hand[ctx.from].map(c => ({ card: c })),
+               run: () => {} }
+    }
+  });
+  const moves = table.legalMoves('a');
+  assert.deepEqual(moves, [
+    { t: 'pass' },
+    { t: 'play', card: 'x' },
+    { t: 'play', card: 'y' }
+  ]);
+  assert.deepEqual(table.legalMoves('b'), [], "not b's turn, so nothing is legal");
+});
+
+test('every enumerated move is actually accepted', () => {
+  const seats = FR.seats(['a', 'b']);
+  seats.startRound();
+  const state = { phase: 'playing', played: [] };
+  const table = FR.host({
+    state, seats, hostId: 'a', timers: FR.timers(fakeClock()), publish: () => {},
+    phase: () => state.phase,
+    intents: {
+      play: { turn: true, options: () => [{ i: 0 }, { i: 1 }, { i: 2 }],
+              run: (ctx) => { state.played.push(ctx.msg.i); } }
+    }
+  });
+  // The contract that makes fuzzing meaningful: if legalMoves offers it, handle takes it.
+  for (const m of table.legalMoves('a')) {
+    assert.equal(table.handle('a', m), true, `legalMoves offered ${JSON.stringify(m)} but handle refused it`);
+  }
+  assert.deepEqual(state.played, [0, 1, 2]);
+});
+
+test('a `when` guard is honoured by handle and legalMoves alike', () => {
+  const state = { open: false };
+  const table = FR.host({
+    state, timers: FR.timers(fakeClock()), publish: () => {},
+    intents: { enter: { when: (ctx) => ctx.state.open, run: () => { state.entered = true; } } }
+  });
+  assert.deepEqual(table.legalMoves('a'), [], 'closed: not offered');
+  assert.equal(table.handle('a', { t: 'enter' }), false, 'closed: not accepted');
+  assert.equal(table.rejected.pop().why, 'when');
+  state.open = true;
+  assert.deepEqual(table.legalMoves('a'), [{ t: 'enter' }], 'open: offered');
+  assert.equal(table.handle('a', { t: 'enter' }), true, 'open: accepted');
+});
+
+test('hidden intents stay out of the move space', () => {
+  const table = FR.host({
+    state: {}, timers: FR.timers(fakeClock()), publish: () => {},
+    intents: { hello: { hidden: true, run: () => {} }, go: () => {} }
+  });
+  assert.deepEqual(table.legalMoves('a').map(m => m.t), ['go']);
+});
+
+test('a frozen table offers no moves at all', () => {
+  const clock = fakeClock();
+  const table = FR.host({
+    state: {}, timers: FR.timers(clock), publish: () => {},
+    intents: { go: () => {} }
+  });
+  table.hold(500, () => {});
+  assert.deepEqual(table.legalMoves('a'), [], 'nothing is legal mid-hold');
+  clock.advance(600);
+  assert.deepEqual(table.legalMoves('a').map(m => m.t), ['go']);
+});
+
+test('host-only and phase-gated moves are filtered per player', () => {
+  const seats = FR.seats(['a', 'b']);
+  const state = { phase: 'roundEnd' };
+  const table = FR.host({
+    state, seats, hostId: 'a', timers: FR.timers(fakeClock()), publish: () => {},
+    phase: () => state.phase,
+    intents: {
+      next: { host: true, phase: 'roundEnd', run: () => {} },
+      quit: { run: () => {} }
+    }
+  });
+  assert.deepEqual(table.legalMoves('a').map(m => m.t), ['next', 'quit']);
+  assert.deepEqual(table.legalMoves('b').map(m => m.t), ['quit']);
+  state.phase = 'playing';
+  assert.deepEqual(table.legalMoves('a').map(m => m.t), ['quit']);
+});
+
 /* --------------------------------------------------------------- fuzz --- */
 section('Fuzz soak — a whole game under random abuse');
 

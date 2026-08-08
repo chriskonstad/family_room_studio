@@ -1,6 +1,5 @@
 {
-  "_comment": "Bundles the headless harness cannot yet drive, and WHY. These are harness limitations, not game bugs — each one plays fine in the studio and on device. They are listed here so `--all` stays usable as a CI gate without quietly forgetting them. The real fix is replacing the regex DOM shim in runner.mjs with a proper DOM (linkedom or happy-dom); every entry here should disappear when that lands.",
-  "summit": "Two-step card selection: click a card to set local `selCard`, then Climb. The shim resolves compound selectors ('.hand i.sel') by their last part only, so the game's selection classes don't round-trip.",
-  "tapas": "Same shape as summit — pick a card into local state, then confirm.",
+  "_comment": "Bundles the headless harness cannot yet drive, and WHY. These are harness limitations, not game bugs \u2014 each plays fine in the studio and on device. Listed so `--all` stays usable as a CI gate without quietly forgetting them. The durable fix is not a better DOM shim: it is for the game to DECLARE its move space via FR.host `options`, which is how SUMMIT came off this list. A game built on FR.host needs no DOM to be played or fuzzed at all.",
+  "tapas": "Same shape as summit \u2014 pick a card into local state, then confirm.",
   "fishbowl": "Reaches turnReady with its bot, then needs the giver's own timed guess loop; the shim's element identity isn't stable enough across re-renders for the giver's controls to stay wired."
 }

@@ -59,12 +59,18 @@ function createGame(Table, root) {
   }
 
   function canPlay(pid, card) {
+    // A malformed card — an unknown colour, a missing value — must be refused, not
+    // dereferenced. The host trusts nothing from the wire: a stale or buggy client used
+    // to take the whole table down here, and the headless fuzzer found it on its second
+    // hostile seed.
+    if (!card || typeof card.v !== 'number' || !G.routes[pid] || !G.routes[pid][card.c]) return false;
     const pile = G.routes[pid][card.c];
     if (card.v === 0) return pile.every(x => x.v === 0);            // wagers only before numbers
     const maxNum = Math.max(0, ...pile.map(x => x.v));
     return card.v > maxNum;
   }
   function removeFromHand(pid, card) {
+    if (!card || !G.hands[pid]) return false;
     const i = G.hands[pid].findIndex(x => x.c===card.c && x.v===card.v);
     if (i < 0) return false;
     G.hands[pid].splice(i,1);
@@ -82,44 +88,75 @@ function createGame(Table, root) {
     return ROUTES.reduce((a,r)=>a+routeScore(G.routes[pid][r.k]), 0);
   }
 
-  function handleIntent(from, msg) {
-    if (msg.t === 'hello') return;
-    if (G.phase === 'roundEnd') {
-      if (msg.t==='next' && from===MY) { G.round++; startRound(G.round-1); syncAll(); }
-      return;
-    }
-    if (G.phase !== 'playing' || from !== G.turn) return;
+  // The move space, declared rather than implied.
+  //
+  // SUMMIT's turn is two steps — play or discard a card, THEN draw one — and that shape
+  // is exactly what a DOM-driven bot could not follow: it saw a "Climb" button and no way
+  // to know which card it meant. Declaring `options` makes the whole move set explicit, so
+  // the headless harness can play (and fuzz) this game with no screen at all.
+  //
+  // Sub-phases ride in the phase string so FR can gate on them directly.
+  const phaseNow = () => G.phase === 'playing' ? ('playing:' + G.sub) : G.phase;
+  const myTurn = (ctx) => ctx.from === G.turn;
+  const drawableColors = () => ROUTES.map(r => r.k).filter(c =>
+    G.discards[c].length && !(G.lastDiscard && G.lastDiscard.pid === G.turn && G.lastDiscard.color === c));
 
-    if (G.sub === 'play') {
-      if (msg.t === 'play' && msg.card && canPlay(from, msg.card) && removeFromHand(from, msg.card)) {
-        G.routes[from][msg.card.c].push(msg.card);
-        G.routes[from][msg.card.c].sort((a,b)=>a.v-b.v);
-        G.banner = G.names[from]+' played '+cardLabel(msg.card)+' on '+msg.card.c;
-        G.lastPlay = { pid:from, color:msg.card.c, n:(G.playSeq=(G.playSeq||0)+1) };
-        G.sub = 'draw';
-      } else if (msg.t === 'discard' && msg.card && removeFromHand(from, msg.card)) {
-        G.discards[msg.card.c].push(msg.card);
-        G.lastDiscard = { pid:from, color:msg.card.c };
-        G.banner = G.names[from]+' discarded '+cardLabel(msg.card);
-        G.sub = 'draw';
+  let table = null;
+  function buildTable() {
+    return FR.host({
+      state: G, timers: FR.timers(), hostId: MY,
+      phase: phaseNow,
+      publish: syncAll,
+      intents: {
+        hello: { hidden: true, run: () => {} },
+        next:  { host: true, phase: 'roundEnd',
+                 run: () => { G.round++; startRound(G.round - 1); } },
+
+        play:  { phase: 'playing:play', when: myTurn,
+                 options: (ctx) => G.hands[ctx.from]
+                   .filter(c => canPlay(ctx.from, c))
+                   .map(c => ({ card: { c: c.c, v: c.v } })),
+                 run: (ctx) => {
+                   const card = ctx.msg.card;
+                   if (!card || !canPlay(ctx.from, card) || !removeFromHand(ctx.from, card)) return;
+                   G.routes[ctx.from][card.c].push(card);
+                   G.routes[ctx.from][card.c].sort((a,b)=>a.v-b.v);
+                   G.banner = G.names[ctx.from]+' played '+cardLabel(card)+' on '+card.c;
+                   G.lastPlay = { pid:ctx.from, color:card.c, n:(G.playSeq=(G.playSeq||0)+1) };
+                   G.sub = 'draw';
+                 } },
+
+        discard: { phase: 'playing:play', when: myTurn,
+                 options: (ctx) => G.hands[ctx.from].map(c => ({ card: { c: c.c, v: c.v } })),
+                 run: (ctx) => {
+                   const card = ctx.msg.card;
+                   if (!card || !G.discards[card.c] || !removeFromHand(ctx.from, card)) return;
+                   G.discards[card.c].push(card);
+                   G.lastDiscard = { pid:ctx.from, color:card.c };
+                   G.banner = G.names[ctx.from]+' discarded '+cardLabel(card);
+                   G.sub = 'draw';
+                 } },
+
+        draw:  { phase: 'playing:draw', when: myTurn,
+                 options: () => [{ from: 'deck' }].concat(drawableColors().map(c => ({ from: c }))),
+                 run: (ctx) => {
+                   const src = ctx.msg.from;
+                   let card = null;
+                   if (src === 'deck') card = G.deck.pop();
+                   else if (G.discards[src] && G.discards[src].length
+                            && !(G.lastDiscard && G.lastDiscard.pid===ctx.from && G.lastDiscard.color===src)) {
+                     card = G.discards[src].pop();
+                   }
+                   if (!card) return;
+                   G.hands[ctx.from].push(card);
+                   G.lastDiscard = null;
+                   if (G.deck.length === 0) { endRound(); return; }
+                   G.turn = G.order.find(id => id !== ctx.from);
+                   G.sub = 'play';
+                   G.banner = G.names[G.turn]+"'s turn";
+                 } }
       }
-    } else if (G.sub === 'draw' && msg.t === 'draw') {
-      let card = null;
-      if (msg.from === 'deck') {
-        card = G.deck.pop();
-      } else if (G.discards[msg.from] && G.discards[msg.from].length
-                 && !(G.lastDiscard && G.lastDiscard.pid===from && G.lastDiscard.color===msg.from)) {
-        card = G.discards[msg.from].pop();
-      }
-      if (!card) return;
-      G.hands[from].push(card);
-      G.lastDiscard = null;
-      if (G.deck.length === 0) { endRound(); syncAll(); return; }
-      G.turn = G.order.find(id => id !== from);
-      G.sub = 'play';
-      G.banner = G.names[G.turn]+"'s turn";
-    }
-    syncAll();
+    });
   }
 
   function endRound() {
@@ -167,8 +204,8 @@ function createGame(Table, root) {
 
   // ---------- wiring ----------
   if (Table.isHost) {
-    Table.onStart(players => { initGame(players); syncAll(); });
-    Table.onMessage((from, msg) => handleIntent(from, msg));
+    Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
+    Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
     Table.onPlayerLeave(() => { /* 2p game: results screen still reachable via shell Leave */ });
   } else {
     Table.onStart(() => { view = null; render(); Table.send({ t:'hello' }); });

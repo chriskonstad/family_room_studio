@@ -85,6 +85,19 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, ma
         if (took) { acted = true; continue; }
       }
 
+      // Best case: the game is built on FR.host and can simply TELL us what's legal.
+      // No DOM, no guessing, and every move offered is one the host will accept — which
+      // is what makes a game with two-step selection or typed input fuzzable at all.
+      const legal = table.legalMoves(id);
+      if (legal && legal.length) {
+        try { table.send(id, r.pick(legal)); } catch (e) {
+          return { ok: false, why: `threw on a declared-legal move from ${id}: ${e.message}`, turns };
+        }
+        acted = true;
+        continue;
+      }
+      if (legal) continue;      // FR.host game with nothing legal for this player yet
+
       // First choice: CLICK something the game rendered and wired up itself. That runs
       // the game's own handler, so selection state (pick a card, then play it) and any
       // client-side validation happen exactly as they would under a thumb.

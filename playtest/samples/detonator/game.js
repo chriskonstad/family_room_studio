@@ -60,9 +60,13 @@ function createGame(Table, root){
         phase:()=>G.phase,
         publish:syncAll,
         intents:{
-          hello: ()=>{},
+          hello: { hidden:true, run:()=>{} },
           // turn:true IS the out-of-turn guard — FR checks it before run() is reached.
-          press: { turn:true, phase:'playing', run:(ctx)=>{
+          // `options` enumerates the plungers still unpressed, so the harness can play
+          // this game with no DOM at all.
+          press: { turn:true, phase:'playing',
+                   options:()=> G.plungers.map((v,i)=>v===0?{i:i}:null).filter(Boolean),
+                   run:(ctx)=>{
             const i = ctx.msg.i;
             if (!(i >= 0 && i < 5) || G.plungers[i] !== 0) return;   // already pressed
             if (i === G.live) {

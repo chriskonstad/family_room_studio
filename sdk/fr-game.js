@@ -426,6 +426,13 @@
    *        Options: turn:true   only the current seat may send it
    *                 host:true   only the host may send it (needs cfg.hostId)
    *                 phase:'x'   only in that phase (string or array)
+   *                 when:fn     (ctx) -> bool, any guard turn/host/phase can't express.
+   *                             Checked by BOTH handle() and legalMoves(), so they can't
+   *                             disagree about what's legal.
+   *                 options:fn  (ctx) -> [{...args}] this intent would accept right now.
+   *                             Declaring it is what lets legalMoves() enumerate the move
+   *                             space, so the game can be fuzzed without a DOM.
+   *                 hidden:true keep it out of legalMoves ('hello' and friends)
    *                 run:fn      the handler itself
    * @param {Object} [cfg.seats]     an FR.seats; required for turn:true.
    * @param {function} [cfg.phase]   () -> current phase string.
@@ -488,10 +495,57 @@
           if (!cfg.seats) { refuse(name, 'no-seats'); return false; }
           if (cfg.seats.current !== from) { refuse(name, 'turn'); return false; }
         }
+        // Any guard the built-in ones can't express. It is checked HERE and in
+        // legalMoves(), which is the point: a guard written inside run() would let
+        // legalMoves offer a move the host then refuses, and the two must not disagree
+        // or the fuzzer spends its time on moves that do nothing.
+        if (spec.when && !spec.when({ from: from, msg: msg, state: cfg.state, table: api })) {
+          refuse(name, 'when'); return false;
+        }
 
         spec.run({ from: from, msg: msg, state: cfg.state, table: api });
         if (cfg.publish) cfg.publish();
         return true;
+      },
+
+      /**
+       * Every move `playerId` could legally make right now, as concrete messages.
+       *
+       * This is the answer to "how do you fuzz a game you can't click". A bot driving
+       * through the DOM has to reverse-engineer the move set from rendered HTML, which
+       * works until a game expresses a move as two taps (select a card, then play it) or
+       * as typed text — and then the bot stalls and the game looks broken when it isn't.
+       *
+       * The host already knows the answer: it has the intent table and the state. An
+       * intent declares `options(ctx)` returning the argument sets it would accept, and
+       * this enumerates them, applying the same turn / host / phase / busy checks that
+       * `handle` would. An intent with no `options` contributes its bare verb.
+       *
+       * The UI becomes one view of this list rather than the only place it exists.
+       *
+       * @returns {Array<Object>} messages you can pass straight to handle().
+       */
+      legalMoves: function (playerId) {
+        if (busy) return [];                       // frozen: nothing is legal
+        var out = [];
+        Object.keys(intents).forEach(function (name) {
+          var spec = intents[name];
+          if (typeof spec === 'function') spec = { run: spec };
+          if (spec.hidden) return;                 // resync verbs like `hello`
+          if (spec.host && playerId !== cfg.hostId) return;
+          if (spec.turn && (!cfg.seats || cfg.seats.current !== playerId)) return;
+          if (spec.phase && [].concat(spec.phase).indexOf(phaseNow()) === -1) return;
+          if (cfg.seats && cfg.seats.all.indexOf(playerId) === -1) return;
+
+          var ctx = { from: playerId, state: cfg.state, table: api };
+          if (spec.when && !spec.when(ctx)) return;
+          var args = spec.options ? spec.options(ctx) : null;
+          if (!args) { out.push({ t: name }); return; }
+          args.forEach(function (a) {
+            out.push(Object.assign({ t: name }, a));
+          });
+        });
+        return out;
       },
 
       /**
@@ -544,6 +598,11 @@
       /** Stop every timer this table owns. Call when the game ends. */
       stop: function () { busy = false; timers.cancelAll(); return api; }
     };
+
+    // Publish the live table on the window. The headless harness looks for this to ask
+    // the game what's legal instead of guessing from rendered HTML; nothing else reads
+    // it, and a game never has to wire anything up to be fuzzable.
+    try { global.__frHostTable = api; } catch (e) {}
     return api;
   };
 

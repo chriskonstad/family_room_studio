@@ -79,9 +79,14 @@ function createGame(Table, root){
         phase:()=>G.phase,
         publish:syncAll,
         intents:{
-          hello: ()=>{},                                   // resync: publish is enough
+          hello: { hidden:true, run:()=>{} },              // resync: publish is enough
           light: { host:true, phase:'ready', run:lightBomb },
-          pass:  { phase:'live', run:(ctx)=>{
+          // `options` is what makes this game fuzzable without a screen: it says exactly
+          // who may throw the bomb and to whom, so the harness never has to guess.
+          pass:  { phase:'live',
+                   options:(ctx)=> ctx.from !== G.holder ? []
+                     : aliveIds().filter(id=>id!==ctx.from).map(to=>({to})),
+                   run:(ctx)=>{
             const to = ctx.msg.to;
             // Only whoever is holding it can throw it, and only to someone still in.
             if (ctx.from !== G.holder || to === ctx.from || !seats.isActive(to)) return;

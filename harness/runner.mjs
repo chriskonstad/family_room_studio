@@ -414,6 +414,19 @@ export async function runGame(opts = {}) {
         .filter(b => b.attrs && b.attrs['data-act'])
         .map(b => ({ act: b.attrs['data-act'], id: b.attrs['data-id'], text: b.textContent }));
     },
+    /**
+     * What the HOST says this player may legally do right now, if the game is built on
+     * FR.host. This is strictly better than reading the DOM: it is the real move space,
+     * including moves a UI expresses as two taps or as typed text, and every move it
+     * returns is one `handle` will accept.
+     * @returns {?Array<Object>} null when the game doesn't use FR.host.
+     */
+    legalMoves(playerId) {
+      const host = phones.get(hostId)?.sandbox?.__frHostTable;
+      if (!host || typeof host.legalMoves !== 'function') return null;
+      try { return host.legalMoves(playerId); } catch (e) { return null; }
+    },
+
     /** Live, clickable elements on this player's screen — buttons plus anything the
      *  game tagged with a data-* attribute (cards, swatches, plungers). Clicking one
      *  runs the game's own handler, which is what makes two-step interactions like
