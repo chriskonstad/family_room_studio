@@ -15,7 +15,7 @@
     background:radial-gradient(circle at 50% 0%,#54202f,var(--bg1) 55%,var(--bg2));
     display:flex; flex-direction:column;
     padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
-  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 12px 12px}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 12px 12px; overflow-y:auto}
   .hdr{display:flex; align-items:baseline; gap:8px}
   .brand{font-size:20px; letter-spacing:.16em; font-weight:800; color:var(--accent)}
   .hdr .sub{color:var(--muted); font-size:12.5px; margin-left:auto}
@@ -32,18 +32,20 @@
   .picked{color:var(--good); font-size:11px; font-weight:700}
 
   .sec{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:8px 2px 4px}
-  .hand{display:flex; flex-wrap:wrap; gap:7px; justify-content:center; padding:4px 0}
-  .card{width:74px; height:92px; border-radius:12px; background:#fdf3e3; color:#3c1622; border:2px solid transparent;
+  .hand{display:flex; flex-wrap:wrap; gap:9px; justify-content:center; padding:4px 0;
+    overflow-y:auto; -webkit-overflow-scrolling:touch}
+  .card{width:88px; height:110px; border-radius:14px; background:#fdf3e3; color:#3c1622; border:2px solid transparent;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; box-shadow:0 3px 0 rgba(0,0,0,.35)}
-  .card .ic{font-size:26px}
-  .card .nm{font-size:10.5px; font-weight:800; text-align:center; line-height:1.1}
-  .card .sc{font-size:9px; color:#7c5560; text-align:center; line-height:1.15; padding:0 3px}
-  .card.sel{transform:translateY(-8px); border-color:var(--accent)}
+  .card .ic{font-size:34px}
+  .card .nm{font-size:12px; font-weight:800; text-align:center; line-height:1.15}
+  .card .sc{font-size:10.5px; color:#7c5560; text-align:center; line-height:1.2; padding:0 4px}
+  .card.sel{transform:translateY(-9px); border-color:var(--accent)}
   /* a freshly passed hand staggers in via Table.feel.deal() -> fr-deal */
 
   .ctrl{padding-top:8px}
   button{font:inherit; cursor:pointer; border:1px solid var(--line); background:#5c2837; color:var(--text);
-    border-radius:13px; padding:13px 12px; font-size:15px; font-weight:700; width:100%}
+    border-radius:14px; padding:16px 12px; font-size:16.5px; font-weight:700; width:100%;
+    min-height:52px}
   button:disabled{opacity:.35}
   button.primary{background:var(--accent); color:#3c2206; border-color:var(--accent)}
   .wait{display:block; text-align:center; color:var(--muted); font-size:13px; padding:10px 0 6px}
