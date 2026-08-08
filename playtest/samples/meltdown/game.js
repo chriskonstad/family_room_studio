@@ -192,6 +192,11 @@ function createGame(Table, root) {
   let urgentOn = false;   // last urgency we applied, so the blink flips once, not 10×/s
   function startClock() {
     clearInterval(localTick);
+    // The reactor is cold: stop ticking. This interval only ever self-cancelled when the
+    // clock element or the order went away, neither of which happens at game over — so
+    // every phone kept a 10Hz timer alive under the results screen, forever. Found by
+    // the headless playtest harness, which asserts a finished game leaves nothing armed.
+    if (!view || view.phase === 'over') { localTick = null; myOrder = null; return; }
     urgentOn = false;     // render() rebuilt .order, so nothing is applied to it yet
     localTick = setInterval(() => {
       const el = root.querySelector('.order .clock');
