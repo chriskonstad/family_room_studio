@@ -105,6 +105,7 @@ function createGame(Table, root) {
   function buildTable() {
     return FR.host({
       state: G, timers: FR.timers(), hostId: MY,
+      players: G.order,   // so a stale or unseated id can't send anything
       phase: phaseNow,
       publish: syncAll,
       intents: {

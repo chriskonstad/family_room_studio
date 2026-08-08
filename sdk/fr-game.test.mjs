@@ -420,6 +420,19 @@ test('hold freezes the table — the Flip 3 bug, made unwritable', () => {
   assert.equal(table.handle('a', { t: 'flip' }), true, 'and input works again afterwards');
 });
 
+test('a seatless game still rejects an unknown id when given players', () => {
+  const state = { taps: {} };
+  const table = FR.host({
+    state, players: ['a', 'b'], timers: FR.timers(fakeClock()), publish: () => {},
+    intents: { tap: (ctx) => { state.taps[ctx.from] = (state.taps[ctx.from] || 0) + 1; } }
+  });
+  assert.equal(table.handle('ghost', { t: 'tap' }), false, 'a stranger must not score');
+  assert.equal(table.rejected.pop().why, 'not-seated');
+  assert.deepEqual(table.legalMoves('ghost'), []);
+  assert.equal(table.handle('a', { t: 'tap' }), true);
+  assert.deepEqual(state.taps, { a: 1 });
+});
+
 test('host:true rejects a non-host, accepts the host', () => {
   const seats = FR.seats(['a', 'b']);
   seats.startRound();

@@ -435,6 +435,8 @@
    *                 hidden:true keep it out of legalMoves ('hello' and friends)
    *                 run:fn      the handler itself
    * @param {Object} [cfg.seats]     an FR.seats; required for turn:true.
+   * @param {Array<string>} [cfg.players] roster ids, for a game with no turn order —
+   *        without either, ANY id can send intents.
    * @param {function} [cfg.phase]   () -> current phase string.
    * @param {Object} [cfg.timers]    an FR.timers; a private one is made if absent.
    */
@@ -478,7 +480,12 @@
         // and it was allowed to advance the round. The shell only delivers
         // messages from seated players today, so this is defence in depth, but a
         // departed or stale id reaching a game must never move it.
-        if (cfg.seats && cfg.seats.all.indexOf(from) === -1) {
+        //
+        // A game with no turn order has no `seats`, and used to get NO check at all:
+        // BLITZ let an unseated id tap its way onto the scoreboard. Pass `players`
+        // (a plain list of ids) and simple games are covered too.
+        var roster = cfg.seats ? cfg.seats.all : cfg.players;
+        if (roster && roster.indexOf(from) === -1) {
           refuse(name, 'not-seated'); return false;
         }
 
@@ -535,7 +542,8 @@
           if (spec.host && playerId !== cfg.hostId) return;
           if (spec.turn && (!cfg.seats || cfg.seats.current !== playerId)) return;
           if (spec.phase && [].concat(spec.phase).indexOf(phaseNow()) === -1) return;
-          if (cfg.seats && cfg.seats.all.indexOf(playerId) === -1) return;
+          var known = cfg.seats ? cfg.seats.all : cfg.players;
+          if (known && known.indexOf(playerId) === -1) return;
 
           var ctx = { from: playerId, state: cfg.state, table: api };
           if (spec.when && !spec.when(ctx)) return;

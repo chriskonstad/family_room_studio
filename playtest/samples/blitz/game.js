@@ -1,11 +1,15 @@
 /* BLITZ — trivial tap race; the spec's minimal example, playable.
-   Same file runs on every device; host is authoritative. */
+   Same file runs on every device; host is authoritative.
+
+   Also the smallest possible demonstration of FR.host: three declarations and the
+   game is fully playable AND fully fuzzable headlessly. */
 (function () {
   const Table = window.Table;
   const GOAL = 10;
   let roster = [];
   let scores = {};
   let winner = null;
+  let table = null;
 
   function render() {
     const el = document.getElementById('scores');
@@ -16,36 +20,52 @@
     document.getElementById('tap').disabled = !!winner;
   }
 
+  function publish() {
+    Table.broadcast({ t: 'state', scores, winner });
+    render();
+  }
+
   Table.onStart(players => {
     roster = players;
     players.forEach(p => { scores[p.id] = 0; });
-    if (!Table.isHost) Table.send({ type: 'hello' });
+    if (Table.isHost) {
+      table = FR.host({
+        state: { scores }, hostId: Table.me.id,
+        players: players.map(p => p.id),
+        publish,
+        intents: {
+          hello: { hidden: true, run: () => {} },
+          // Anyone may tap, any time, until someone wins. `when` says so, and that is
+          // all the harness needs to play this game with no screen.
+          tap: {
+            when: () => !winner,
+            run: (ctx) => {
+              scores[ctx.from] = (scores[ctx.from] || 0) + 1;
+              if (scores[ctx.from] >= GOAL) { winner = ctx.from; finish(); }
+            }
+          }
+        }
+      });
+    } else {
+      Table.send({ t: 'hello' });
+    }
     render();
   });
 
-  if (Table.isHost) {
-    Table.onMessage((from, msg) => {
-      if (msg.type === 'tap' && !winner) {
-        scores[from] = (scores[from] || 0) + 1;
-        if (scores[from] >= GOAL) winner = from;
-      }
-      Table.broadcast({ type: 'state', scores, winner });
-      render();
-      if (winner) {
-        // Hand the terminal result to the shell for a native results screen.
-        const ranked = roster.slice().sort((a, b) => (scores[b.id] || 0) - (scores[a.id] || 0));
-        Table.endGame({
-          winnerId: winner,
-          standings: ranked.map(p => ({ playerId: p.id, score: scores[p.id] || 0,
-            detail: p.id === winner ? 'first to ' + GOAL + ' taps' : '' }))
-        });
-      }
+  function finish() {
+    const result = FR.standings.byScore(scores, {
+      detail: (id) => id === winner ? 'first to ' + GOAL + ' taps' : ''
     });
+    Table.endGame({ winnerId: winner, standings: result.standings });
+  }
+
+  if (Table.isHost) {
+    Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
   } else {
     Table.onMessage((_from, msg) => {
-      if (msg.type === 'state') { scores = msg.scores; winner = msg.winner; render(); }
+      if (msg.t === 'state') { scores = msg.scores; winner = msg.winner; render(); }
     });
   }
 
-  document.getElementById('tap').onclick = () => Table.send({ type: 'tap' });
+  document.getElementById('tap').onclick = () => Table.send({ t: 'tap' });
 })();
