@@ -15,7 +15,21 @@ game. A **game** is just a bundle of HTML + JS + assets written against one inje
 |---|---|
 | **[GAME-AUTHORING.md](GAME-AUTHORING.md)** | The complete author's guide — bundle/archive format, the full `Table` SDK, assets, a copy-paste starter game, and the rules every game must follow. Start here (and hand this to an LLM writing a game). |
 | **[skills/game-dev/](skills/game-dev/SKILL.md)** | A Claude Code **skill** for game development — drop it into a project's `.claude/skills/` and Claude follows the canonical dev/test/version/ship workflow and UX standards automatically. |
+| **[FR-GAME.md](FR-GAME.md)** | The `FR` game-structure library — seeded RNG, decks, seats and elimination, standings, timers, and a host reducer that refuses illegal intents. Written for a small model: cheat sheet, per-primitive rules, and a complete 40-line game to copy. |
+| **[sdk/](sdk/)** | The runtimes both harnesses inject: `table-sdk.js` (the ONE `Table` implementation, shared with the iOS shell), `fr-feel.js` (animations/haptics/sound), `fr-game.js` (structure). |
+| **[harness/](harness/)** | Run real bundles **headless** — N virtual phones, a virtual clock, bots. `playtest.mjs` plays a game to completion and checks it never throws, always terminates and leaks no timers. |
+| **[validate.mjs](validate.mjs)** | Check a bundle (folder or `.zip`) before it goes near a phone: manifest schema, offline-only, no external hosts, viewport, size. |
 | **[playtest/](playtest/)** | The **Playtest Studio** — a zero-dependency web tool that runs your game across multiple simulated players in iPhone-sized frames, with a wire-message log, disconnect testing, hot reload, and one-click **Export .zip**. |
+
+## The one command
+
+```sh
+node tools/check.mjs
+```
+
+Conformance + the `FR` library suite + bundle validation + a headless bot playtest of every
+bundle. Node only — no browser, no simulator, no Mac. If this is green, the only thing left
+that a Mac can tell you is how the game *feels*.
 
 ## Quick start
 
