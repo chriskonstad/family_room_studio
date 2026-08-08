@@ -35,7 +35,10 @@ function createGame(Table, root) {
   }
   let G = null;
 
-  const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+  // Seeded from the table: the deal replays exactly under `--seed`, which is what makes
+  // a fuzz failure something you can look at rather than a rumour.
+  const rng = FR.rng(Table.seed);
+  const shuffle = a => rng.shuffle(a);
 
   // ---------- host ----------
   function initGame(players) {
