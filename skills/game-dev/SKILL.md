@@ -80,9 +80,10 @@ reference with a complete example game: **`tools/FR-GAME.md`**.
   express, `hidden:true` for free text). That is what lets `table.legalMoves()` enumerate the
   move space, so the harness can play and fuzz your game with no screen — it is how SUMMIT,
   TAPAS and FISHBOWL went from undriveable to fully tested.
-- `FR.rng(Table.seed)` — seed from the table, never `Date.now()`, or `--seed N` can't replay.
   Use `table.hold(ms, fn)` / `table.sequence(ms, steps)` for timed sequences: they freeze
   input, which is what prevents the Flip-3 class of bug.
+- **`FR.rng(Table.seed)`** — seed from the table, never `Date.now()`, or `--seed N` can't
+  replay the failure the fuzzer just found.
 
 ## Game feel — use the shared runtime
 
@@ -132,10 +133,13 @@ The harness boots N virtual phones against the real SDK with a virtual clock, so
 60-second game costs microseconds. It asserts the game never throws, always terminates,
 ends once, names a real winner, and leaves no timers armed.
 
-If your game's input isn't a button (free text, a drawn gesture), ship a `bot.mjs` beside
-the bundle: `export default function ({table, playerId, rng, send}) { … return didAct; }`.
-Return false to hand back to the generic bot. See `tools/harness/known-gaps.json` for
-bundles the generic bot can't drive yet, and why.
+All eleven built-in bundles play headlessly. If yours doesn't, the fix is almost always to
+declare `options` on its intents rather than to make its UI more scrapeable.
+
+Genuinely un-enumerable input (free text, a drawn gesture) is the exception: mark that intent
+`hidden` and ship a `bot.mjs` beside the bundle —
+`export default function ({table, playerId, rng, send}) { … return didAct; }`. Return false to
+hand back to the generic bot. FISHBOWL is the worked example.
 
 **Studio (to see and feel it):** `cd tools && python3 -m http.server 8777`, open
 `http://localhost:8777/playtest/`. Serve the dev-kit ROOT — from inside `playtest/` the
