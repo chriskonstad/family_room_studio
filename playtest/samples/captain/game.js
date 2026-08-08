@@ -7,7 +7,11 @@ function createGame(Table, root){
     {k:'green',  ic:'🟢', c:'#43b06b'},
     {k:'yellow', ic:'🟡', c:'#e0a52e'}
   ];
-  const pick = a=>a[Math.floor(Math.random()*a.length)];
+  // Seeded from the table: the prompt sequence replays exactly under --seed.
+  const rng = FR.rng(Table.seed);
+  const pick = a=>rng.pick(a);
+  const seats = FR.seats(Table.players.map(p=>p.id));
+  const timer = FR.timers();
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const colIc = k=>{ const c=COLORS.find(x=>x.k===k); return c?c.ic:''; };
 
@@ -24,31 +28,49 @@ function createGame(Table, root){
 
   // ---------- host ----------
   function initGame(players){
-    G = {order:players.map(p=>p.id), names:{}, emojis:{}, alive:{}, out:[],
+    G = {order:players.map(p=>p.id), names:{}, emojis:{},
          phase:'ready', round:0, banner:'Get ready!', reveal:false};
-    players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.alive[p.id]=true;});
+    players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji;});
+    seats.startRound();
   }
-  const aliveIds = ()=>G.order.filter(id=>G.alive[id]);
+  const aliveIds = ()=>seats.remaining;
+  // The view still speaks in an alive map; derive it rather than keeping a second copy.
+  const aliveMap = ()=>{ const m={}; G.order.forEach(id=>{ m[id]=seats.status(id)!=='out'; }); return m; };
   function nextRound(){
     G.round++;
-    const col = pick(COLORS).k, real = Math.random() < 0.68;
+    const col = pick(COLORS).k, real = rng() < 0.68;
     const win = Math.max(1300, 3200 - G.round*160);
     G.prompt = {color:col, real, win};
     G.taps = {}; G.reveal = false; G.phase = 'prompt';
     G.banner = real ? ('CAPTAIN SAYS tap ' + colIc(col)) : ('tap ' + colIc(col));
-    clearTimeout(G.roundT);
-    G.roundT = setTimeout(resolve, win);
+    timer.after('round', win, resolve);
     syncAll();
   }
-  function handleIntent(from,msg){
-    if(msg.t==='hello') return;
-    if(G.phase==='ready' && msg.t==='go' && from===MY){ nextRound(); return; }
-    if(G.phase==='prompt' && msg.t==='tap' && G.alive[from] && G.taps[from]==null){
-      G.taps[from] = msg.color;   // record first tap only
-    }
+  // The move space. A round is a simultaneous reaction test, so there is no turn —
+  // `when` says who is still in and hasn't already tapped, and `options` lists the
+  // colours. NOT tapping is also a move here (when the Captain didn't say), and that
+  // one is expressed by the round timer rather than an intent.
+  let table = null;
+  function buildTable(){
+    return FR.host({
+      state:G, players:G.order, timers:timer, hostId:MY,
+      phase:()=>G.phase,
+      publish:syncAll,
+      intents:{
+        hello:{ hidden:true, run:()=>{} },
+        go:   { host:true, phase:'ready', run:()=>nextRound() },
+        tap:  { phase:'prompt',
+                when:(ctx)=> seats.isActive(ctx.from) && G.taps[ctx.from]==null,
+                options:()=> COLORS.map(c=>({color:c.k})),
+                run:(ctx)=>{
+                  if(!COLORS.some(c=>c.k===ctx.msg.color)) return;   // never trust the wire
+                  G.taps[ctx.from] = ctx.msg.color;                  // first tap only
+                } }
+      }
+    });
   }
   function resolve(){
-    clearTimeout(G.roundT);
+    timer.cancel('round');
     const p = G.prompt, outs = [];
     aliveIds().forEach(id=>{
       const t = G.taps[id];
@@ -56,7 +78,7 @@ function createGame(Table, root){
       if(!ok) outs.push(id);
     });
     if(outs.length && outs.length < aliveIds().length){
-      outs.forEach(id=>{ G.alive[id]=false; G.out.push(id); });
+      outs.forEach(id=>seats.eliminate(id));
       G.banner = '💥 Out: ' + outs.map(id=>G.emojis[id]).join(' ');
     } else if(outs.length){
       G.banner = '😅 Everyone survived that one!';   // would-eliminate-all → void
@@ -65,21 +87,22 @@ function createGame(Table, root){
     }
     G.reveal = true; G.phase = 'reveal';
     syncAll();
-    if(aliveIds().length <= 1) setTimeout(finish, 1400);
-    else setTimeout(nextRound, 1600);
+    if(seats.settled) timer.after('finish', 1400, finish);
+    else timer.after('next', 1600, nextRound);
   }
   function finish(){
-    const w = aliveIds()[0] || null;
-    const ranked = [...(w?[w]:[]), ...G.out.slice().reverse()];
+    timer.cancelAll();
     G.phase='over';
-    Table.endGame({winnerId:w, standings:ranked.map((id,i)=>({
-      playerId:id, score:i===0?'winner':'out',
-      detail:i===0?'last sailor standing':('out #'+(ranked.length-i)) }))});
+    const r = FR.standings.byElimination(seats, {
+      detail:(id,place)=>place===1 ? 'last sailor standing' : ('out #'+(seats.all.length-place+1))
+    });
+    Table.endGame({winnerId:r.winnerId, standings:r.standings.map((row,i)=>
+      Object.assign({}, row, {score: i===0 ? 'winner' : 'out'}))});
   }
   function publicState(){
     return {phase:G.phase, banner:G.banner, round:G.round,
       prompt:G.prompt?{color:G.prompt.color, real:G.prompt.real, win:G.prompt.win}:null,
-      alive:{...G.alive}, names:G.names, emojis:G.emojis, order:G.order,
+      alive:aliveMap(), names:G.names, emojis:G.emojis, order:G.order,
       taps:G.reveal?{...G.taps}:null};
   }
   function syncAll(){ const s=publicState(); Table.broadcast({t:'state',s}); onState(s); }
@@ -92,11 +115,14 @@ function createGame(Table, root){
   }
 
   if(Table.isHost){
-    Table.onStart(p=>{ initGame(p); syncAll(); });
-    Table.onMessage((f,m)=>{ const wasTap = m.t==='tap'; handleIntent(f,m); if(!wasTap) syncAll(); });
+    Table.onStart(p=>{ initGame(p); table = buildTable(); syncAll(); });
+    Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
     Table.onPlayerLeave(id=>{
       if(!G) return;
-      if(G.alive[id]){ G.alive[id]=false; G.out.push(id); if(aliveIds().length<=1 && G.phase!=='over') return finish(); }
+      if(seats.isActive(id) || seats.status(id)!=='out'){
+        seats.eliminate(id);
+        if(seats.settled && G.phase!=='over') return finish();
+      }
       syncAll();
     });
   } else {

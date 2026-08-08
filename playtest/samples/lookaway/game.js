@@ -5,7 +5,9 @@ function createGame(Table, root){
     {k:'up',    ic:'⬆️'}, {k:'left', ic:'⬅️'}, {k:'ctr', ic:'⏺️'},
     {k:'right', ic:'➡️'}, {k:'down', ic:'⬇️'}
   ];
-  const pick = a=>a[Math.floor(Math.random()*a.length)];
+  // Seeded from the table so a round can be replayed exactly.
+  const rng = FR.rng(Table.seed);
+  const pick = a=>rng.pick(a);
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const dic = k=>{ const d=DIRS.find(x=>x.k===k); return d?d.ic:''; };
 
@@ -33,20 +35,35 @@ function createGame(Table, root){
     G.looker = G.order[G.lookerIdx];
     G.picks = {}; G.reveal = false; G.phase = 'pick';
     G.banner = '👀 ' + G.names[G.looker] + ' is looking!';
-    clearTimeout(G.roundT);
-    G.roundT = setTimeout(resolve, G.win);
+    timer.after('round', G.win, resolve);
     syncAll();
   }
-  function handleIntent(from,msg){
-    if(msg.t==='hello') return;
-    if(G.phase==='ready' && msg.t==='go' && from===MY){ nextRound(); return; }
-    if(G.phase==='pick' && msg.t==='look' && G.lives[from]>0 && G.picks[from]==null){
-      G.picks[from] = msg.dir;
-      if(Object.keys(G.picks).length === withLives().length) resolve();
-    }
+  // The move space. Everyone picks SIMULTANEOUSLY here — there is no turn to key off,
+  // and the choice is one of five directions — so `options` enumerates the directions
+  // and `when` says who still has a life and hasn't already chosen.
+  const timer = FR.timers();
+  let table = null;
+  function buildTable(){
+    return FR.host({
+      state:G, players:G.order, timers:timer, hostId:MY,
+      phase:()=>G.phase,
+      publish:syncAll,
+      intents:{
+        hello: { hidden:true, run:()=>{} },
+        go:    { host:true, phase:'ready', run:()=>nextRound() },
+        look:  { phase:'pick',
+                 when:(ctx)=> G.lives[ctx.from]>0 && G.picks[ctx.from]==null,
+                 options:()=> DIRS.map(d=>({dir:d.k})),
+                 run:(ctx)=>{
+                   if(!DIRS.some(d=>d.k===ctx.msg.dir)) return;   // never trust the wire
+                   G.picks[ctx.from] = ctx.msg.dir;
+                   if(Object.keys(G.picks).length === withLives().length) resolve();
+                 } }
+      }
+    });
   }
   function resolve(){
-    clearTimeout(G.roundT);
+    timer.cancel('round');
     withLives().forEach(id=>{ if(G.picks[id]==null) G.picks[id]=pick(DIRS).k; });   // auto for stragglers
     const ld = G.picks[G.looker], caught = [];
     withLives().forEach(id=>{ if(id!==G.looker && G.picks[id]===ld){ G.lives[id]--; caught.push(id); } });
@@ -54,14 +71,14 @@ function createGame(Table, root){
     G.banner = caught.length ? ('😵 caught: ' + caught.map(id=>G.emojis[id]).join(' '))
                              : '😅 everyone looked away!';
     syncAll();
-    if(withLives().length<=1) setTimeout(finish, 1600);
-    else setTimeout(nextRound, 2000);
+    if(withLives().length<=1) timer.after('finish', 1600, finish);
+    else timer.after('next', 2000, nextRound);
   }
   function finish(){
-    const ranked = G.order.slice().sort((a,b)=>G.lives[b]-G.lives[a]);
+    timer.cancelAll();
     G.phase='over';
-    Table.endGame({winnerId:ranked[0], standings:ranked.map(id=>({
-      playerId:id, score:G.lives[id], detail:'❤️ '+G.lives[id] }))});
+    const r = FR.standings.byScore(G.lives, { detail:(id,n)=>'❤️ '+n });
+    Table.endGame({winnerId:r.winnerId, standings:r.standings});
   }
   function publicState(){
     return {phase:G.phase, banner:G.banner, round:G.round, looker:G.looker, win:G.win,
@@ -78,8 +95,8 @@ function createGame(Table, root){
   }
 
   if(Table.isHost){
-    Table.onStart(p=>{ initGame(p); syncAll(); });
-    Table.onMessage((f,m)=>{ const wasLook = m.t==='look'; handleIntent(f,m); if(!wasLook) syncAll(); });
+    Table.onStart(p=>{ initGame(p); table = buildTable(); syncAll(); });
+    Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
     Table.onPlayerLeave(id=>{
       if(!G) return;
       G.lives[id]=0;

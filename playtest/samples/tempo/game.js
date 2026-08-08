@@ -38,24 +38,40 @@ function createGame(Table, root) {
   // ---------- host ----------
   function initGame(players) {
     G = { order:players.map(p=>p.id), names:{}, emojis:{}, scores:{}, finished:{}, phase:'ready',
-          seed: Math.floor(Math.random()*1e9) };
+          seed: Table.seed };
     players.forEach(p => { G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.scores[p.id]=0; G.finished[p.id]=false; });
   }
-  function handleIntent(from, msg) {
-    if (msg.t === 'hello') return;
-    if (msg.t === 'go' && from === MY && G.phase === 'ready') { G.phase = 'playing'; }
-    else if (msg.t === 'score' && G.phase === 'playing') { G.scores[from] = msg.score; }
-    else if (msg.t === 'done' && G.phase === 'playing') {
-      G.scores[from] = msg.score; G.finished[from] = true;
-      if (G.order.every(id => G.finished[id])) {
-        const ranked = G.order.slice().sort((a,b)=>G.scores[b]-G.scores[a]);
-        G.phase = 'over';
-        Table.endGame({
-          winnerId: ranked[0],
-          standings: ranked.map(id => ({ playerId:id, score:G.scores[id] })),
-        });
+  // The move space. TEMPO is unusual: the real play is TAPPING TO A BEAT on your own
+  // device, which is a timing skill and not a discrete choice — so the only host-visible
+  // moves are "start the track", "here's my running score" and "I'm finished". A bot
+  // can't be good at TEMPO, but it can prove the game starts, scores and ends cleanly,
+  // which is what actually breaks.
+  let table = null;
+  function buildTable() {
+    return FR.host({
+      state: G, players: G.order, timers: FR.timers(), hostId: MY,
+      phase: () => G.phase,
+      publish: syncAll,
+      intents: {
+        hello: { hidden: true, run: () => {} },
+        go:    { host: true, phase: 'ready', run: () => { G.phase = 'playing'; } },
+        // A running score is a stream, not a choice — playable, but nothing to enumerate.
+        score: { hidden: true, phase: 'playing',
+                 run: (ctx) => { G.scores[ctx.from] = Number(ctx.msg.score) || 0; } },
+        done:  { phase: 'playing',
+                 when: (ctx) => !G.finished[ctx.from],
+                 options: () => [{ score: 0 }],   // a bot finishes; a human finishes better
+                 run: (ctx) => {
+                   G.scores[ctx.from] = Number(ctx.msg.score) || 0;
+                   G.finished[ctx.from] = true;
+                   if (G.order.every(id => G.finished[id])) {
+                     G.phase = 'over';
+                     const r = FR.standings.byScore(G.scores);
+                     Table.endGame({ winnerId: r.winnerId, standings: r.standings });
+                   }
+                 } }
       }
-    }
+    });
   }
   function publicState() {
     return { phase:G.phase, seed:G.seed, names:G.names, emojis:G.emojis, order:G.order,
@@ -65,9 +81,21 @@ function createGame(Table, root) {
 
   // ---------- wiring ----------
   if (Table.isHost) {
-    Table.onStart(players => { initGame(players); syncAll(); });
-    Table.onMessage((from, msg) => { handleIntent(from, msg); syncAll(); });
-    Table.onPlayerLeave(id => { if (G) { G.finished[id] = true; handleIntent(id, {t:'done', score:G.scores[id]||0}); syncAll(); } });
+    Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
+    Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
+    // Someone leaving counts as finishing — otherwise the game waits forever for a
+    // score that is never coming. (This called the old handleIntent, which no longer
+    // exists; a leave would have thrown.)
+    Table.onPlayerLeave(id => {
+      if (!G || G.finished[id]) return;
+      G.finished[id] = true;
+      if (G.phase === 'playing' && G.order.every(x => G.finished[x])) {
+        G.phase = 'over';
+        const r = FR.standings.byScore(G.scores);
+        Table.endGame({ winnerId: r.winnerId, standings: r.standings });
+      }
+      syncAll();
+    });
   } else {
     Table.onStart(() => { view=null; render(); Table.send({ t:'hello' }); });
     Table.onMessage((_f, msg) => { if (msg.t === 'state') onState(msg.s); });

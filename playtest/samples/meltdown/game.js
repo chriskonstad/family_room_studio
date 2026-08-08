@@ -29,8 +29,10 @@ function createGame(Table, root) {
   /// latency masking, not a game event, so it stays a raw haptic.
   const tapAck = () => { try { if (Table.haptic) Table.haptic('medium'); } catch (e) {} };
 
-  const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
-  const pick = a => a[Math.floor(Math.random()*a.length)];
+  // Seeded from the table: the panel layout and the order sequence replay exactly.
+  const rng = FR.rng(Table.seed);
+  const shuffle = a => rng.shuffle(a);
+  const pick = a => rng.pick(a);
 
   // ---------- host ----------
   function initGame(players) {
@@ -57,7 +59,7 @@ function createGame(Table, root) {
   function newOrderFor(pid) {
     // usually target ANOTHER player's control (that's the game)
     const others = G.order.filter(id => id !== pid && !G.dead?.[id]);
-    const targetPlayer = (others.length && Math.random() < 0.8) ? pick(others) : pid;
+    const targetPlayer = (others.length && rng() < 0.8) ? pick(others) : pid;
     const ctl = pick(G.panels[targetPlayer]);
     let text, want;
     if (ctl.type === 'push') { text = 'Engage the '+ctl.label+'!'; want = { kind:'push' }; }
@@ -65,7 +67,7 @@ function createGame(Table, root) {
       const to = !ctl.value;
       text = (to?'Switch ON':'Switch OFF')+' the '+ctl.label+'!'; want = { kind:'switch', to };
     } else {
-      let to; do { to = 1 + Math.floor(Math.random()*3); } while (to === ctl.value);
+      let to; do { to = rng.range(1, 3); } while (to === ctl.value);
       text = 'Set '+ctl.label+' to '+to+'!'; want = { kind:'dial', to };
     }
     const order = { forPid:pid, controlId:ctl.id, want, text, deadline:Date.now()+orderTimeLimit()*1000 };
@@ -157,18 +159,40 @@ function createGame(Table, root) {
   }
 
   // ---------- wiring ----------
+  // The move space. MELTDOWN is co-op and simultaneous: everyone works their own panel
+  // at once, so there is no turn. Each control is a move, and a dial has three positions
+  // — `options` enumerates the whole panel, which is what lets a bot actually operate the
+  // reactor rather than mash at it.
+  let table = null;
+  function buildTable() {
+    return FR.host({
+      state: G, players: G.order, timers: FR.timers(), hostId: MY,
+      phase: () => G.phase,
+      publish: syncAll,
+      intents: {
+        hello: { hidden: true, run: (ctx) => {
+                   Table.sendTo(ctx.from, { t:'panel', panel:G.panels[ctx.from] });
+                 } },
+        begin: { phase: 'briefing', when: (ctx) => ctx.from === MY0(), run: () => beginGame() },
+        act:   { phase: 'running',
+                 when: (ctx) => !!G.panels[ctx.from] && !(G.dead && G.dead[ctx.from]),
+                 options: (ctx) => (G.panels[ctx.from] || []).flatMap(c =>
+                   c.type === 'switch' ? [{ control:c.id, value:true }, { control:c.id, value:false }]
+                                       : [1,2,3].map(v => ({ control:c.id, value:v }))),
+                 run: (ctx) => handleAct(ctx.from, ctx.msg) } 
+      }
+    });
+  }
+
   if (Table.isHost) {
     Table.onStart(players => {
       initGame(players);
       myPanel = G.panels[MY];
       G.order.forEach(pid => { if (pid !== MY) Table.sendTo(pid, { t:'panel', panel:G.panels[pid] }); });
+      table = buildTable();
       syncAll();
     });
-    Table.onMessage((from, msg) => {
-      if (msg.t === 'hello') { Table.sendTo(from, { t:'panel', panel:G.panels[from] }); syncAll(); return; }
-      if (msg.t === 'begin' && from === MY0()) { if (G.phase==='briefing') beginGame(); syncAll(); return; }
-      if (msg.t === 'act' && G.phase === 'running') handleAct(from, msg);
-    });
+    Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
     Table.onPlayerLeave(id => {
       if (!G) return;
       (G.dead = G.dead || {})[id] = true;
