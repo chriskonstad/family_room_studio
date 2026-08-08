@@ -86,6 +86,20 @@ you do, create AND resume the `AudioContext` inside a tap handler — never from
 broadcast or a timer, or iOS leaves it suspended and your game ships silent (TEMPO did).
 Don't layer a shell cue on top of your own audio for the same event; use `{silent:true}`.
 
+## Game structure: build on `FR` (tools/sdk/fr-game.js)
+
+Injected by both harnesses — no import, no bundling. Reference: `tools/FR-GAME.md`.
+
+- `FR.rng(seed)` — **never call `Math.random()`**; a game must be replayable from its seed.
+- `FR.deck(cards, r)` — draw/discard/auto-reshuffle, `deck.left` for the on-screen counter.
+- `FR.seats(ids)` — turn order; `setStatus` is temporary (cleared by `startRound`),
+  `eliminate` is permanent and its order becomes the ranking.
+- `FR.standings.byScore` / `.byElimination` — the exact `Table.endGame` payload.
+- `FR.timers()` — named; `cancelAll()` when the game ends.
+- `FR.host({...})` — refuses unknown / frozen / unseated / wrong-phase / out-of-turn intents.
+  Use `table.hold(ms, fn)` and `table.sequence(ms, steps)` for timed sequences: they freeze
+  input, which is what stops the Flip-3 class of bug.
+
 ## UX standards (learned from the review passes)
 
 - **Touch targets ≥ 44pt** (Apple HIG). Buttons: padding ≥ 12-13px vertical. Cards that are

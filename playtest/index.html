@@ -236,6 +236,7 @@ const TEAMS = [
 const state = {
   vfs:null,            // { path: Uint8Array }
   feelRuntime:null,    // tools/sdk/fr-feel.js source, fetched once (see loadFeelRuntime)
+  gameRuntime:null,    // tools/sdk/fr-game.js source (FR.deck/seats/host/…), fetched once
   manifest:null,
   entryHtmlBase:null,  // rewritten entry HTML with a <!--__TABLE_SDK__--> marker
   dirHandle:null,      // FileSystemDirectoryHandle for hot reload (if available)
@@ -621,7 +622,8 @@ function renderStage(){
     // can't drift on animations or Table.feel.
     const html = state.entryHtmlBase.replace('<!--__TABLE_SDK__-->',
       '<script>'+sdkScript(p, roster)+'<\/script>' +
-      (state.feelRuntime ? '<script>'+state.feelRuntime+'\nwindow.__frFeel.install(window.Table, document);<\/script>' : ''));
+      (state.feelRuntime ? '<script>'+state.feelRuntime+'\nwindow.__frFeel.install(window.Table, document);<\/script>' : '') +
+      (state.gameRuntime ? '<script>'+state.gameRuntime+'<\/script>' : ''));
     loads.push(new Promise(res=>{ iframe.onload = ()=>res(p); iframe.srcdoc = html; }));
   });
 
@@ -824,16 +826,21 @@ let SAMPLES = [];
 // Try both locations: served from the dev-kit root (../sdk/) or from inside
 // playtest/ as the README suggests (sdk/ would then be out of reach, so we also
 // accept a copy alongside). Without this the studio silently loses Table.feel.
-(async () => {
-  for (const url of ['../sdk/fr-feel.js', 'sdk/fr-feel.js', '/sdk/fr-feel.js']) {
+async function loadRuntime(file) {
+  for (const url of ['../sdk/'+file, 'sdk/'+file, '/sdk/'+file]) {
     try {
       const r = await fetch(url);
-      if (r.ok) { state.feelRuntime = await r.text(); return; }
+      if (r.ok) return await r.text();
     } catch (e) { /* try the next one */ }
   }
-  console.warn('fr-feel.js not found — no Table.feel/fr-* animations in the studio. '
+  console.warn(file + ' not found — the studio is missing a runtime the iOS shell has. '
              + 'Serve the dev-kit ROOT (python3 -m http.server 8777 from tools/) '
              + 'and open /playtest/.');
+  return null;
+}
+(async () => {
+  state.feelRuntime = await loadRuntime('fr-feel.js');
+  state.gameRuntime = await loadRuntime('fr-game.js');
 })();
 
 fetch('samples/index.json').then(r=>r.ok?r.json():[]).then(list=>{

@@ -554,6 +554,31 @@ Escalation is worth the effort where tension builds. STREAK ramps its per-card f
 `light` to `medium` to `heavy` as your line fills toward a bust, so the seventh card feels
 nothing like the second — the same event, carrying how much danger you're in.
 
+### Game structure: `FR` (fr-game.js)
+
+`Table.feel()` is how a game feels. **`FR` is how a game is shaped** — and it is injected by
+both harnesses exactly the same way, so it is simply available:
+
+```js
+var r      = FR.rng(G.seed);        // seeded — use this INSTEAD OF Math.random(), always
+var deck   = FR.deck(cards, r);     // draws, discards, reshuffles itself; deck.left
+var seats  = FR.seats(playerIds);   // turn order, statuses, elimination, survivor
+var table  = FR.host({ ... });      // the reducer that refuses illegal intents for you
+FR.standings.byScore(totals)        // the payload Table.endGame wants
+FR.timers()                         // named timers, cancelAll() when the game ends
+```
+
+Full reference with a complete example game: **[FR-GAME.md](FR-GAME.md)**.
+
+Two rules worth stating here because breaking them costs the most:
+
+1. **Never call `Math.random()` in a game.** Seed `FR.rng` once and store the seed. A game on
+   `Math.random()` cannot be replayed, so a playtest bug can never be reproduced and fuzzing
+   it is meaningless.
+2. **Run timed sequences through `table.hold()` / `table.sequence()`**, not bare `setTimeout`.
+   They freeze input for the duration. STREAK's Flip 3 dealt 2 cards or 4 because the buttons
+   stayed live between forced flips.
+
 ### Animation vocabulary
 
 `feel()` applies these for you. Use the classes directly (`fr-pop`, `fr-shake`,
