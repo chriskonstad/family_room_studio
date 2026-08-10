@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Liar's Dice</title>
+<style>
+  :root{
+    --felt:#15352d; --felt-deep:#0a1d19; --panel:#f7f1e6; --ink:#1b2421;
+    --muted:#6f7e78; --line:#d3c6b3; --gold:#dca83f; --red:#bd5048; --shadow:rgba(10,20,17,.32);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--panel); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(circle at 50% 0%,#2e5c4b 0%,var(--felt) 45%,var(--felt-deep) 100%);
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #app{min-height:100%; display:flex; flex-direction:column; padding:12px; gap:10px}
+  .top{display:flex; align-items:flex-start; gap:10px}
+  .brand{font-size:24px; font-weight:900; line-height:1; color:var(--gold)}
+  .sub{font-size:12px; color:#b9ccc4; margin-top:4px}
+  .count{margin-left:auto; text-align:right; font-size:12px; color:#b9ccc4; font-variant-numeric:tabular-nums}
+  .count b{display:block; color:var(--panel); font-size:20px}
+  .banner{min-height:44px; display:flex; align-items:center; padding:10px 12px; border:1px solid rgba(247,241,230,.16);
+    background:rgba(10,29,25,.42); color:#ffe0a3; border-radius:8px; font-size:15px; font-weight:800}
+  .table{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .seat{min-height:82px; border:1px solid rgba(247,241,230,.15); border-radius:8px; padding:9px; background:rgba(7,23,19,.38)}
+  .seat.me{background:rgba(220,168,63,.14); border-color:rgba(220,168,63,.55)}
+  .seat.turn{box-shadow:0 0 0 2px rgba(220,168,63,.75) inset}
+  .seat.out{opacity:.5}
+  .seat .who{display:flex; align-items:center; gap:6px; min-width:0; font-weight:800; font-size:14px}
+  .seat .name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .seat .dice-left{margin-left:auto; color:#bfd1ca; font-size:12px; font-variant-numeric:tabular-nums}
+  .pips{display:flex; flex-wrap:wrap; gap:5px; margin-top:9px; min-height:32px}
+  .die{width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border-radius:7px;
+    background:var(--panel); color:var(--ink); font-weight:900; font-size:16px; box-shadow:0 2px 0 var(--shadow)}
+  .die.hidden{background:#28463e; color:#79928a; box-shadow:inset 0 0 0 1px rgba(247,241,230,.13)}
+  .die.wild{background:#202b28; color:#f5d58a; box-shadow:inset 0 0 0 2px #f5d58a}
+  .bidbox{background:var(--panel); color:var(--ink); border-radius:8px; padding:12px; box-shadow:0 10px 28px var(--shadow)}
+  .bidline{display:flex; align-items:baseline; gap:8px}
+  .bidlabel{font-size:12px; color:var(--muted); font-weight:800; text-transform:uppercase}
+  .bidvalue{font-size:28px; font-weight:900; color:var(--ink)}
+  .bidby{margin-left:auto; color:var(--muted); font-size:13px; text-align:right}
+  .truth{margin-top:8px; border-top:1px solid var(--line); padding-top:8px; color:var(--muted); font-size:13px}
+  .controls{margin-top:auto; background:rgba(10,29,25,.48); border:1px solid rgba(247,241,230,.15); border-radius:8px; padding:10px}
+  .pickers{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px}
+  .picker{background:rgba(247,241,230,.08); border-radius:8px; padding:8px}
+  .picker label{display:block; color:#b9ccc4; font-size:12px; font-weight:800; margin-bottom:6px}
+  .step{display:grid; grid-template-columns:38px 1fr 38px; align-items:center; gap:6px}
+  .num{text-align:center; color:#fff7e7; font-size:24px; font-weight:900; font-variant-numeric:tabular-nums}
+  button{font:inherit; border:1px solid rgba(247,241,230,.18); border-radius:8px; min-height:44px; padding:10px;
+    background:#23483d; color:var(--panel); font-weight:900}
+  button:disabled{opacity:.35}
+  button.primary{background:var(--gold); border-color:var(--gold); color:#2f2208}
+  button.danger{background:var(--red); border-color:var(--red); color:#fff}
+  .btnrow{display:flex; gap:8px}
+  .btnrow button{flex:1}
+  .wait{text-align:center; color:#b9ccc4; font-size:14px; padding:12px 4px}
+  @media (max-width:380px){
+    #app{padding:9px; gap:8px}
+    .table{gap:6px}
+    .seat{padding:7px; min-height:76px}
+    .die{width:27px; height:27px}
+    .bidvalue{font-size:24px}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "id": "com.chris.liarsdice",
+  "version": "1.0.0",
+  "name": "Liar's Dice",
+  "entry": "index.html",
+  "iconEmoji": "\ud83c\udfb2",
+  "minPlayers": 2,
+  "maxPlayers": 8,
+  "author": "Chris",
+  "description": "Bid on the dice hidden around the table. Ones are wild for bids on 2-6; call a bluff, reveal everything, and the wrong player loses a die."
+}
