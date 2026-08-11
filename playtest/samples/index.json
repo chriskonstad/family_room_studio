@@ -1,5 +1,14 @@
 [
   {
+    "id": "liarsdice",
+    "label": "Liar's Dice \ud83c\udfb2",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js"
+    ]
+  },
+  {
     "id": "streak",
     "label": "STREAK \ud83d\udd25",
     "files": [
