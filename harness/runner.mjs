@@ -2,7 +2,7 @@
  * runner.mjs — run a real game bundle, headless.
  *
  * This is the piece that makes the whole platform authorable without a Mac. It boots N
- * virtual phones against the SAME `tools/sdk/table-sdk.js` the iOS shell and the studio
+ * virtual phones against the SAME `sdk/table-sdk.js` the iOS shell and the studio
  * use, loads a real bundle's `game.js`, and routes messages between them with the same
  * authoritative-host star topology the shell implements. No browser, no simulator, no
  * WKWebView — just node.
@@ -36,7 +36,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
-export const REPO = join(here, '..', '..');
+export const REPO = join(here, '..');
 
 /* ------------------------------------------------------------------ clock --- */
 
@@ -73,6 +73,32 @@ export function virtualClock() {
     }
   };
   return api;
+}
+
+/* ------------------------------------------------------------------- date --- */
+
+/**
+ * A Date whose now() reads the virtual clock, from a fixed epoch.
+ *
+ * Without this, a game sees two different times: its timers run on the virtual clock
+ * while Date.now() marches on in real time. That made any Date.now()-derived state
+ * (a heat bar, a countdown) simulate wrong AND made replays inexact — the same seed
+ * could produce a different game depending on how fast the host machine ran it. It is
+ * also truer to the shell: the pausable timer shim freezes a paused game's time, so
+ * host logic must not be able to watch real time pass.
+ */
+function makeVirtualDate(clock) {
+  const RealDate = Date;
+  const EPOCH = 1755000000000;               // fixed, so timestamps are plausible AND replayable
+  function VDate(...args) {
+    if (!(this instanceof VDate)) return new RealDate(EPOCH + clock.now).toString();
+    return args.length ? new RealDate(...args) : new RealDate(EPOCH + clock.now);
+  }
+  VDate.now = () => EPOCH + clock.now;
+  VDate.parse = RealDate.parse;
+  VDate.UTC = RealDate.UTC;
+  VDate.prototype = RealDate.prototype;      // `x instanceof Date` keeps working
+  return VDate;
 }
 
 /* -------------------------------------------------------------------- dom --- */
@@ -233,7 +259,7 @@ function makeDom(clock) {
 export async function runGame(opts = {}) {
   const dir = opts.game && opts.game.includes('/')
     ? opts.game
-    : join(REPO, 'tools/playtest/samples', opts.game || 'streak');
+    : join(REPO, 'playtest/samples', opts.game || 'streak');
   if (!existsSync(join(dir, 'game.js'))) {
     throw new Error(`No game.js in ${dir} — pass a sample key or a bundle directory`);
   }
@@ -252,9 +278,9 @@ export async function runGame(opts = {}) {
     .map(m => m[1])
     .filter(s => s.trim() && !s.includes('__TABLE_SDK__'));
   const bodyIds = [...entryHTML.matchAll(/id=["']([\w-]+)["']/g)].map(m => m[1]);
-  const tableSDK = readFileSync(join(REPO, 'tools/sdk/table-sdk.js'), 'utf8');
-  const frFeel = readFileSync(join(REPO, 'tools/sdk/fr-feel.js'), 'utf8');
-  const frGame = readFileSync(join(REPO, 'tools/sdk/fr-game.js'), 'utf8');
+  const tableSDK = readFileSync(join(REPO, 'sdk/table-sdk.js'), 'utf8');
+  const frFeel = readFileSync(join(REPO, 'sdk/fr-feel.js'), 'utf8');
+  const frGame = readFileSync(join(REPO, 'sdk/fr-game.js'), 'utf8');
 
   /* Respect the bundle's own player range. SUMMIT is strictly 2-player and FISHBOWL
    * needs 4+, so booting everything with a default 3 made them look like they hung —
@@ -293,7 +319,9 @@ export async function runGame(opts = {}) {
   const bus = {
     send(from, payload) {
       log.push({ t: clock.now, kind: 'send', from, payload });
-      deliver(hostId, from, payload);
+      // An INTENT, even one the host sends itself, is never a view — recording it as
+      // one made the fuzzer think a refused intent had changed the published state.
+      deliver(hostId, from, payload, false);
     },
     broadcast(from, payload) {
       if (from !== hostId) return;
@@ -303,13 +331,13 @@ export async function runGame(opts = {}) {
       // put the host in an infinite publish -> onMessage -> publish loop.
       for (const id of phones.keys()) {
         if (id === from) { record(id, payload); continue; }
-        deliver(id, from, payload);
+        deliver(id, from, payload, true);
       }
     },
     sendTo(from, to, payload) {
       if (from !== hostId) return;
       log.push({ t: clock.now, kind: 'sendTo', from, to, payload });
-      deliver(to, from, payload);
+      deliver(to, from, payload, true);
     },
     endGame(from, r) {
       if (from !== hostId) return;
@@ -332,10 +360,10 @@ export async function runGame(opts = {}) {
     if (phone) phone.lastView = payload;
   }
 
-  function deliver(toId, fromId, payload) {
+  function deliver(toId, fromId, payload, isView) {
     const phone = phones.get(toId);
     if (!phone || phone.dropped) return;
-    if (fromId === hostId) record(toId, payload);
+    if (isView) record(toId, payload);
     phone.fire('message', fromId, JSON.parse(JSON.stringify(payload)));
   }
 
@@ -344,7 +372,7 @@ export async function runGame(opts = {}) {
     const document = makeDom(clock);
     const sandbox = {
       console: { log() {}, warn() {}, error() {}, info() {} },
-      structuredClone, JSON, Math, Date, Object, Array, String, Number, Boolean, Error,
+      structuredClone, JSON, Math, Date: makeVirtualDate(clock), Object, Array, String, Number, Boolean, Error,
       Map, Set, Promise, RegExp, isNaN, parseInt, parseFloat, Infinity, NaN, undefined,
       setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
       setInterval: clock.setInterval, clearInterval: clock.clearInterval,
@@ -458,6 +486,19 @@ export async function runGame(opts = {}) {
       try { return host.legalMoves(playerId); } catch (e) { return null; }
     },
 
+    /**
+     * The host table's recent refusals (FR.host's `rejected`), or null when the game
+     * isn't built on FR.host. This is what lets the fuzzer assert the invariant that
+     * matters most under hostile input: a REFUSED intent must change nothing — if the
+     * refusal list grew but the published state moved, some side channel mutated state
+     * outside the reducer's guards.
+     */
+    rejections() {
+      const host = phones.get(hostId)?.sandbox?.__frHostTable;
+      if (!host) return null;
+      try { return host.rejected; } catch (e) { return null; }
+    },
+
     /** Live, clickable elements on this player's screen — buttons plus anything the
      *  game tagged with a data-* attribute (cards, swatches, plungers). Clicking one
      *  runs the game's own handler, which is what makes two-step interactions like
@@ -490,6 +531,20 @@ export async function runGame(opts = {}) {
     source: gameSrc,
     /** Simulate a disconnect / reconnect. */
     drop(playerId) { const p = phones.get(playerId); if (p) p.dropped = true; for (const o of phones.values()) if (o.id !== playerId && !o.dropped) o.fire('leave', playerId); return this; },
+    /**
+     * Pause or resume EVERY phone, the way the shell does when an app backgrounds or a
+     * call lands mid-game. The SDK's timer shim freezes each device's timers and fires
+     * Table.onPause/onResume; while paused, `advance()` still moves the clock (real
+     * time passes on a paused phone too), so state that leaks wall-clock time into
+     * game logic shows itself here.
+     */
+    setPaused(on) {
+      for (const p of phones.values()) {
+        if (p.dropped) continue;
+        try { p.sandbox.window.__tableSetPaused(!!on); } catch (e) {}
+      }
+      return this;
+    },
     /** Every message that crossed the wire — the authoritative record for assertions. */
     wire(kind) { return kind ? log.filter(e => e.kind === kind) : log; },
     /** Haptic/sound calls a game made, so feedback can be asserted headlessly. */

@@ -35,12 +35,15 @@ function createGame(Table, root){
   function lightBomb(){
     G.holder = rng.pick(aliveIds());
     G.phase = 'live';
-    G.start = Date.now();
     G.fuse  = rng.range(9000, 19000);
     G.est   = G.fuse * 1.18;
     G.heat  = 0;
+    G.elapsed = 0;
     G.banner = '🔥 HOT POTATO — pass it!';
-    timer.every('heat', 250, ()=>{ G.heat = Math.min(1,(Date.now()-G.start)/G.est); syncAll(); });
+    // Heat advances with the tick, never with Date.now(): the timer shim freezes a
+    // paused game's timers, so wall-clock deltas would leap ahead of the fuse the
+    // moment somebody's phone drops and the table resumes.
+    timer.every('heat', 250, ()=>{ G.elapsed += 250; G.heat = Math.min(1, G.elapsed/G.est); syncAll(); });
     timer.after('boom', G.fuse, explode);
     syncAll();
   }

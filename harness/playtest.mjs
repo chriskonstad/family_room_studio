@@ -2,10 +2,10 @@
 /*
  * playtest.mjs — play a real game bundle with bots, headless, and check it holds up.
  *
- *   node tools/harness/playtest.mjs streak
- *   node tools/harness/playtest.mjs streak --games 200 --players 4
- *   node tools/harness/playtest.mjs ./path/to/bundle --seed 42 --verbose
- *   node tools/harness/playtest.mjs --all
+ *   node harness/playtest.mjs streak
+ *   node harness/playtest.mjs streak --games 200 --players 4
+ *   node harness/playtest.mjs ./path/to/bundle --seed 42 --verbose
+ *   node harness/playtest.mjs --all
  *
  * This is the thing that replaces "open the studio and tap around" for an agent. It boots
  * the bundle on N virtual phones, has bots press whatever buttons are actually on screen,
@@ -19,14 +19,22 @@
  *   ends once               endGame is final; firing twice means two winners
  *   winner is a real player not a stale or departed id
  *   no leaked timers        a finished game must stop ticking
- *   host and clients agree  every phone was told the same thing
+ *   refusals change nothing a rejected intent must leave the published state untouched
+ *   replays are exact       the same seed produces the same game, move for move —
+ *                           without this, no other failure here can be debugged
+ *
+ * Table sizes are swept per seed (min to max, clamped to the manifest), so 2-player
+ * edges and full-table elimination orders actually get walked.
  *
  * A bot only ever presses buttons the game rendered for it, so it explores the same space
  * a player can. Illegal-input fuzzing is a separate mode (--hostile), which fires intents
- * nobody's UI offered — out of turn, in the wrong phase, from a player who left.
+ * nobody's UI offered — out of turn, in the wrong phase, from a player who left. --leave
+ * drops a player mid-game; --pause freezes every phone mid-game the way the shell does
+ * when an app backgrounds, and requires that nothing moves until play resumes. A batch
+ * rotates through all of these on its own; the flags pin one mode for reproduction.
  *
  * Every run is seeded and prints the seed, so a failure reproduces exactly:
- *   node tools/harness/playtest.mjs streak --seed 137 --verbose
+ *   node harness/playtest.mjs streak --seed 137 --verbose
  */
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -55,7 +63,7 @@ const HOSTILE_INTENTS = ['flip', 'bank', 'next', 'target', 'tap', 'go', 'ready',
  * Play one game to completion (or until it stalls).
  * @returns {{ok:boolean, why?:string, turns:number, result:object}}
  */
-export async function playOne(game, { seed = 1, players = 3, hostile = false, leave = false, maxTurns = 4000, verbose = false, bot = null } = {}) {
+export async function playOne(game, { seed = 1, players = 3, hostile = false, leave = false, pause = false, maxTurns = 4000, verbose = false, bot = null } = {}) {
   const r = rng(seed);
   let table;
   try {
@@ -73,6 +81,8 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
   const dropped = new Set();
   // A quarter of runs lose a player partway in, at a seeded moment.
   const dropAt = leave ? (2 + r.int(25)) : 0;
+  // And a quarter get paused mid-game for 45 virtual seconds, at a seeded moment.
+  const pauseAt = pause ? (2 + r.int(25)) : 0;
 
   while (!table.over && turns < maxTurns) {
     turns++;
@@ -172,14 +182,54 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
       dropped.add(victim);
     }
 
+    // The shell pauses every phone when an app backgrounds or a call lands mid-game.
+    // The SDK freezes all shimmed timers, but real time keeps passing — so any game
+    // state that moves during the pause is being driven by wall-clock deltas or a
+    // timer that escaped the shim. That's the class of bug where a resumed game's
+    // countdown has silently expired or its fuse detonates the instant play resumes.
+    if (pauseAt && turns === pauseAt) {
+      const frozen = JSON.stringify(table.view(table.hostId));
+      table.setPaused(true);
+      try { table.advance(45000); } catch (e) {
+        table.setPaused(false);
+        return { ok: false, why: `threw while the table was paused: ${e.message}`, turns };
+      }
+      table.setPaused(false);
+      if (JSON.stringify(table.view(table.hostId)) !== frozen) {
+        return { ok: false, turns,
+          why: `published state moved while the table was paused — game time is coming `
+             + `from wall-clock deltas or a timer the pause shim doesn't own` };
+      }
+    }
+
     // Hostile mode: fire things no UI offered, from anyone, including a ghost.
     if (hostile) {
       const from = r.pick(ids.concat(['ghost-id']));
       const wild = r() < 0.5 && vocabulary.length
         ? buildMessage(r.pick(vocabulary), candidateValues(table.handles(r.pick(ids)), ids), r.pick)
         : { t: r.pick(HOSTILE_INTENTS) };
+      // The invariant that matters most here: a REFUSED intent must change nothing.
+      // FR.host records every refusal, so if OUR intent is the newest refusal and the
+      // state the host publishes moved anyway, something mutated state outside the
+      // reducer's guards — an unguarded onMessage branch, a publish in the wrong
+      // place. That is exactly the class of bug that lets one stray tap corrupt a
+      // whole table. (An ACCEPTED hostile intent changing state is fine — that's the
+      // game working — so the refusal is attributed by intent name: a refusal is
+      // final, nothing runs after it, so a refused send is always the newest entry.)
+      const viewBefore = JSON.stringify(table.view(table.hostId));
+      const rejBefore = JSON.stringify(table.rejections());
       try { table.send(from, wild); } catch (e) {
         return { ok: false, why: `threw on hostile intent ${JSON.stringify(wild)} from ${from}: ${e.message}`, turns };
+      }
+      const rejAfter = table.rejections();
+      if (rejBefore !== null && JSON.stringify(rejAfter) !== rejBefore) {
+        const last = rejAfter[rejAfter.length - 1];
+        if (last && last.intent === wild.t
+            && JSON.stringify(table.view(table.hostId)) !== viewBefore) {
+          return { ok: false, turns,
+            why: `a refused intent ${JSON.stringify(wild)} from ${from} (refused: ${last.why}) `
+               + `changed the published state — state is being mutated outside the reducer's guards` };
+        }
       }
     }
 
@@ -254,28 +304,55 @@ export async function playtest(game, opts = {}) {
   // Returning false hands control back to the generic bot, so a bundle only has to teach
   // the harness the one thing it can't infer.
   let bot = null;
-  const botPath = join(REPO, 'tools/playtest/samples', game, 'bot.mjs');
+  const botPath = join(REPO, 'playtest/samples', game, 'bot.mjs');
   if (existsSync(botPath)) bot = (await import(pathToFileURL(botPath).href)).default;
   opts = { ...opts, bot };
 
   const games = opts.games || 40;
-  const players = opts.players || 3;
   const first = opts.seed || 1;
   const failures = [];
   let totalTurns = 0;
 
+  // Sweep the table size unless one was asked for. Games break differently at their
+  // minimum and maximum counts (2-player edge cases, 8-player elimination order), and
+  // always booting 3 phones meant those paths were never walked. The runner clamps to
+  // the bundle's own min/max, so an out-of-range count just tests the nearest edge.
+  const SWEEP = [3, 2, 4, 6, 8];
+
   for (let i = 0; i < games; i++) {
     const seed = first + i;
-    // Alternate: half honest play, half with hostile input mixed in.
-    const res = await playOne(game, { ...opts, seed, players,
-                                      hostile: i % 2 === 1, leave: i % 4 === 3 });
+    const players = opts.players || SWEEP[i % SWEEP.length];
+    // Alternate: half honest play, half with hostile input mixed in; a quarter get a
+    // mid-game pause, a quarter lose a player. An explicit --hostile / --leave /
+    // --pause pins the mode, which is what a reproduce command needs.
+    const hostile = opts.hostile !== undefined ? opts.hostile : i % 2 === 1;
+    const leave = opts.leave !== undefined ? opts.leave : i % 4 === 3;
+    const pause = opts.pause !== undefined ? opts.pause : i % 4 === 2;
+    const res = await playOne(game, { ...opts, seed, players, hostile, leave, pause });
     totalTurns += res.turns;
     if (!res.ok) {
-      failures.push({ seed, why: res.why, hostile: i % 2 === 1 });
+      failures.push({ seed, why: res.why, hostile, leave, pause, players });
       if (failures.length >= 5) break;       // five is plenty to diagnose
     }
+
+    // Determinism, checked once per batch: the whole point of seeding everything is
+    // that (seed, bots) fully determines the game — replaying the first seed must
+    // reproduce it move for move. A game that drifts (Math.random, real Date.now,
+    // iteration over an unordered structure) can't be debugged from a seed, which
+    // quietly defeats every other check here.
+    if (i === 0 && res.ok) {
+      const again = await playOne(game, { ...opts, seed, players, hostile, leave, pause });
+      if (!again.ok || again.turns !== res.turns
+          || JSON.stringify(again.result) !== JSON.stringify(res.result)) {
+        failures.push({ seed, hostile, leave, pause, players,
+          why: `not deterministic — the same seed played twice gave `
+             + `${res.turns} turns/winner ${res.result?.winnerId} then `
+             + `${again.turns} turns/winner ${again.result?.winnerId}; `
+             + `something outside FR.rng(Table.seed) is steering the game` });
+      }
+    }
   }
-  return { games, players, totalTurns, failures };
+  return { games, totalTurns, failures };
 }
 
 /* ------------------------------------------------------------------ cli --- */
@@ -288,7 +365,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   };
   const targets = args.filter(a => !a.startsWith('--') && args[args.indexOf(a) - 1]?.startsWith('--') !== true);
 
-  const samplesDir = join(REPO, 'tools/playtest/samples');
+  const samplesDir = join(REPO, 'playtest/samples');
   let list = targets.filter(t => !/^\d+$/.test(t));
   if (flag('all', false) || !list.length) {
     list = readdirSync(samplesDir).filter(d => existsSync(join(samplesDir, d, 'game.js')));
@@ -296,12 +373,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   const opts = {
     games: Number(flag('games', 40)),
-    players: Number(flag('players', 3)),
+    // 0 = sweep table sizes; an explicit --players N pins every game to N phones.
+    players: Number(flag('players', 0)) || undefined,
     seed: Number(flag('seed', 1)),
-    verbose: !!flag('verbose', false)
+    verbose: !!flag('verbose', false),
+    // Unset = alternate per seed. Set (from a reproduce command) = pin the mode.
+    hostile: args.includes('--hostile') ? true : undefined,
+    leave: args.includes('--leave') ? true : undefined,
+    pause: args.includes('--pause') ? true : undefined
   };
 
-  const gapsPath = join(REPO, 'tools/harness/known-gaps.json');
+  const gapsPath = join(REPO, 'harness/known-gaps.json');
   const gaps = existsSync(gapsPath) ? JSON.parse(readFileSync(gapsPath, 'utf8')) : {};
 
   let bad = 0, skipped = 0;
@@ -326,8 +408,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       bad++;
       console.log(`  ✗ ${label} ${out.failures.length} failing:`);
       for (const f of out.failures) {
-        console.log(`      seed ${f.seed}${f.hostile ? ' (hostile)' : ''}: ${f.why}`);
-        console.log(`        reproduce: node tools/harness/playtest.mjs ${game} --games 1 --seed ${f.seed} --players ${opts.players} --verbose`);
+        console.log(`      seed ${f.seed}${f.hostile ? ' (hostile)' : ''}${f.leave ? ' (leave)' : ''}${f.pause ? ' (pause)' : ''}: ${f.why}`);
+        // The reproduce command must pin EVERYTHING the batch varied — player count and
+        // the hostile/leave/pause modes — or it replays a different game than the one
+        // that failed, which is worse than no command at all.
+        console.log(`        reproduce: node harness/playtest.mjs ${game} --games 1 --seed ${f.seed}`
+                  + ` --players ${f.players}${f.hostile ? ' --hostile' : ''}${f.leave ? ' --leave' : ''}${f.pause ? ' --pause' : ''} --verbose`);
       }
     }
   }

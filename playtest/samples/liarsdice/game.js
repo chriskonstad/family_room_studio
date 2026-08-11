@@ -202,7 +202,10 @@ function createGame(Table, root) {
 
   function syncAll() {
     if (!G) return;
-    G.order.forEach(id => Table.sendTo(id, { t:'state', s:publicFor(id) }));
+    // Never sendTo yourself: the host renders its own copy directly below, and a
+    // self-send loops back into onMessage as a bogus 'state' intent for the reducer
+    // to refuse — noise on the wire and in the rejection log, found by the fuzzer.
+    G.order.forEach(id => { if (id !== MY) Table.sendTo(id, { t:'state', s:publicFor(id) }); });
     view = publicFor(MY);
     render();
   }
