@@ -75,8 +75,16 @@ Per-bundle hooks, dropped beside `game.js`:
 - **`bot.mjs`** — supplies input the generic bot can't invent (typed text).
   See `playtest/samples/fishbowl/bot.mjs`.
 - **`invariants.mjs`** — game-specific properties checked after every turn and
-  at game end ("exactly one bomb holder", "dice never increase"). See
-  `playtest/samples/passbomb/invariants.mjs`.
+  at game end ("exactly one bomb holder", "dice never come back", "60 cards are
+  always somewhere"). **Every sample ships one** — copy the closest game's.
+  `summit`'s card-conservation check is the pattern worth stealing for anything
+  with a deck; `streak`'s is the one for scores and per-player status.
+
+  Assert only what is true at EVERY sample point: the hook runs once per turn
+  and arbitrary game time can pass in between (several rounds, several taps), so
+  "gained at most one point since last time" is a false positive waiting to
+  happen. Monotonicity, bounds, conservation and cross-field consistency are the
+  shapes that hold.
 
 The playtest also reports intents that were **never sent** across a batch —
 treat that as an untested code path, not noise: either the bots can't reach it
