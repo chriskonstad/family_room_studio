@@ -1,0 +1,20 @@
+# The whole gate, on every push and PR. `node check.mjs` runs conformance, the FR
+# library suite, bundle validation, and a headless bot playtest of every bundle —
+# node only, no browser, no simulator. If this is green, the only thing left that a
+# Mac can tell you is how a game feels.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node check.mjs

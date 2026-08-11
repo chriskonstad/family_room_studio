@@ -20,6 +20,7 @@
  * Warnings never fail the run — they're style, not correctness.
  */
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { discoverIntents } from './harness/intents.mjs';
 import { join, basename, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
@@ -143,6 +144,46 @@ export function validateBundle(dir) {
     }
     for (const m of src.matchAll(/\bMath\.random\s*\(/g)) {
       warn(`${f.rel}:${lineOf(m.index)} uses Math.random() — FR.rng(seed) makes the game replayable, which is what lets a bug be reproduced and fuzzed`);
+    }
+    // Wall-clock time breaks across a pause: the shell freezes a paused game's timers
+    // but Date.now() keeps moving, so a heat bar or countdown derived from it leaps
+    // forward the moment play resumes. Every phone in the room pauses when one app
+    // backgrounds, so this bites exactly on game night. Client-side DISPLAY math is
+    // the one acceptable use — hence a warning, not an error.
+    // Scanned line by line with comments stripped — a comment explaining WHY the code
+    // avoids Date.now() must not itself trip the warning.
+    let dateLine = 0, inBlock = false;
+    const srcLines = src.split('\n');
+    for (let i = 0; i < srcLines.length && !dateLine; i++) {
+      let line = srcLines[i];
+      if (inBlock) {
+        const end = line.indexOf('*/');
+        if (end === -1) continue;
+        line = line.slice(end + 2); inBlock = false;
+      }
+      line = line.replace(/\/\*[\s\S]*?\*\//g, '');
+      const bs = line.indexOf('/*'); if (bs !== -1) { line = line.slice(0, bs); inBlock = true; }
+      const sl = line.indexOf('//'); if (sl !== -1) line = line.slice(0, sl);
+      if (/\bDate\.now\s*\(/.test(line)) dateLine = i + 1;
+    }
+    if (dateLine) {
+      warn(`${f.rel}:${dateLine} uses Date.now() — host game state must never be derived from wall-clock deltas (timers freeze across a pause, the wall clock doesn't); drive host timing from FR.timers and keep Date.now() to client display only`);
+    }
+    // An intent that carries arguments but declares no `options` can't be enumerated
+    // by legalMoves, so the headless harness can't fuzz it — it can only mash the DOM
+    // and hope. `hidden` is the honest opt-out for free text (pair it with a bot.mjs).
+    if (/FR\.host\s*\(/.test(src)) {
+      for (const intent of discoverIntents(src)) {
+        const name = intent.fixed.t || intent.fixed.type;
+        if (!name || name === 'hello') continue;
+        const argful = intent.dynamic.length > 0
+          || Object.keys(intent.fixed).filter(k => k !== 't' && k !== 'type').length > 0;
+        if (!argful) continue;
+        const spec = new RegExp(name + '\\s*:\\s*\\{[\\s\\S]{0,300}?\\b(options|hidden)\\b');
+        if (!spec.test(src)) {
+          warn(`${f.rel}: intent '${name}' carries arguments but its FR.host spec declares no options — legalMoves can't enumerate it, so it can't be fuzzed headlessly (declare options, or hidden plus a bot.mjs)`);
+        }
+      }
     }
     // The SDK is injected; a bundle shipping its own copy would shadow it.
     if (/window\.Table\s*=/.test(src)) {

@@ -63,7 +63,7 @@ const HOSTILE_INTENTS = ['flip', 'bank', 'next', 'target', 'tap', 'go', 'ready',
  * Play one game to completion (or until it stalls).
  * @returns {{ok:boolean, why?:string, turns:number, result:object}}
  */
-export async function playOne(game, { seed = 1, players = 3, hostile = false, leave = false, pause = false, maxTurns = 4000, verbose = false, bot = null } = {}) {
+export async function playOne(game, { seed = 1, players = 3, hostile = false, leave = false, pause = false, maxTurns = 4000, verbose = false, bot = null, invariants = null } = {}) {
   const r = rng(seed);
   let table;
   try {
@@ -83,6 +83,12 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
   const dropAt = leave ? (2 + r.int(25)) : 0;
   // And a quarter get paused mid-game for 45 virtual seconds, at a seeded moment.
   const pauseAt = pause ? (2 + r.int(25)) : 0;
+  // Every phone still at the table, as one comparable string. Snapshotting only the
+  // HOST's view missed games that publish per-player state via sendTo (private hands,
+  // panels) — a refused intent leaking into one client's private view was invisible.
+  const liveViews = () => JSON.stringify(
+    ids.filter(id => !dropped.has(id)).map(id => table.view(id)));
+  const alive = () => ids.filter(id => !dropped.has(id));
 
   while (!table.over && turns < maxTurns) {
     turns++;
@@ -188,14 +194,14 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
     // timer that escaped the shim. That's the class of bug where a resumed game's
     // countdown has silently expired or its fuse detonates the instant play resumes.
     if (pauseAt && turns === pauseAt) {
-      const frozen = JSON.stringify(table.view(table.hostId));
+      const frozen = liveViews();
       table.setPaused(true);
       try { table.advance(45000); } catch (e) {
         table.setPaused(false);
         return { ok: false, why: `threw while the table was paused: ${e.message}`, turns };
       }
       table.setPaused(false);
-      if (JSON.stringify(table.view(table.hostId)) !== frozen) {
+      if (liveViews() !== frozen) {
         return { ok: false, turns,
           why: `published state moved while the table was paused — game time is coming `
              + `from wall-clock deltas or a timer the pause shim doesn't own` };
@@ -216,7 +222,7 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
       // whole table. (An ACCEPTED hostile intent changing state is fine — that's the
       // game working — so the refusal is attributed by intent name: a refusal is
       // final, nothing runs after it, so a refused send is always the newest entry.)
-      const viewBefore = JSON.stringify(table.view(table.hostId));
+      const viewBefore = liveViews();
       const rejBefore = JSON.stringify(table.rejections());
       try { table.send(from, wild); } catch (e) {
         return { ok: false, why: `threw on hostile intent ${JSON.stringify(wild)} from ${from}: ${e.message}`, turns };
@@ -225,7 +231,7 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
       if (rejBefore !== null && JSON.stringify(rejAfter) !== rejBefore) {
         const last = rejAfter[rejAfter.length - 1];
         if (last && last.intent === wild.t
-            && JSON.stringify(table.view(table.hostId)) !== viewBefore) {
+            && liveViews() !== viewBefore) {
           return { ok: false, turns,
             why: `a refused intent ${JSON.stringify(wild)} from ${from} (refused: ${last.why}) `
                + `changed the published state — state is being mutated outside the reducer's guards` };
@@ -245,6 +251,17 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
         return { ok: false, why: 'stalled — no player has an action and no timer is pending', turns };
       }
     } else idleStreak = 0;
+
+    // Game-specific properties, from the bundle's own invariants.mjs: things only the
+    // game can know ("exactly one living player holds the bomb", "dice never come
+    // back"). Checked every turn, so a violation is caught at the moment it happens
+    // and the seed replays straight to it.
+    if (invariants) {
+      let bad = null;
+      try { bad = invariants({ table, players: alive(), done: false, result: null }); }
+      catch (e) { return { ok: false, why: `invariants.mjs threw: ${e.message}`, turns }; }
+      if (bad) return { ok: false, why: `game invariant violated: ${bad}`, turns };
+    }
   }
 
   if (!table.over) return { ok: false, why: `did not finish in ${maxTurns} turns`, turns };
@@ -293,8 +310,24 @@ export async function playOne(game, { seed = 1, players = 3, hostile = false, le
       return { ok: false, why: `left ${table.clock.armed} timers running after the game ended`, turns, result };
     }
   }
+  // The bundle's invariants get one last look at the finished game, result in hand.
+  if (invariants) {
+    let bad = null;
+    try { bad = invariants({ table, players: alive(), done: true, result }); }
+    catch (e) { return { ok: false, why: `invariants.mjs threw at game end: ${e.message}`, turns, result }; }
+    if (bad) return { ok: false, why: `game invariant violated at game end: ${bad}`, turns, result };
+  }
+  // What actually crossed the wire, by intent name — the raw material for the batch's
+  // coverage report. An intent that is never once sent in a whole batch is a code path
+  // the suite is silently vouching for.
+  const sent = {};
+  for (const e of table.wire('send')) {
+    const t = e.payload && e.payload.t;
+    if (t) sent[t] = (sent[t] || 0) + 1;
+  }
   if (verbose) console.log(`    seed ${seed}: ${turns} turns, winner ${result.winnerId}`);
-  return { ok: true, turns, result };
+  return { ok: true, turns, result, sent,
+           vocab: vocabulary.map(v => v.fixed.t || v.fixed.type).filter(Boolean) };
 }
 
 /** Play many seeded games of one bundle. */
@@ -303,15 +336,26 @@ export async function playtest(game, opts = {}) {
   //   export default function ({ table, playerId, rng, send }) { … return didSomething; }
   // Returning false hands control back to the generic bot, so a bundle only has to teach
   // the harness the one thing it can't infer.
+  const dir = game.includes('/') ? game : join(REPO, 'playtest/samples', game);
   let bot = null;
-  const botPath = join(REPO, 'playtest/samples', game, 'bot.mjs');
+  const botPath = join(dir, 'bot.mjs');
   if (existsSync(botPath)) bot = (await import(pathToFileURL(botPath).href)).default;
-  opts = { ...opts, bot };
+  // An optional `invariants.mjs` beside the bundle: game-specific properties the
+  // generic checks can't know. ({table, players, done, result}) -> violation string
+  // or null. See playtest/samples/passbomb/invariants.mjs for the shape.
+  let invariants = null;
+  const invPath = join(dir, 'invariants.mjs');
+  if (existsSync(invPath)) invariants = (await import(pathToFileURL(invPath).href)).default;
+  opts = { ...opts, bot, invariants };
 
   const games = opts.games || 40;
   const first = opts.seed || 1;
   const failures = [];
   let totalTurns = 0;
+  // Coverage: which intent names the bots actually sent, across the batch's HONEST
+  // runs (hostile runs inject wild intents, which would count paths nobody real took).
+  const sent = {};
+  let vocab = [];
 
   // Sweep the table size unless one was asked for. Games break differently at their
   // minimum and maximum counts (2-player edge cases, 8-player elimination order), and
@@ -333,6 +377,9 @@ export async function playtest(game, opts = {}) {
     if (!res.ok) {
       failures.push({ seed, why: res.why, hostile, leave, pause, players });
       if (failures.length >= 5) break;       // five is plenty to diagnose
+    } else {
+      if (res.vocab.length) vocab = res.vocab;
+      if (!hostile) for (const [t, n] of Object.entries(res.sent)) sent[t] = (sent[t] || 0) + n;
     }
 
     // Determinism, checked once per batch: the whole point of seeding everything is
@@ -352,7 +399,16 @@ export async function playtest(game, opts = {}) {
       }
     }
   }
-  return { games, totalTurns, failures };
+  // Intents the whole batch never once sent. 'hello' is plumbing, and an intent the
+  // game itself marks hidden is deliberately outside the enumerable move space (free
+  // text with a bot.mjs, a score stream) — flagging those would train people to
+  // ignore the warning that matters.
+  const src = existsSync(join(dir, 'game.js')) ? readFileSync(join(dir, 'game.js'), 'utf8') : '';
+  const isHidden = (name) =>
+    new RegExp(name + '\\s*:\\s*\\{[\\s\\S]{0,200}?\\bhidden\\s*:\\s*true').test(src);
+  const neverSent = [...new Set(vocab)]
+    .filter(t => t !== 'hello' && !sent[t] && !isHidden(t));
+  return { games, totalTurns, failures, neverSent };
 }
 
 /* ------------------------------------------------------------------ cli --- */
@@ -404,6 +460,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const ms = Date.now() - t0;
     if (!out.failures.length) {
       console.log(`  ✓ ${label} ${out.games} games, ${out.totalTurns} turns, ${ms}ms`);
+      if (out.neverSent.length) {
+        console.log(`      ⚠ never sent in ${out.games} games: ${out.neverSent.join(', ')} — `
+                  + `untested paths; declare options so the bots can reach them, or delete dead intents`);
+      }
     } else {
       bad++;
       console.log(`  ✗ ${label} ${out.failures.length} failing:`);
