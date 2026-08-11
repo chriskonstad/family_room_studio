@@ -138,6 +138,18 @@ function createGame(Table, root) {
             lastFeel:0, lastCount:null };
     scheduleLoop();
   }
+
+  /// The judging loop runs on requestAnimationFrame, which the pause shim does NOT
+  /// freeze — so without this, a paused table kept the track running: beats expired
+  /// as misses and the run could finish while everyone was staring at a pause screen.
+  /// Shift the track's start by however long the pause lasted, and the beat you were
+  /// about to tap is still ahead of you when play resumes.
+  let pausedAt = null;
+  Table.onPause(() => { pausedAt = performance.now(); });
+  Table.onResume(() => {
+    if (run && pausedAt != null) run.start += (performance.now() - pausedAt)/1000;
+    pausedAt = null;
+  });
   function beep(when, freq, dur=0.07, gain=0.25) {
     const a = run.audio; if (!a) return;
     const o = a.createOscillator(), g = a.createGain();
@@ -148,6 +160,8 @@ function createGame(Table, root) {
   }
   function scheduleLoop() {
     if (!run || run.over) return;
+    // Paused: keep the frame loop alive but judge nothing and send nothing.
+    if (Table.isPaused) { run.raf = requestAnimationFrame(scheduleLoop); return; }
     const nowS = performance.now()/1000 - run.start;
     // schedule metronome beeps just ahead
     if (run.audio) {
@@ -186,7 +200,7 @@ function createGame(Table, root) {
     run.raf = requestAnimationFrame(scheduleLoop);
   }
   function tap() {
-    if (!run || run.over) return;
+    if (!run || run.over || Table.isPaused) return;
     const nowS = performance.now()/1000 - run.start;
     const next = run.beats[run.idx];
     if (next == null) return;

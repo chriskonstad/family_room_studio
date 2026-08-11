@@ -2,14 +2,14 @@
 /*
  * Runs the Table conformance suite against the shared SDK, under node.
  *
- *   node tools/conformance/run-studio.mjs
+ *   node conformance/run-studio.mjs
  *
  * This used to reach the studio's `Table` by REGEX-SCRAPING a template literal out of
  * playtest/index.html, substituting the `${…}` placeholders by hand, and evaluating the
  * result — because the studio and the iOS shell each had their own copy of the SDK and
  * there was no third place to get one from. Restructuring the studio's HTML broke it.
  *
- * There is one implementation now (tools/sdk/table-sdk.js), so this just imports it. The
+ * There is one implementation now (sdk/table-sdk.js), so this just imports it. The
  * iOS unit test loads the same file into a real WKWebView, which means both harnesses are
  * held to this spec against the same source.
  *
@@ -22,16 +22,16 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repo = join(here, '..', '..');
+const repo = join(here, '..');
 const read = (rel) => {
   try { return readFileSync(join(repo, rel), 'utf8'); }
   catch (e) { console.error(`✗ Missing ${rel} — ${e.message}`); process.exit(2); }
 };
 
-const tableSDK = read('tools/sdk/table-sdk.js');
-const feel     = read('tools/sdk/fr-feel.js');
-const frGame   = read('tools/sdk/fr-game.js');
-const suite    = read('tools/conformance/table-conformance.js');
+const tableSDK = read('sdk/table-sdk.js');
+const feel     = read('sdk/fr-feel.js');
+const frGame   = read('sdk/fr-game.js');
+const suite    = read('conformance/table-conformance.js');
 
 /* A window-ish sandbox. Nothing here may throw: a game that calls into the SDK on a
  * harness with no transport behind it should degrade to a no-op, not crash. */

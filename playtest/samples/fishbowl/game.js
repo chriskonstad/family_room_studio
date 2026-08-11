@@ -48,7 +48,7 @@ function createGame(Table, root) {
       teams: teams.map(t => ({ id:t.id, name:t.name, color:t.color, playerIds:t.playerIds.slice(), score:0, giverIdx:0 })),
       seats: players.map(p => p.id),   // the roster FR.host checks senders against
       done:{}, counts:{}, phrases:[],
-      round:0, teamIdx:0, bowl:[], current:null, turnEndsAt:null,
+      round:0, teamIdx:0, bowl:[], current:null, secondsLeft:null,
     };
     players.forEach(p => { G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.done[p.id]=false; G.counts[p.id]=0; });
     G.banner = 'Fill the bowl!';
@@ -65,11 +65,17 @@ function createGame(Table, root) {
   function beginTurn() {
     G.phase = 'turn';
     G.current = G.bowl[0];
-    G.turnEndsAt = Date.now() + TURN_SECONDS*1000;
+    // The clock counts down on the host's timers, not on Date.now() deltas: timers
+    // freeze while the table is paused, so a wall-clock deadline would silently eat
+    // the guesser's remaining seconds the moment somebody's phone drops.
+    G.secondsLeft = TURN_SECONDS;
     timer.after('turn', TURN_SECONDS*1000, () => { endTurn(); syncAll(); });
+    timer.every('turnTick', 1000, () => { G.secondsLeft = Math.max(0, G.secondsLeft - 1); });
   }
   function endTurn() {
     timer.cancel('turn');
+    timer.cancel('turnTick');
+    G.secondsLeft = null;
     const t = currentTeam();
     t.giverIdx++;
     G.teamIdx++;
@@ -154,7 +160,7 @@ function createGame(Table, root) {
       activeTeamId: (G.phase==='turnReady'||G.phase==='turn') ? currentTeam().id : null,
       giver: (G.phase==='turnReady'||G.phase==='turn') ? currentGiver() : null,
       bowlLeft: G.bowl.length,
-      secondsLeft: G.phase==='turn' ? Math.max(0, Math.round((G.turnEndsAt-Date.now())/1000)) : null,
+      secondsLeft: G.phase==='turn' ? G.secondsLeft : null,
       canSkip: G.bowl.length >= 2,
     };
   }

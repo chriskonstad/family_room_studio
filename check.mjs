@@ -2,7 +2,7 @@
 /*
  * check.mjs — everything, in one command.
  *
- *   node tools/check.mjs
+ *   node check.mjs
  *
  * This is what an agent runs before it commits, and what CI runs on a push. It needs
  * nothing but node: no browser, no simulator, no Mac. If this is green, the only thing
@@ -20,13 +20,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
+const REPO = dirname(fileURLToPath(import.meta.url));
 
 const steps = [
-  ['Table SDK conformance', 'tools/conformance/run-studio.mjs', []],
-  ['fr-game library',       'tools/sdk/fr-game.test.mjs',       []],
-  ['bundle validation',     'tools/validate.mjs',               ['--all']],
-  ['headless playtest',     'tools/harness/playtest.mjs',       ['--all', '--games', '10']]
+  ['Table SDK conformance', 'conformance/run-studio.mjs', []],
+  ['fr-game library',       'sdk/fr-game.test.mjs',       []],
+  ['bundle validation',     'validate.mjs',               ['--all']],
+  ['headless playtest',     'harness/playtest.mjs',       ['--all', '--games', '10']]
 ];
 
 let failed = 0;

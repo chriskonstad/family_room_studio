@@ -305,20 +305,24 @@ Table.onPlayerLeave(function (id) { seats.eliminate(id); if (seats.settled) endR
 `FR` has no DOM and no `Table` dependency, so host logic built on it runs under plain node:
 
 ```sh
-node tools/sdk/fr-game.test.mjs      # the library's own suite: 51 tests incl. a fuzz soak
+node sdk/fr-game.test.mjs      # the library's own suite: 51 tests incl. a fuzz soak
 ```
 
 The suite's `fakeClock` is worth copying: it makes a 60-second game run in a millisecond, so
 you can fuzz thousands of games in seconds. Pair it with `FR.rng(seed)` and any failure comes
 with a seed that reproduces it exactly.
 
-The invariants worth asserting for any game:
+The invariants worth asserting for any game — the headless playtest
+(`node harness/playtest.mjs <game>`) now checks every one of these automatically,
+across table sizes, hostile input, mid-game disconnects and mid-game pauses:
 
 - it never throws, whatever arrives
 - it always terminates
 - a rejected intent changes nothing
 - `endGame` fires exactly once
 - a finished game leaves no timers armed
+- the same seed replays the same game, move for move
+- nothing moves while the table is paused
 
 That last set found a real hole on its first run: `FR.host` used to accept intents from an id
 that wasn't seated at all.

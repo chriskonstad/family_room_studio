@@ -2,9 +2,9 @@
 /*
  * validate.mjs — check a game bundle before it goes anywhere near a phone.
  *
- *   node tools/validate.mjs tools/playtest/samples/streak
- *   node tools/validate.mjs mygame.zip
- *   node tools/validate.mjs --all
+ *   node validate.mjs playtest/samples/streak
+ *   node validate.mjs mygame.zip
+ *   node validate.mjs --all
  *
  * This is the gate that makes third-party authoring safe. Anyone can write a bundle and
  * hand over a .zip; the app will import it and run it on every phone in the room. Nobody
@@ -27,7 +27,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
+const REPO = dirname(fileURLToPath(import.meta.url));
 
 /* The Swift decoder's contract. `id`, `version`, `name` and `entry` are non-optional in
  * GameManifest, so a bundle missing any of them fails to decode and the game vanishes from
@@ -195,7 +195,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   let targets = args.filter(a => !a.startsWith('--'));
   if (args.includes('--all') || !targets.length) {
-    const samples = join(REPO, 'tools/playtest/samples');
+    const samples = join(REPO, 'playtest/samples');
     targets = readdirSync(samples)
       .filter(d => existsSync(join(samples, d, 'manifest.json')))
       .map(d => join(samples, d));
