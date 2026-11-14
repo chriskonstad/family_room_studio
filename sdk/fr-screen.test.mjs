@@ -12,6 +12,13 @@
 import assert from 'node:assert/strict';
 import FRScreen from './fr-screen.js';
 
+/* bounds() items carry metadata the geometry tests don't care about (the op's
+ * index in the frame, and the alpha it was drawn at — both there so a layout
+ * checker can reason about painter's order). Compare the geometry alone, so
+ * adding another field never breaks a test about rectangles. */
+const geom = (it) => it && { op: it.op, x: it.x, y: it.y, w: it.w, h: it.h,
+                             ...(it.text != null ? { text: it.text } : {}) };
+
 let passed = 0, failed = 0;
 const out = [];
 function test(name, fn) {
@@ -125,14 +132,14 @@ section('bounds — where a frame actually put things');
 test('a plain rect reports itself', () => {
   const c = FRScreen.context();
   c.fillRect(10, 20, 30, 40);
-  assert.deepEqual(FRScreen.bounds(c.ops()).items, [{ op: 'fillRect', x: 10, y: 20, w: 30, h: 40 }]);
+  assert.deepEqual(FRScreen.bounds(c.ops()).items.map(geom), [{ op: 'fillRect', x: 10, y: 20, w: 30, h: 40 }]);
 });
 
 test('translate moves the box, and restore puts it back', () => {
   const c = FRScreen.context();
   c.save(); c.translate(100, 50); c.fillRect(0, 0, 10, 10); c.restore();
   c.fillRect(0, 0, 10, 10);
-  const b = FRScreen.bounds(c.ops()).items;
+  const b = FRScreen.bounds(c.ops()).items.map(geom);
   assert.deepEqual(b[0], { op: 'fillRect', x: 100, y: 50, w: 10, h: 10 });
   assert.deepEqual(b[1], { op: 'fillRect', x: 0, y: 0, w: 10, h: 10 }, 'restore must undo the translate');
 });
@@ -140,12 +147,12 @@ test('translate moves the box, and restore puts it back', () => {
 test('scale and rotate are accounted for', () => {
   const c = FRScreen.context();
   c.save(); c.scale(2, 3); c.fillRect(10, 10, 5, 5); c.restore();
-  const s = FRScreen.bounds(c.ops()).items[0];
+  const s = geom(FRScreen.bounds(c.ops()).items[0]);
   assert.deepEqual(s, { op: 'fillRect', x: 20, y: 30, w: 10, h: 15 });
 
   const r = FRScreen.context();
   r.save(); r.rotate(Math.PI / 2); r.fillRect(0, 0, 10, 0); r.restore();
-  const rb = FRScreen.bounds(r.ops()).items[0];
+  const rb = geom(FRScreen.bounds(r.ops()).items[0]);
   assert.ok(Math.abs(rb.h - 10) < 1e-6, 'a horizontal bar rotated 90° becomes vertical');
 });
 
@@ -154,7 +161,7 @@ test('text boxes respect align and baseline', () => {
     const c = FRScreen.context();
     c.font = '40px sans-serif'; c.textAlign = align; c.textBaseline = baseline;
     c.fillText('abcde', 500, 300);          // width estimate = 5 * 40 * 0.55 = 110
-    return FRScreen.bounds(c.ops()).items[0];
+    return geom(FRScreen.bounds(c.ops()).items[0]);
   };
   assert.equal(mk('left', 'top').x, 500);
   assert.equal(mk('center', 'top').x, 445);
@@ -169,28 +176,28 @@ test('text boxes respect align and baseline', () => {
 test('an arc reports its full circle, not its centre', () => {
   const c = FRScreen.context();
   c.beginPath(); c.arc(200, 200, 50, 0, Math.PI * 2); c.fill();
-  assert.deepEqual(FRScreen.bounds(c.ops()).items[0], { op: 'fill', x: 150, y: 150, w: 100, h: 100 });
+  assert.deepEqual(geom(FRScreen.bounds(c.ops()).items[0]), { op: 'fill', x: 150, y: 150, w: 100, h: 100 });
 });
 
 test('a stroke is fattened by its line width — a ring can overflow by half of it', () => {
   const c = FRScreen.context();
   c.lineWidth = 20;
   c.beginPath(); c.arc(100, 100, 50, 0, Math.PI * 2); c.stroke();
-  const b = FRScreen.bounds(c.ops()).items[0];
+  const b = geom(FRScreen.bounds(c.ops()).items[0]);
   assert.equal(b.x, 40); assert.equal(b.w, 120);
 });
 
 test('a path accumulates across moveTo/lineTo until it is drawn', () => {
   const c = FRScreen.context();
   c.beginPath(); c.moveTo(10, 10); c.lineTo(90, 10); c.lineTo(90, 60); c.fill();
-  assert.deepEqual(FRScreen.bounds(c.ops()).items[0], { op: 'fill', x: 10, y: 10, w: 80, h: 50 });
+  assert.deepEqual(geom(FRScreen.bounds(c.ops()).items[0]), { op: 'fill', x: 10, y: 10, w: 80, h: 50 });
 });
 
 test('beginPath discards the previous path', () => {
   const c = FRScreen.context();
   c.beginPath(); c.moveTo(0, 0); c.lineTo(1000, 1000);
   c.beginPath(); c.moveTo(10, 10); c.lineTo(20, 20); c.fill();
-  assert.deepEqual(FRScreen.bounds(c.ops()).items[0], { op: 'fill', x: 10, y: 10, w: 10, h: 10 });
+  assert.deepEqual(geom(FRScreen.bounds(c.ops()).items[0]), { op: 'fill', x: 10, y: 10, w: 10, h: 10 });
 });
 
 test('union covers everything drawn', () => {
@@ -250,7 +257,7 @@ test('fitFont shrinks long text to fit, and agrees with the bounds check', () =>
     c.font = size + 'px sans-serif';
     c.textAlign = 'left'; c.textBaseline = 'top';
     c.fillText(text, 0, 0);
-    const b = FRScreen.bounds(c.ops()).items[0];
+    const b = geom(FRScreen.bounds(c.ops()).items[0]);
     assert.ok(b.w <= width + 0.5, `"${text}" at ${size}px measured ${b.w}, over ${width}`);
   }
   assert.equal(FRScreen.fitFont('Hi', 600, 120), 120, 'short text keeps the ideal size');
