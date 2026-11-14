@@ -30,12 +30,100 @@ var SCRAMBLE_RULES = (function () {
    * burning the clock on. */
   var POINTS = { 3: 1, 4: 1, 5: 2, 6: 3, 7: 5, 8: 11 };
   var UNIQUE = 2;                    // a word nobody else found is worth double
+  var THEME_BONUS = 2;               // and a word that fits the occasion, again
+
+  /**
+   * Themes.
+   *
+   * A theme does two things, and the second one is why it is in RULES and not in
+   * the UI. Its words score double — stacking with UNIQUE, so the baby word only
+   * you spotted is worth four times its face value. And its words are ADDED to
+   * the word list for as long as the theme is on.
+   *
+   * That second part is not a flourish. `santa` is not in the dictionary: the
+   * harvester drops capitalised entries on purpose, because otherwise every
+   * first name on the machine becomes a legal word. Which is right in general
+   * and intolerable at a Christmas table — drawing SANTA and being told it is
+   * not a word is the single worst thing this game could do that evening. So a
+   * theme brings its own vocabulary with it, and takes it away again after.
+   *
+   * Every other word here was checked against the shipped dictionary when it was
+   * written; `invariants.mjs` re-checks the whole list on every run, so a theme
+   * word that nobody can score is a test failure rather than a disappointment.
+   */
+  var THEMES = {
+    none: { name: 'Classic', emoji: '\uD83D\uDD21', blurb: 'The word list, nothing else.', words: [] },
+    baby: {
+      name: 'Baby Shower', emoji: '\uD83C\uDF7C',
+      blurb: 'Baby words score double.',
+      words: [
+        'aunt', 'babble', 'babies', 'baby', 'bath', 'bathe', 'bib', 'bibs', 'blanket',
+        'bonnet', 'booties', 'booty', 'bottle', 'bottles', 'boy', 'buggy', 'bump', 'burp',
+        'burping', 'cake', 'cheeks', 'colic', 'coo', 'cot', 'cradle', 'crawl', 'crib',
+        'cribs', 'cuddle', 'cute', 'daddy', 'diaper', 'diapers', 'dribble', 'dribbles',
+        'due', 'dummy', 'father', 'feed', 'feeding', 'fingers', 'formula', 'games', 'gift',
+        'gifts', 'giggle', 'girl', 'growth', 'guess', 'gums', 'hiccup', 'hug', 'hugs',
+        'infant', 'kick', 'kicks', 'kiss', 'kisses', 'little', 'lullaby', 'milk', 'mitten',
+        'mobile', 'mommy', 'mother', 'mummy', 'name', 'nana', 'nap', 'nappies', 'nappy',
+        'naps', 'newborn', 'nursery', 'onesie', 'ounce', 'papa', 'parent', 'playpen',
+        'pound', 'powder', 'pram', 'punch', 'rattle', 'romper', 'shower', 'sleep',
+        'sleeper', 'sleepy', 'small', 'smile', 'sock', 'socks', 'spoon', 'stork',
+        'stroller', 'swaddle', 'teeth', 'teether', 'tiny', 'toddler', 'toes', 'tooth',
+        'twins', 'uncle', 'weight', 'wipes', 'womb'
+      ]
+    },
+    christmas: {
+      name: 'Christmas', emoji: '\uD83C\uDF84',
+      blurb: 'Christmas words score double.',
+      words: [
+        'advent', 'angel', 'angels', 'bauble', 'bells', 'blitzen', 'bow', 'bows', 'candle',
+        'candles', 'candy', 'cane', 'canes', 'card', 'cards', 'carol', 'carols', 'cheer',
+        'chestnut', 'chill', 'chimney', 'cider', 'cocoa', 'comet', 'cookie', 'cookies',
+        'cupid', 'dasher', 'donner', 'eggnog', 'elf', 'elves', 'family', 'feast', 'festive',
+        'fir', 'frost', 'frosty', 'garland', 'gift', 'gifts', 'glitter', 'gold', 'goose',
+        'gravy', 'ham', 'hearth', 'holly', 'home', 'icicle', 'ivy', 'jingle', 'joy',
+        'kringle', 'lights', 'log', 'manger', 'merry', 'mince', 'mitten', 'mittens',
+        'myrrh', 'noel', 'nutmeg', 'peace', 'pie', 'pies', 'pine', 'present', 'presents',
+        'pudding', 'reindeer', 'ribbon', 'roast', 'rudolph', 'santa', 'scarf', 'season',
+        'shepherd', 'sing', 'skate', 'sled', 'sleds', 'sleigh', 'snow', 'snowman', 'songs',
+        'sparkle', 'spruce', 'star', 'stars', 'stocking', 'tag', 'tags', 'tidings',
+        'tinsel', 'toy', 'toys', 'tree', 'trees', 'turkey', 'twinkle', 'vixen', 'winter',
+        'wise', 'wrap', 'wrapped', 'wreath', 'yule', 'yuletide'
+      ]
+    }
+  };
+
+  var THEME_KEYS = Object.keys(THEMES);
+
+  /* word -> true, per theme, built once. */
+  var themeIndex = (function () {
+    var out = {};
+    for (var k in THEMES) {
+      var set = {}, list = THEMES[k].words;
+      for (var i = 0; i < list.length; i++) set[list[i]] = true;
+      out[k] = set;
+    }
+    return out;
+  })();
+
+  function themeOf(key) { return THEMES[key] ? key : 'none'; }
+  function isThemeWord(key, word) { return !!themeIndex[themeOf(key)][word]; }
+  function themeWords(key) { return THEMES[themeOf(key)].words.slice(); }
+
+  /** How many of a theme's words this grid can actually produce. */
+  function themeHits(grid, key) {
+    var list = THEMES[themeOf(key)].words, n = 0;
+    for (var i = 0; i < list.length; i++) if (placeable(grid, list[i])) n++;
+    return n;
+  }
 
   /** What a word is worth on its own, before anyone else's sheet is looked at. */
   function score(word) { return POINTS[word.length] || 0; }
 
-  /** What a finder actually collects for it. */
-  function value(word, shared) { return score(word) * (shared ? 1 : UNIQUE); }
+  /** What a finder actually collects for it. Bonuses multiply. */
+  function value(word, shared, themed) {
+    return score(word) * (shared ? 1 : UNIQUE) * (themed ? THEME_BONUS : 1);
+  }
 
   /** Roll a grid. `r` is an FR.rng — the whole game replays from its seed. */
   function roll(r) {
@@ -114,11 +202,11 @@ var SCRAMBLE_RULES = (function () {
    * never has to send a player's own typing back to them — which is what keeps a
    * rejected word off the wire entirely.
    */
-  function check(grid, word) {
+  function check(grid, word, theme) {
     if (!/^[a-z]+$/.test(word)) return 'letters';
     if (word.length < MIN || word.length > MAX) return 'length';
     if (!placeable(grid, word)) return 'grid';
-    if (!known(word)) return 'word';
+    if (!known(word) && !isThemeWord(theme, word)) return 'word';
     return null;
   }
 
@@ -163,16 +251,22 @@ var SCRAMBLE_RULES = (function () {
    * without touching the grid at all, and it needs no trie to be built on a phone
    * at the start of every round.
    */
-  function solve(grid) {
+  function solve(grid, theme) {
     var sup = supply(grid);
-    var out = [];
+    var out = [], seen = {};
+    var extra = THEMES[themeOf(theme)].words;
+    for (var e = 0; e < extra.length; e++) {
+      if (!known(extra[e]) && placeable(grid, extra[e]) && !seen[extra[e]]) {
+        seen[extra[e]] = true; out.push(extra[e]);
+      }
+    }
     for (var L = MIN; L <= MAX; L++) {
       var s = WORDS[L];
       if (!s) continue;
       for (var off = 0; off + L <= s.length; off += L) {
         var w = s.substr(off, L);
         if (!couldFit(w, sup)) continue;
-        if (placeable(grid, w)) out.push(w);
+        if (placeable(grid, w) && !seen[w]) { seen[w] = true; out.push(w); }
       }
     }
     out.sort(function (a, b) {
@@ -197,7 +291,7 @@ var SCRAMBLE_RULES = (function () {
    * @param {Object} found  playerId -> [word]
    * @returns {Object} { rows, points }
    */
-  function tally(found) {
+  function tally(found, theme) {
     var by = {}, ids = Object.keys(found).sort();
     for (var i = 0; i < ids.length; i++) {
       var list = found[ids[i]] || [];
@@ -209,7 +303,9 @@ var SCRAMBLE_RULES = (function () {
     var rows = Object.keys(by).sort().map(function (w) {
       var who = by[w];
       var shared = who.length > 1;
-      return { w: w, pts: score(w), value: value(w, shared), by: who, dup: shared };
+      var themed = isThemeWord(theme, w);
+      return { w: w, pts: score(w), value: value(w, shared, themed),
+               by: who, dup: shared, theme: themed };
     });
     rows.sort(function (a, b) {
       if (a.dup !== b.dup) return a.dup ? -1 : 1;        // shared first
@@ -229,8 +325,10 @@ var SCRAMBLE_RULES = (function () {
 
   return {
     DICE: DICE, SIZE: SIZE, MIN: MIN, MAX: MAX, UNIQUE: UNIQUE, POINTS: POINTS,
+    THEMES: THEMES, THEME_KEYS: THEME_KEYS, THEME_BONUS: THEME_BONUS,
     roll: roll, score: score, value: value, placeable: placeable, known: known,
-    check: check, solve: solve, tally: tally
+    check: check, solve: solve, tally: tally,
+    isThemeWord: isThemeWord, themeWords: themeWords, themeHits: themeHits, themeOf: themeOf
   };
 })();
 

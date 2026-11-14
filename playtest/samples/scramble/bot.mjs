@@ -37,13 +37,24 @@ export default function scrambleBot({ table, playerId, rng, send }) {
    * has been read out. */
   if (s.phase === 'tally') return s.revealed < s.totalRows;
 
+  /* Pick an occasion, rotating through them across a batch so every theme's
+   * scoring and its added vocabulary actually get PLAYED, not just unit-tested.
+   * Only the host's intent is accepted, so the others fall through harmlessly. */
+  if (s.phase === 'setup') {
+    const keys = R.THEME_KEYS;
+    send({ t: 'theme', k: keys[rng.int(keys.length)] });
+    return true;
+  }
+
   if (s.phase !== 'round') return false;           // everything else is a button
 
   const mem = table._scramble || (table._scramble = {});
-  const key = s.round + ':' + (s.grid || []).join('');
+  const key = s.round + ':' + (s.theme || 'none') + ':' + (s.grid || []).join('');
   if (mem.key !== key) {
     mem.key = key;
-    mem.solved = R.solve(s.grid || []);
+    // Solved WITH the theme, so the theme's own words get found and the double
+    // actually pays out in a headless run.
+    mem.solved = R.solve(s.grid || [], s.theme);
     mem.players = {};
   }
   const me = mem.players[playerId] || (mem.players[playerId] = { sent: 0, said: [] });

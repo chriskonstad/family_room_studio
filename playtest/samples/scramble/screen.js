@@ -77,7 +77,8 @@ function createScreen(Table, screen) {
 
   function drawHead(ctx, b, head, v) {
     var mid = head.y + head.h * 0.40;
-    var left = 'ROUND ' + (v.round + 1) + ' OF ' + v.rounds;
+    var left = 'ROUND ' + (v.round + 1) + ' OF ' + v.rounds +
+               (v.theme && v.theme !== 'none' ? '   ' + (v.themeEmoji || '') : '');
     fitted(ctx, left, head.w * 0.5, head.h * 0.46, head.x, mid, INK, 'left', 'middle');
 
     var right = '', color = DIM;
@@ -157,6 +158,33 @@ function createScreen(Table, screen) {
    * Only the words already read out are even on this device — the host sends the
    * revealed slice and nothing more, so there is no way to run ahead.
    */
+  /* The occasion, while the host is choosing it. A screen is REQUIRED for this
+   * game, so this is where the table finds out what it is playing — the host is
+   * looking down at three buttons and everyone else is looking up at this. */
+  function drawSetup(ctx, box, v, now) {
+    fitted(ctx, 'WHAT\u2019S THE OCCASION?', box.w * 0.8, box.h * 0.13,
+           box.cx, box.y + box.h * 0.2, INK, 'center', 'middle');
+
+    var choices = v.themeChoices || [];
+    if (!choices.length) {
+      fitted(ctx, 'GETTING READY', box.w * 0.6, box.h * 0.1,
+             box.cx, box.cy, DIM, 'center', 'middle');
+      return;
+    }
+    var n = choices.length;
+    var slotW = box.w / n;
+    for (var i = 0; i < n; i++) {
+      var cx = box.x + slotW * (i + 0.5);
+      var bob = Math.sin(now / 520 + i * 1.1) * box.h * 0.012;
+      fitted(ctx, choices[i].emoji, slotW * 0.5, box.h * 0.22,
+             cx, box.y + box.h * 0.5 + bob, INK, 'center', 'middle');
+      fitted(ctx, up(choices[i].name), slotW * 0.84, box.h * 0.08,
+             cx, box.y + box.h * 0.68, DIM, 'center', 'middle');
+    }
+    fitted(ctx, 'THE HOST IS PICKING', box.w * 0.6, box.h * 0.07,
+           box.cx, box.y + box.h * 0.86, FAINT, 'center', 'middle');
+  }
+
   function drawTally(ctx, box, v, b, now) {
     var rows = v.rows || [];
     var total = v.totalRows || 0;
@@ -184,6 +212,16 @@ function createScreen(Table, screen) {
                          ' = +' + current.value;
     fitted(ctx, label, box.w * 0.7, box.h * 0.09,
            box.cx, box.y + box.h * 0.52, shared ? DIM : GOOD, 'center', 'middle');
+
+    /* A theme word gets its own line rather than a longer label: this is the
+     * moment the occasion pays off, and it should read across a room. */
+    if (current.theme) {
+      var thm = (v.themeEmoji || '') + ' ' + up(v.themeName || '') + ' WORD · ×' +
+                (v.themeBonus || 2);
+      var flash = 0.6 + 0.4 * Math.abs(Math.sin(now / 300));
+      fitted(ctx, thm, box.w * 0.7, box.h * 0.075,
+             box.cx, box.y + box.h * 0.60, flash > 0.85 ? INK : GOLD, 'center', 'middle');
+    }
 
     // Who it just paid.
     var who = (current.by || []).map(function (id) {
@@ -328,7 +366,8 @@ function createScreen(Table, screen) {
 
     drawHead(ctx, b, head, v);
 
-    if (v.phase === 'ready') drawReady(ctx, main, v, now);
+    if (v.phase === 'setup') drawSetup(ctx, main, v, now);
+    else if (v.phase === 'ready') drawReady(ctx, main, v, now);
     else if (v.phase === 'round') drawGrid(ctx, main, v, now);
     else if (v.phase === 'tally') drawTally(ctx, main, v, b, now);
     else drawWinner(ctx, main, v, b, now);

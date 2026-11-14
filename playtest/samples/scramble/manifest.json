@@ -1,12 +1,12 @@
 {
   "id": "com.chris.scramble",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "name": "SCRAMBLE",
   "entry": "index.html",
   "iconEmoji": "🔡",
   "minPlayers": 1,
   "maxPlayers": 8,
   "author": "Chris",
-  "description": "Sixteen letters on the screen, ninety seconds, everyone tracing words at once. Every word pays — and a word nobody else found pays double, so the game is in seeing what the rest of the table walks past. Scores stay secret until the round is read out, shortest shared word to longest lone one. Plays solo.",
+  "description": "Sixteen letters on the screen, ninety seconds, everyone tracing words at once. Every word pays — and a word nobody else found pays double, so the game is in seeing what the rest of the table walks past. Pick an occasion and its words pay double again, with the grid rolled to hold them: baby words at a baby shower, Christmas words in December. Scores stay secret until the round is read out, shortest shared word to longest lone one. Plays solo.",
   "screen": "required"
 }

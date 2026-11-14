@@ -44,6 +44,16 @@ function createGame(Table, root) {
   const MIN_WORDS_ON_GRID = 60;
   const MAX_ROLLS = 8;
 
+  /* How far out from a tile's middle, as a fraction of the tile, a corner stops
+   * answering. The live zone is everything EXCEPT where both axes exceed this —
+   * a cross. See cellUnder: 0.20 measured best against synthetic finger paths. */
+  const DEAD_CORNER = 0.20;
+
+  /* A themed game is allowed more rolls to find a grid the theme can live on,
+   * and stops early once it has this many theme words available. */
+  const THEMED_ROLLS = 24;
+  const THEME_WORDS_WANTED = 3;
+
   const WHY = {
     letters: 'letters only',
     length:  'three to eight letters',
@@ -76,10 +86,14 @@ function createGame(Table, root) {
 
   function initGame(players) {
     G = {
-      phase: 'ready', round: 0, rounds: ROUNDS,
+      /* The table picks an occasion before the first grid. It is one tap and the
+       * host makes it, so it costs a party nothing and it is the difference
+       * between a word game and a word game AT a baby shower. */
+      phase: 'setup', round: 0, rounds: ROUNDS,
+      theme: 'none',
       seats: players.map(p => p.id),
       names: {}, emojis: {}, totals: {}, counts: {}, done: {},
-      grid: [], possible: 0, secondsLeft: READY_SECONDS,
+      grid: [], possible: 0, themeOnGrid: 0, secondsLeft: READY_SECONDS,
       rows: null, points: null, revealed: 0, totalRows: 0
     };
     players.forEach(p => seatPlayer(p));
@@ -109,26 +123,55 @@ function createGame(Table, root) {
     delete G.counts[id];
   }
 
+  /**
+   * Roll a grid worth playing, and under a theme, one worth playing THAT theme on.
+   *
+   * Sixteen dice do not care what day it is: a Christmas grid with no Christmas
+   * word on it is a theme in name only, and a table would notice by the end of
+   * round one. So a themed game keeps rolling and takes the grid that offers the
+   * most theme words, with the playable-grid floor still the thing that decides
+   * when a roll is good enough to stop early.
+   *
+   * Counting theme words is cheap — a hundred `placeable` calls against a list,
+   * not another pass over the dictionary — so this costs one extra solve per
+   * extra roll and nothing else. Every roll comes off the seeded stream, so the
+   * grid the table gets is still a pure function of the seed.
+   */
   function rollGrid() {
+    const themed = G.theme && G.theme !== 'none';
+    const tries = themed ? THEMED_ROLLS : MAX_ROLLS;
     let best = null;
-    for (let i = 0; i < MAX_ROLLS; i++) {
+    for (let i = 0; i < tries; i++) {
       const grid = R.roll(rng);
-      const words = R.solve(grid);
-      if (!best || words.length > best.words.length) best = { grid, words };
-      if (words.length >= MIN_WORDS_ON_GRID) break;
+      const words = R.solve(grid, G.theme);
+      const hits = themed ? R.themeHits(grid, G.theme) : 0;
+      const ok = words.length >= MIN_WORDS_ON_GRID;
+      const cand = { grid, words, hits, ok };
+      if (!best || better(cand, best)) best = cand;
+      // Unthemed, the first playable grid will do. Themed, a playable grid with
+      // theme words on it is the thing being looked for.
+      if (ok && (!themed || hits >= THEME_WORDS_WANTED)) break;
     }
     G.grid = best.grid;
     solution = best.words;
     G.possible = best.words.length;
+    G.themeOnGrid = best.hits;
     found = {};
     G.seats.forEach(id => { G.counts[id] = 0; G.done[id] = false; });
+  }
+
+  /** A playable grid beats an unplayable one; after that, more theme words wins. */
+  function better(a, b) {
+    if (a.ok !== b.ok) return a.ok;
+    if (a.hits !== b.hits) return a.hits > b.hits;
+    return a.words.length > b.words.length;
   }
 
   /** Accept or refuse one word. The word itself never travels back. */
   function submit(id, msg) {
     const typed = String(msg && msg.w != null ? msg.w : '').toLowerCase().replace(/[^a-z]/g, '');
     const list = found[id] || (found[id] = []);
-    let why = R.check(G.grid, typed);
+    let why = R.check(G.grid, typed, G.theme);
     if (!why && list.indexOf(typed) !== -1) why = 'already';
     if (!why) {
       list.push(typed);
@@ -149,6 +192,15 @@ function createGame(Table, root) {
     return G.seats.length > 0 && G.seats.every(id => G.done[id]);
   }
 
+  /** Lock the occasion in and roll the first grid for it. */
+  function chooseTheme(key) {
+    if (G.phase !== 'setup') return;
+    G.theme = R.themeOf(key);
+    rollGrid();                       // the first grid is chosen FOR the theme
+    G.phase = 'ready';
+    G.secondsLeft = READY_SECONDS;
+  }
+
   function beginRound() {
     G.phase = 'round';
     G.secondsLeft = PLAY_SECONDS;
@@ -158,7 +210,7 @@ function createGame(Table, root) {
    * once, because watching it climb IS the scoring. The host drives it so every
    * screen and every phone is on the same word. */
   function endRound() {
-    const result = R.tally(found);
+    const result = R.tally(found, G.theme);
     pending = result.rows;
     G.revealed = 0;
     G.totalRows = pending.length;
@@ -256,7 +308,16 @@ function createGame(Table, root) {
           when: (ctx) => !G.done[ctx.from],
           run: (ctx) => { G.done[ctx.from] = true; if (everyoneDone()) endRound(); }
         },
-        next: { phase: 'tally', run: () => nextRound() }
+        next: { phase: 'tally', run: () => nextRound() },
+        /* The occasion. Host-only — it is the host's party — but declared with
+         * `options` so the headless bots pick one too and every theme's scoring
+         * gets played rather than merely unit-tested. */
+        theme: {
+          phase: 'setup',
+          when: (ctx) => ctx.from === MY,
+          options: () => R.THEME_KEYS.map((k) => ({ k: k })),
+          run: (ctx) => chooseTheme(ctx.msg && ctx.msg.k)
+        }
       }
     });
   }
@@ -273,6 +334,17 @@ function createGame(Table, root) {
       counts: { ...G.counts }, done: { ...G.done },
       // The grid is public — it is the thing everyone is looking at.
       grid: G.grid.slice(), possible: G.possible,
+      /* The screen runs screen.js ALONE — no rules.js, no dictionary — so a
+       * theme's name and emoji travel with the state rather than being looked
+       * up. A screen that had to import the rules to render a label would be a
+       * second copy of the rules on a device that cannot run them. */
+      theme: G.theme, themeOnGrid: G.themeOnGrid,
+      themeName: R.THEMES[G.theme].name,
+      themeEmoji: R.THEMES[G.theme].emoji,
+      themeBonus: R.THEME_BONUS,
+      themeChoices: G.phase === 'setup'
+        ? R.THEME_KEYS.map((k) => ({ k: k, name: R.THEMES[k].name, emoji: R.THEMES[k].emoji }))
+        : null,
       secondsLeft: G.secondsLeft,
       totals: scored ? { ...G.totals } : null,
       // Only the words already read out. The rest are still somebody's secret.
@@ -374,21 +446,31 @@ function createGame(Table, root) {
   /**
    * Which tile is under the finger.
    *
-   * `near` is what makes a diagonal work. Hit-testing the tile RECTANGLE means a
-   * finger cutting toward the tile diagonally below clips the corner of one it
-   * never meant to touch — and that tile IS adjacent, so the letter goes into the
-   * word. Measured on a real grid, a bow of 5% of a tile's width was enough to do
-   * it, which is every human finger ever.
+   * There are two ways to get this wrong and they pull in opposite directions.
    *
-   * So a tile only answers near its MIDDLE. The corner where four tiles meet
-   * belongs to none of them, a sweep passes through cleanly, and only a
-   * deliberate arrival registers. Same measurement, same grid: clean through 25%.
+   * Hit-test the whole RECTANGLE and a finger sweeping toward the tile
+   * diagonally below clips the corner of one it never meant to touch — and that
+   * tile IS adjacent, so the letter lands in the word. Driving the real grid
+   * with synthetic finger paths: 31% of words came out with a letter in them
+   * that nobody drew.
+   *
+   * Answer only near the MIDDLE and the opposite happens. A hand does not stop
+   * at each tile's centre, it ROUNDS the turn — so a tile the word genuinely
+   * passes through never reports, and the letter vanishes. Same measurement
+   * against a 26%-of-a-tile middle: 69% of words lost a letter. That is the
+   * version that shipped, and it is why diagonals felt dead.
+   *
+   * So the live zone is a CROSS: the full width of the tile through its middle
+   * both ways, with the four corners dead. You can enter from any edge straight
+   * on, because that is where an across-or-down move crosses; but the one place
+   * four tiles meet answers for none of them, so a diagonal sweep passes through
+   * it cleanly. Measured the same way, at a hand wobble of 0, 10% and 20% of a
+   * tile: 100%, 98%, 92% of words come out exactly as drawn.
    *
    * The first and last touches are the exception — they take the whole square,
-   * gaps included. Neither can insert a letter into the middle of a word: one has
-   * no path yet and the other is the end of it. That asymmetry is what lets the
-   * middle be strict. Measured on a real grid: a sweep survives a 30% bow, and
-   * you can let go 40% off the middle of the last tile and still get it.
+   * corners and gaps included. Neither can insert a letter into the MIDDLE of a
+   * word: one has no path yet and the other ends it. That asymmetry is what
+   * lets the middle stay strict.
    */
   function cellUnder(x, y, near) {
     if (!geom) return -1;
@@ -396,10 +478,9 @@ function createGame(Table, root) {
     const row = Math.floor((y - geom.y) / geom.h);
     if (col < 0 || col > 3 || row < 0 || row > 3) return -1;
     if (!near) return row * 4 + col;
-    const dx = x - (geom.x + (col + 0.5) * geom.w);
-    const dy = y - (geom.y + (row + 0.5) * geom.h);
-    const r = 0.26 * Math.min(geom.w, geom.h);
-    return (dx * dx + dy * dy) <= r * r ? row * 4 + col : -1;
+    const dx = Math.abs(x - (geom.x + (col + 0.5) * geom.w)) / geom.w;
+    const dy = Math.abs(y - (geom.y + (row + 0.5) * geom.h)) / geom.h;
+    return (dx > DEAD_CORNER && dy > DEAD_CORNER) ? -1 : row * 4 + col;
   }
 
   /**
@@ -447,7 +528,9 @@ function createGame(Table, root) {
   function showWord(text, state) {
     const readout = root.querySelector('#forming');
     if (!readout) return;
-    readout.textContent = text || '—';
+    const wordEl = root.querySelector('#fword');
+    if (wordEl) wordEl.textContent = text || '—';
+    else readout.textContent = text || '—';
     readout.className = 'forming' + (state ? ' ' + state : '');
     const why = root.querySelector('#why');
     if (why) why.textContent = '';
@@ -554,6 +637,41 @@ function createGame(Table, root) {
 
   function buildPhase() {
     const v = view;
+
+    /* One tap, on the host's phone, before anything else happens. A screen is
+     * required for this game, so everyone is already looking at the same place
+     * to see what got picked. */
+    if (v.phase === 'setup') {
+      if (!Table.isHost) {
+        root.innerHTML = '<div class="wrap center">' +
+          '<div class="brand">SCRAMBLE</div>' +
+          '<div class="waiting">The host is picking the occasion…</div></div>';
+        return;
+      }
+      root.innerHTML =
+        '<div class="wrap center">' +
+          '<div class="brand">SCRAMBLE</div>' +
+          '<div class="big">What\u2019s the occasion?</div>' +
+          '<div class="themes">' +
+            R.THEME_KEYS.map((k) => {
+              const t = R.THEMES[k];
+              return '<button class="theme" type="button" data-k="' + esc(k) + '">' +
+                '<span class="te">' + esc(t.emoji) + '</span>' +
+                '<span class="tt"><b>' + esc(t.name) + '</b>' +
+                '<i>' + esc(t.blurb) + '</i></span></button>';
+            }).join('') +
+          '</div>' +
+        '</div>';
+      const buttons = root.querySelectorAll('.theme');
+      for (const b of buttons) {
+        b.addEventListener('click', () => {
+          feel('arrive', { mine: true });
+          send({ t: 'theme', k: b.getAttribute('data-k') });
+        });
+      }
+      return;
+    }
+
     if (v.phase === 'ready') {
       root.innerHTML =
         '<div class="wrap center">' +
@@ -561,7 +679,11 @@ function createGame(Table, root) {
           '<div class="count" id="ready">' + v.secondsLeft + '</div>' +
           '<div class="big">Round ' + (v.round + 1) + ' of ' + v.rounds + '</div>' +
           '<div class="hint">Drag across the letters to spell a word.<br>' +
-          'A word nobody else finds is worth double.</div>' +
+          'A word nobody else finds is worth double.' +
+          (v.theme && v.theme !== 'none'
+            ? '<br>' + esc(R.THEMES[v.theme].emoji) + ' ' +
+              esc(R.THEMES[v.theme].name) + ' words count double too.'
+            : '') + '</div>' +
         '</div>';
       return;
     }
@@ -574,8 +696,8 @@ function createGame(Table, root) {
             '<span class="sub" id="roundlbl"></span>' +
             '<span class="time" id="time"></span>' +
           '</div>' +
-          '<div class="forming" id="forming">—</div>' +
-          '<div class="why" id="why"></div>' +
+          '<div class="forming" id="forming">' +
+            '<span id="fword">—</span><span class="rz" id="why"></span></div>' +
           gridHTML(v.grid) +
           '<div class="chips" id="chips"></div>' +
           '<div class="foot">' +
@@ -639,7 +761,10 @@ function createGame(Table, root) {
     }
 
     const roundlbl = root.querySelector('#roundlbl');
-    if (roundlbl) roundlbl.textContent = 'Round ' + (v.round + 1) + ' of ' + v.rounds;
+    if (roundlbl) {
+      roundlbl.textContent = 'Round ' + (v.round + 1) + ' of ' + v.rounds +
+        (v.theme && v.theme !== 'none' ? ' ' + (v.themeEmoji || '') : '');
+    }
 
     const words = privy.words || [];
 
@@ -656,9 +781,13 @@ function createGame(Table, root) {
       if (v.rows) v.rows.forEach(r => { row[r.w] = r; });
       root.querySelector('#chips').innerHTML = words.slice().reverse().map(w => {
         const r = row[w];
+        const themeTag = r && r.theme
+          ? '<i class="thm">' + esc(R.THEMES[v.theme].emoji) + '</i>' : '';
         const tag = !r ? '' : (r.dup ? '<i>shared</i>' : '<i class="only">only you</i>');
-        return '<div class="chip' + (r ? (r.dup ? ' shared' : ' uniq') : '') + '">' +
-               '<span>' + esc(w.toUpperCase()) + '</span>' + tag + '</div>';
+        return '<div class="chip' + (r ? (r.dup ? ' shared' : ' uniq') : '') +
+               (r && r.theme ? ' thm' : '') + '">' +
+               '<span>' + esc(w.toUpperCase()) + '</span>' +
+               '<span class="tags">' + themeTag + tag + '</span></div>';
       }).join('');
     }
 
@@ -686,7 +815,8 @@ function createGame(Table, root) {
       const readout = root.querySelector('#forming');
       const why = root.querySelector('#why');
       if (readout && settling) {
-        readout.textContent = settling;
+        const wordEl = root.querySelector('#fword');
+        if (wordEl) wordEl.textContent = settling; else readout.textContent = settling;
         readout.className = 'forming ' + (a.why ? 'bad' : 'good');
         if (why) why.textContent = a.why ? (WHY[a.why] || '') : '';
         feel(a.why ? 'blocked' : 'gain', { el: readout, mine: true });

@@ -29,7 +29,25 @@ function stringValues(v, out = []) {
   return out;
 }
 
+/* A theme word that cannot be submitted is not a bonus, it is a lie: `check()`
+ * refuses anything outside MIN..MAX or with a non-letter in it, whatever list it
+ * is on. Checked once, here, so a theme word nobody could ever score fails the
+ * build instead of disappointing a room. */
+const themeFault = (() => {
+  for (const key of R.THEME_KEYS) {
+    for (const w of R.THEMES[key].words) {
+      if (!/^[a-z]+$/.test(w)) return `theme "${key}" has "${w}", which is not plain letters`;
+      if (w.length < R.MIN || w.length > R.MAX) {
+        return `theme "${key}" has "${w}" (${w.length} letters), outside ${R.MIN}-${R.MAX}`;
+      }
+      if (!R.isThemeWord(key, w)) return `theme "${key}" does not recognise its own "${w}"`;
+    }
+  }
+  return null;
+})();
+
 export default function scrambleInvariants({ table, players, done, result }) {
+  if (themeFault) return themeFault;
   const seen = table._scTotals || (table._scTotals = {});
 
   for (const id of players) {
@@ -95,18 +113,26 @@ export default function scrambleInvariants({ table, players, done, result }) {
 
         // The three things the host had to get right, re-derived.
         if (!R.placeable(s.grid, row.w)) return `"${row.w}" scored but is not on this grid`;
-        if (!R.known(row.w)) return `"${row.w}" scored but is not in the word list`;
+        // A theme brings its own vocabulary for as long as it is on, so the word
+        // list a scored word has to be in is the dictionary PLUS that theme's.
+        if (!R.known(row.w) && !R.isThemeWord(s.theme, row.w)) {
+          return `"${row.w}" scored but is in neither the word list nor the ${s.theme} theme`;
+        }
+        if (!!row.theme !== R.isThemeWord(s.theme, row.w)) {
+          return `"${row.w}" is marked theme=${!!row.theme} under the ${s.theme} theme`;
+        }
         if (row.pts !== R.score(row.w)) return `"${row.w}" is worth ${row.pts}, not ${R.score(row.w)}`;
 
         if (!row.by.length) return `"${row.w}" was found by nobody`;
         if (new Set(row.by).size !== row.by.length) return `"${row.w}" credits someone twice`;
         if (row.dup !== row.by.length > 1) return `"${row.w}" has dup=${row.dup} with ${row.by.length} finders`;
 
-        // Every word pays; a word nobody else found pays double.
-        const want = row.pts * (row.dup ? 1 : s.unique);
+        // Every word pays; a word nobody else found pays double; a word that
+        // fits the occasion pays double again, and the two multiply.
+        const want = row.pts * (row.dup ? 1 : s.unique) * (row.theme ? s.themeBonus : 1);
         if (row.value !== want) {
           return `"${row.w}" paid ${row.value}, but a ${row.dup ? 'shared' : 'unique'} ` +
-                 `${row.pts}-pointer is worth ${want}`;
+                 `${row.theme ? 'theme ' : ''}${row.pts}-pointer is worth ${want}`;
         }
         for (const pid of row.by) earned[pid] = (earned[pid] || 0) + row.value;
       }

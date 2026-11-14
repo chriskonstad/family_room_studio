@@ -72,7 +72,14 @@
     transform-origin:top center}
   .phone .notch{position:absolute;top:20px;left:50%;transform:translateX(-50%);width:112px;height:32px;background:#000;border-radius:20px;z-index:3;pointer-events:none}
   .phone .screen{border-radius:34px;overflow:hidden;background:#0c241d;position:relative}
-  .phone iframe{border:0;display:block;width:100%;height:100%;background:#0c241d}
+  .phone iframe{border:0;display:block;width:100%;background:#0c241d;position:absolute;left:0}
+  /* The bands are the parts of the screen a game never gets. Drawn, not implied,
+     so an author can see how little room is actually left. */
+  .phone .band{position:absolute;left:0;right:0;background:#000;z-index:2;pointer-events:none}
+  .phone .band.top{top:0}
+  .phone .band.bottom{bottom:0}
+  .phone .band.bottom::after{content:'';position:absolute;left:50%;bottom:8px;transform:translateX(-50%);
+    width:134px;height:5px;border-radius:3px;background:#3a3a3a}
   .phone .plabel{position:absolute;top:-30px;left:0;right:0;display:flex;align-items:center;gap:6px;font-size:12.5px}
   .phone .plabel .who{font-weight:700}
   .phone .plabel .dev{color:var(--muted);font-size:11px}
@@ -213,14 +220,22 @@
 // w/h are LOGICAL POINTS (CSS px) — the unit web/SwiftUI layouts use. The physical
 // pixel resolution is w*dpr × h*dpr (shown in labels). Sizing iframes to points is
 // correct: a 200pt button = 200 CSS px here = 200pt on device, 1:1.
+/* `safe` is the status-bar / Dynamic Island inset at the top and the home
+ * indicator at the bottom, in points. It is NOT decoration: the iframe is sized
+ * to the area INSIDE it, so a game laid out here gets the same usable height it
+ * gets on the phone. Without this the studio handed every game ~93pt it does not
+ * have on a 16 Pro, and a layout that fitted here arrived on the phone crushed —
+ * which is exactly how SCRAMBLE's word list shipped showing a third of itself. */
 const DEVICES = {
-  'iphone-16-pro':      {label:'iPhone 16 Pro',      w:402, h:874, dpr:3},  // 1206×2622 px
-  'iphone-17-pro':      {label:'iPhone 17 Pro',      w:402, h:874, dpr:3},  // 1206×2622 px
-  'iphone-16-pro-max':  {label:'iPhone 16 Pro Max',  w:440, h:956, dpr:3},  // 1320×2868 px
-  'iphone-17-pro-max':  {label:'iPhone 17 Pro Max',  w:440, h:956, dpr:3},  // 1320×2868 px
-  'iphone-15-pro':      {label:'iPhone 15 Pro',      w:393, h:852, dpr:3},  // 1179×2556 px
-  'iphone-se':          {label:'iPhone SE',          w:375, h:667, dpr:2},  // 750×1334 px
+  'iphone-16-pro':      {label:'iPhone 16 Pro',      w:402, h:874, dpr:3, safe:{top:62, bottom:34}},
+  'iphone-17-pro':      {label:'iPhone 17 Pro',      w:402, h:874, dpr:3, safe:{top:62, bottom:34}},
+  'iphone-16-pro-max':  {label:'iPhone 16 Pro Max',  w:440, h:956, dpr:3, safe:{top:62, bottom:34}},
+  'iphone-17-pro-max':  {label:'iPhone 17 Pro Max',  w:440, h:956, dpr:3, safe:{top:62, bottom:34}},
+  'iphone-15-pro':      {label:'iPhone 15 Pro',      w:393, h:852, dpr:3, safe:{top:59, bottom:34}},
+  'iphone-se':          {label:'iPhone SE',          w:375, h:667, dpr:2, safe:{top:20, bottom:0}},
 };
+const safeOf = d => (d && d.safe) || {top:0, bottom:0};
+const usableH = d => d.h - safeOf(d).top - safeOf(d).bottom;
 const pxLabel = d => `${d.w*d.dpr}×${d.h*d.dpr} px @${d.dpr}×`;
 const DEFAULT_DEVICE = 'iphone-16-pro';
 
@@ -729,7 +744,7 @@ function renderStage(){
       <div class="plabel">
         <span>${p.emoji}</span><span class="who">${escapeHtml(p.name)}</span>
         ${p.isHost?'<span class="hostbadge">HOST</span>':''}
-        <span class="dev" title="logical points · physical pixels">${dev.w}×${dev.h} pt · ${pxLabel(dev)}</span>
+        <span class="dev" title="screen · usable area inside the safe-area insets">${dev.w}×${dev.h} pt · ${dev.w}×${usableH(dev)} usable</span>
       </div>
       <div class="ctl">
         <select class="devsel">${devOpts}</select>
@@ -737,7 +752,9 @@ function renderStage(){
       </div>
       <div class="notch"></div>
       <div class="screen" style="width:${dev.w}px;height:${dev.h}px">
-        <iframe data-pid="${p.id}"></iframe>
+        <div class="band top" style="height:${safeOf(dev).top}px"></div>
+        <div class="band bottom" style="height:${safeOf(dev).bottom}px"></div>
+        <iframe data-pid="${p.id}" style="top:${safeOf(dev).top}px;height:${usableH(dev)}px"></iframe>
         <div class="droptag">disconnected</div>
       </div>`;
     wrap.querySelector('.devsel').onchange = e=>{ p.device=e.target.value; renderStage(); };

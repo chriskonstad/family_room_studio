@@ -38,11 +38,22 @@
   .forming.sent{color:var(--muted)}
   .forming.good{color:var(--good)}
   .forming.bad{color:var(--bad)}
-  .why{min-height:16px; text-align:center; font-size:12.5px; color:var(--muted)}
+  /* The reason a word bounced rides ON the word's line. It used to have a row of
+     its own, which reserved 16px of a phone's height permanently to say nothing
+     almost all the time. */
+  .forming .rz{margin-left:10px; font-size:12.5px; font-weight:800; letter-spacing:.05em;
+    color:var(--muted); text-transform:lowercase; vertical-align:middle}
 
   /* The letters, and a finger on them. A 4x4 grid across a phone gives ~90pt
      tiles — twice the 44pt floor, and about right for dragging at speed. */
-  .boardwrap{position:relative; width:100%; max-width:390px; margin:2px auto 6px; aspect-ratio:1}
+  /* The board is capped against the height the phone ACTUALLY gives a page —
+     100vh minus the insets — not against its width. Left to the width it took
+     374pt of a 16 Pro's 781pt of usable height, and the word list under it got
+     what was left, which was five lines. 88pt tiles are twice the 44pt floor;
+     spending some of that on the list is the better trade. */
+  .boardwrap{position:relative; aspect-ratio:1; margin:2px auto 6px; flex:0 0 auto;
+    width:min(100%, 390px,
+      calc((100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) * 0.40))}
   .board{position:absolute; inset:0; display:grid; grid-template-columns:repeat(4,1fr);
     gap:7px; touch-action:none; -webkit-user-select:none; user-select:none}
   .cell{background:#f3e9d2; color:#2a1b45; border-radius:14px;
@@ -59,16 +70,30 @@
   /* Your words, one per line, newest on top — a list you can read down while you
      play instead of a bag of chips to hunt through. No numbers anywhere: the
      whole point is that nobody knows where they stand until the screen says. */
-  .chips{flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column;
-    gap:5px; padding:2px 0}
-  .chip{background:var(--panel); border:1px solid var(--line); border-radius:11px;
-    padding:9px 13px; font-size:15px; font-weight:800; letter-spacing:.09em;
-    display:flex; align-items:center; justify-content:space-between; gap:10px}
+  .chips{flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column;
+    gap:4px; padding:2px 0; -webkit-overflow-scrolling:touch}
+  .chip{background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:7px 12px; font-size:14.5px; font-weight:800; letter-spacing:.08em;
+    flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:10px}
   .chip i{font-style:normal; font-size:11px; font-weight:800; letter-spacing:.06em;
     color:var(--muted); text-transform:uppercase}
   .chip i.only{color:var(--accent)}
   .chip.uniq{border-color:var(--accent)}
   .chip.shared{opacity:.55}
+
+  /* The occasion picker. Full-width rows, not a toolbar: it is one decision,
+     made once, by one person, and it wants to be unmissable rather than tidy. */
+  .themes{display:flex; flex-direction:column; gap:10px; width:100%; max-width:340px}
+  .theme{display:flex; align-items:center; gap:14px; width:100%; margin:0;
+    text-align:left; padding:14px 16px}
+  .theme .te{font-size:30px; line-height:1}
+  .theme .tt{display:flex; flex-direction:column; gap:2px; min-width:0}
+  .theme .tt b{font-size:16px; font-weight:800}
+  .theme .tt i{font-style:normal; font-size:12.5px; font-weight:600; color:var(--muted)}
+
+  .chip .tags{display:flex; align-items:center; gap:8px; flex:0 0 auto}
+  .chip i.thm{font-size:14px}
+  .chip.thm{border-color:var(--good)}
 
   .foot{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted)}
   button{font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--panel);
