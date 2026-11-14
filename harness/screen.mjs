@@ -11,13 +11,20 @@
  *
  *   never throws          a screen that crashes takes the room's focal point out
  *   draws something       a blank TV is indistinguishable from a broken one
+ *   fits                  nothing clipped or under the overscan, at six shapes
  *   NEVER LEAKS           no string the host sent privately is ever drawn
  *
- * That last one is the reason this file exists. The harness already sees every
- * `sendTo` on the wire, so it knows exactly what is secret — the giver's phrase,
- * a player's hand — and a recorded frame is a list of ops, so it knows exactly
- * what was drawn. Checking one against the other is mechanical, which turns
- * "remember not to put the hand on the TV" from a review note into a test.
+ * The leak check is the reason this file exists, and it is run with a deliberate
+ * PROBE rather than a hope: the screen is handed the host's private payloads too,
+ * even though the shell never does that, and must still not draw a word of them.
+ * A correct screen ignores every message type but its own public `state`; one
+ * that stashes whatever it is given fails here instead of in a living room.
+ *
+ * A string the host ALSO broadcasts is public by definition and is not treated as
+ * a secret — a route colour is in both SUMMIT's private hand and its public board.
+ * The other leak, a host that puts a secret INTO a broadcast, is not a screen bug
+ * at all (it is already on every phone) and is caught by the per-game invariants:
+ * see `fishbowl/invariants.mjs`.
  *
  * No browser: the screen draws into the fr-screen recorder, so a frame is a value
  * and nothing needs rasterising to be checked.
@@ -181,11 +188,33 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
     const r = rng(s);
     const screen = bootScreen(dir);
     const secrets = new Set();
+    const told = new Set();
     let t = 0;
 
     const tick = () => {
-      // Everything the host has EVER said privately is off-limits on the screen.
-      for (const e of table.wire('sendTo')) strings(e.payload).forEach(x => secrets.add(x));
+      // Everything the host has EVER said privately is off-limits on the screen —
+      // MINUS everything it has also said publicly.
+      //
+      // That subtraction is not a loophole, it is the definition. A private
+      // payload is a mix of secrets and structure: SUMMIT deals `{t:'hand',
+      // hand:[{c:'reef',v:8}]}`, and "reef" is the name of a route printed on the
+      // public board. Without this, the public banner "Ava played 8 on reef"
+      // reads as a leak of a card nobody can see. A string the host has
+      // broadcast to every player is public by construction, so it cannot be the
+      // thing a screen must not show.
+      for (const e of table.wire('broadcast')) strings(e.payload).forEach(x => told.add(x));
+      for (const e of table.wire('sendTo')) {
+        strings(e.payload).forEach(x => { if (!told.has(x)) secrets.add(x); });
+      }
+      for (const x of told) secrets.delete(x);   // a later broadcast declassifies it
+
+      // THE PROBE. The shell routes nothing private to a screen, so without this
+      // the leak assertion below could never fail and would be a test that passes
+      // by construction. Hand the screen the private payload anyway: a screen is
+      // only safe if it renders the public state and ignores everything else.
+      const priv = table.wire('sendTo').slice(-1)[0];
+      if (priv) screen.deliver(priv.payload);
+
       const last = table.wire('broadcast').slice(-1)[0];
       if (last) {
         screen.deliver(last.payload);

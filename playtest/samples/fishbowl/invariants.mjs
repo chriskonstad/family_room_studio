@@ -50,6 +50,28 @@ export default function fishbowlInvariants({ table, players, done, result }) {
       }
     }
   }
+  // PRIVACY, checked on the wire rather than trusted.
+  //
+  // The phrase being acted out is the one secret in this game: it goes to the
+  // giver's phone with `sendTo` and nowhere else. The shared screen is fed the
+  // broadcast stream, so the ONE way a phrase could reach a TV is the host
+  // putting it in a broadcast — which is exactly what this looks for. It is
+  // checked here rather than in the screen harness because it is true whether or
+  // not anybody has a screen: a broadcast phrase is visible on every phone too.
+  const priv = table._fbPrivate || (table._fbPrivate = { phrases: new Set(), seen: 0 });
+  for (const e of table.wire('sendTo')) {
+    if (e.payload && typeof e.payload.phrase === 'string') priv.phrases.add(e.payload.phrase);
+  }
+  const broadcasts = table.wire('broadcast');
+  for (; priv.seen < broadcasts.length; priv.seen++) {
+    const text = JSON.stringify(broadcasts[priv.seen].payload);
+    for (const phrase of priv.phrases) {
+      if (phrase.length > 2 && text.includes(phrase)) {
+        return `the phrase "${phrase}" was broadcast to the whole table`;
+      }
+    }
+  }
+
   if (done && result && Array.isArray(result.standings) && result.standings.length) {
     const top = Math.max(...result.standings.map(r => r.score));
     const winner = result.standings.find(r => r.teamId === result.winnerId);
