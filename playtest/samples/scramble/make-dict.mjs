@@ -7,19 +7,33 @@
  *   node make-dict.mjs            # rewrite dict.js
  *   node make-dict.mjs --stats    # size and coverage, write nothing
  *
- * Source: /usr/share/dict/words (Webster's 1913, shipped with macOS and most
- * BSD/Linux boxes). It is big and permissive, which is the RIGHT direction for a
- * party game — a weird word slipping through is a funny story, a real word being
- * rejected while everyone watches on the TV is a bad night.
+ * TWO SOURCES, UNIONED. Being big and permissive is the RIGHT direction for a
+ * party game: a weird word slipping through is a funny story, a real word being
+ * refused while the whole table watches is a bad night.
  *
- * Webster's has no inflections at all: `cat` is in it, `cats` is not, and neither
- * are `played`, `playing` or `runs`. Refusing those would be unplayable, so this
- * generates them with ordinary English morphology. That direction over-generates
- * (`beauted` is in here somewhere) — again, the forgiving direction.
+ *   1. /usr/share/dict/words — Webster's 1913, the only word list at a known
+ *      path on a Mac. Enormous and deeply strange. It has no inflections at all
+ *      (`cat` yes, `cats` no, nor `played`, `playing`, `runs`), so this generates
+ *      those with ordinary English morphology. That over-generates — `beauted` is
+ *      in here somewhere — which is the forgiving direction.
+ *
+ *   2. The Mac's own spelling dictionary, via harvest-system-words.swift. This is
+ *      the one that knows `began`, `epiphany`, `cauldron`, `cilantro`, `funniest`
+ *      and `hashtags`. Webster's knows none of them, and neither did the first
+ *      version of this file: measured against the system list it was refusing
+ *      4,490 words a Mac considers perfectly ordinary. `BEGAN` being rejected in
+ *      front of everyone is exactly the failure this game cannot afford.
+ *
+ * The union is not pruned against the spell checker. It would tidy up the
+ * generated junk, and it would also throw away real-but-obscure words that
+ * someone will one day find on a grid — and a false refusal costs far more here
+ * than an odd word nobody will ever type.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = '/usr/share/dict/words';
@@ -88,6 +102,32 @@ function forms(w) {
   return out;
 }
 
+/* The system harvest takes a couple of minutes, so it is cached between runs.
+ * `--refresh` throws the cache away; a machine with no Swift or no spell checker
+ * still builds, just without the modern half, and says so. */
+function systemWords() {
+  const cacheDir = join(tmpdir(), 'scramble-dict');
+  const cache = join(cacheDir, 'system-words.txt');
+  if (!process.argv.includes('--refresh') && existsSync(cache)) {
+    const words = readFileSync(cache, 'utf8').trim().split('\n').filter(Boolean);
+    console.log(`  system dictionary: ${words.length} words (cached — --refresh to redo)`);
+    return words;
+  }
+  mkdirSync(cacheDir, { recursive: true });
+  const bin = join(cacheDir, 'harvest');
+  try {
+    console.log('  asking the system spelling dictionary (about two minutes)…');
+    execFileSync('swiftc', ['-O', join(HERE, 'harvest-system-words.swift'), '-o', bin],
+                 { stdio: ['ignore', 'ignore', 'inherit'] });
+    const out = execFileSync(bin, { stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 64 << 20 });
+    writeFileSync(cache, out);
+    return out.toString().trim().split('\n').filter(Boolean);
+  } catch (e) {
+    console.log('  no system dictionary on this machine — Webster\'s only.');
+    return [];
+  }
+}
+
 if (!existsSync(SOURCE)) {
   console.error(`No ${SOURCE} on this machine. dict.js is committed, so you only need\n` +
                 `this script to CHANGE the word list — install a words file first.`);
@@ -112,6 +152,14 @@ for (const line of raw) {
 }
 for (const w of MODERN) { bases.push(w); keep(w); }
 for (const w of bases) for (const f of forms(w)) keep(f);
+
+/* The system's words go in whole. They are already inflected (`funniest`,
+ * `hashtags`, `began`) so they are NOT run through forms() — it would only
+ * manufacture `beganed` and friends. */
+const fromSystem = systemWords();
+let added = 0;
+for (const w of fromSystem) if (!words.has(w)) { keep(w); added++; }
+if (fromSystem.length) console.log(`  system dictionary added ${added} words Webster's had never heard of`);
 
 const sorted = [...words].sort();
 const byLen = {};

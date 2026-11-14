@@ -353,6 +353,9 @@ function createGame(Table, root) {
   let path = [];
   let tracing = false;
   let submitted = 0;
+  let geom = null;        // the board's size, measured once per trace
+  let last = null;        // the finger's previous position, so no tile is jumped over
+  let settling = null;    // a word that has been sent and is waiting for a verdict
 
   const rowOf = (i) => (i / 4) | 0;
   const colOf = (i) => i % 4;
@@ -360,13 +363,67 @@ function createGame(Table, root) {
     return a !== b && Math.abs(rowOf(a) - rowOf(b)) <= 1 && Math.abs(colOf(a) - colOf(b)) <= 1;
   }
 
-  function cellIndexAt(x, y) {
-    if (!document.elementFromPoint) return -1;
-    const el = document.elementFromPoint(x, y);
-    const cell = el && el.closest ? el.closest('.cell') : null;
-    if (!cell) return -1;
-    const i = parseInt(cell.getAttribute('data-i'), 10);
-    return isNaN(i) ? -1 : i;
+  function measureBoard() {
+    const board = root.querySelector('#board');
+    if (!board || !board.getBoundingClientRect) return null;
+    const r = board.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return { x: r.left, y: r.top, w: r.width / 4, h: r.height / 4 };
+  }
+
+  /**
+   * Which tile is under the finger.
+   *
+   * `near` is what makes a diagonal work. Hit-testing the tile RECTANGLE means a
+   * finger cutting toward the tile diagonally below clips the corner of one it
+   * never meant to touch — and that tile IS adjacent, so the letter goes into the
+   * word. Measured on a real grid, a bow of 5% of a tile's width was enough to do
+   * it, which is every human finger ever.
+   *
+   * So a tile only answers near its MIDDLE. The corner where four tiles meet
+   * belongs to none of them, a sweep passes through cleanly, and only a
+   * deliberate arrival registers. Same measurement, same grid: clean through 25%.
+   *
+   * The first and last touches are the exception — they take the whole square,
+   * gaps included. Neither can insert a letter into the middle of a word: one has
+   * no path yet and the other is the end of it. That asymmetry is what lets the
+   * middle be strict. Measured on a real grid: a sweep survives a 30% bow, and
+   * you can let go 40% off the middle of the last tile and still get it.
+   */
+  function cellUnder(x, y, near) {
+    if (!geom) return -1;
+    const col = Math.floor((x - geom.x) / geom.w);
+    const row = Math.floor((y - geom.y) / geom.h);
+    if (col < 0 || col > 3 || row < 0 || row > 3) return -1;
+    if (!near) return row * 4 + col;
+    const dx = x - (geom.x + (col + 0.5) * geom.w);
+    const dy = y - (geom.y + (row + 0.5) * geom.h);
+    const r = 0.26 * Math.min(geom.w, geom.h);
+    return (dx * dx + dy * dy) <= r * r ? row * 4 + col : -1;
+  }
+
+  /**
+   * Follow the finger from where it was to where it is.
+   *
+   * A tighter middle is only safe if nothing can jump over it. Pointer events
+   * arrive every frame at best, and a quick flick across a phone moves further
+   * between two of them than a tile is wide — so testing only the points the OS
+   * hands over would silently drop letters out of fast words. Walking the line
+   * between them in sub-tile steps makes the small target unmissable, which is
+   * what lets the target be small.
+   */
+  function traceTo(x, y) {
+    const step = Math.min(geom.w, geom.h) * 0.3;
+    if (last) {
+      const dx = x - last.x, dy = y - last.y;
+      const span = Math.sqrt(dx * dx + dy * dy);
+      const hops = Math.min(64, Math.ceil(span / step));
+      for (let k = 1; k < hops; k++) {
+        extendTo(cellUnder(last.x + dx * k / hops, last.y + dy * k / hops, true));
+      }
+    }
+    extendTo(cellUnder(x, y, true));
+    last = { x: x, y: y };
   }
 
   function extendTo(i) {
@@ -384,18 +441,24 @@ function createGame(Table, root) {
     return indices.map(i => grid[i] || '').join('');
   }
 
+  /* The word you are drawing IS the feedback. It sits above the grid while you
+   * trace, and when you let go it turns green or red where it stands — no second
+   * line of status text to read, nothing that says "banked". */
+  function showWord(text, state) {
+    const readout = root.querySelector('#forming');
+    if (!readout) return;
+    readout.textContent = text || '—';
+    readout.className = 'forming' + (state ? ' ' + state : '');
+    const why = root.querySelector('#why');
+    if (why) why.textContent = '';
+  }
+
   function paintPath() {
     const cells = root.querySelectorAll('.cell');
     for (const cell of cells) {
       const i = parseInt(cell.getAttribute('data-i'), 10);
       const at = path.indexOf(i);
       cell.className = 'cell' + (at === -1 ? '' : (at === path.length - 1 ? ' on head' : ' on'));
-    }
-    const readout = root.querySelector('#forming');
-    if (readout) {
-      const w = wordOf(path).toUpperCase();
-      readout.textContent = w || '—';
-      readout.className = 'forming' + (path.length >= R.MIN ? ' ok' : '');
     }
     const line = root.querySelector('#trailline');
     if (line) {
@@ -404,15 +467,21 @@ function createGame(Table, root) {
       line.setAttribute('points', path.map(i =>
         ((colOf(i) + 0.5) * 25).toFixed(1) + ',' + ((rowOf(i) + 0.5) * 25).toFixed(1)).join(' '));
     }
+    if (path.length) showWord(wordOf(path).toUpperCase(), path.length >= R.MIN ? 'ready' : null);
   }
 
   function endTrace() {
     if (!tracing) return;
     tracing = false;
+    // Whatever square you were over when you let go is the letter you meant.
+    if (last) extendTo(cellUnder(last.x, last.y, false));
+    last = null;
     const word = wordOf(path);
     path = [];
     paintPath();
-    if (word.length < R.MIN) return;
+    if (word.length < R.MIN) { showWord('—', null); return; }
+    settling = word.toUpperCase();
+    showWord(settling, 'sent');
     send({ t: 'word', w: word, n: ++submitted });
   }
 
@@ -420,30 +489,37 @@ function createGame(Table, root) {
     const board = root.querySelector('#board');
     if (!board || !board.addEventListener) return;
     const point = (e) => (e && e.touches && e.touches[0]) || e;
-    const at = (e) => {
+    const at = (e, near) => {
       const p = point(e);
-      return (p && typeof p.clientX === 'number') ? cellIndexAt(p.clientX, p.clientY) : -1;
+      return (p && typeof p.clientX === 'number') ? cellUnder(p.clientX, p.clientY, near) : -1;
+    };
+    const moveTo = (e) => {
+      const p = point(e);
+      if (p && typeof p.clientX === 'number') traceTo(p.clientX, p.clientY);
     };
     board.addEventListener('pointerdown', (e) => {
-      const i = at(e);
+      geom = measureBoard();
+      const i = at(e, false);
       if (i < 0) return;
       if (e.preventDefault) e.preventDefault();
       if (board.setPointerCapture && e.pointerId != null) {
         try { board.setPointerCapture(e.pointerId); } catch (err) {}
       }
       tracing = true;
+      settling = null;
       path = [i];
+      const p0 = point(e);
+      last = { x: p0.clientX, y: p0.clientY };
       feel('tick', { mine: true });
       paintPath();
     });
     board.addEventListener('pointermove', (e) => {
       if (!tracing) return;
       if (e.preventDefault) e.preventDefault();
-      extendTo(at(e));
+      moveTo(e);
     });
     board.addEventListener('pointerup', endTrace);
     board.addEventListener('pointercancel', endTrace);
-    board.addEventListener('pointerleave', (e) => { if (tracing && at(e) < 0) { /* keep tracing */ } });
   }
 
   /* ------------------------------------------------------------ rendering --- */
@@ -499,8 +575,8 @@ function createGame(Table, root) {
             '<span class="time" id="time"></span>' +
           '</div>' +
           '<div class="forming" id="forming">—</div>' +
+          '<div class="why" id="why"></div>' +
           gridHTML(v.grid) +
-          '<div class="ack" id="ack">&nbsp;</div>' +
           '<div class="chips" id="chips"></div>' +
           '<div class="foot">' +
             '<span id="tally">0 words</span>' +
@@ -526,7 +602,7 @@ function createGame(Table, root) {
           '<div class="scored" id="scored"></div>' +
           '<div class="chips" id="chips"></div>' +
           '<div class="foot">' +
-            '<span class="hint">Scores are on the screen.</span>' +
+            '<span class="hint">Look up.</span>' +
             '<button id="next" type="button">Skip</button>' +
           '</div>' +
         '</div>';
@@ -567,19 +643,22 @@ function createGame(Table, root) {
 
     const words = privy.words || [];
 
-    // During the round a chip is just a word — no number, because a number is a
-    // score. During the reveal each one lights up as it is read out.
+    /* Your words, one per line. There is no score on this phone anywhere — not
+     * per word, not per round, not a running total. The whole point is that
+     * nobody can work out where they stand until the screen says so. During the
+     * reveal a line is marked as it is read out, which says WHICH kind of word it
+     * was without saying what it was worth. */
     const shownAt = v.phase === 'tally' ? v.revealed : -1;
     if (root.querySelector('#chips') && (words.length !== lastCount || shownAt !== lastRevealed)) {
       lastCount = words.length;
       lastRevealed = shownAt;
-      const value = {};
-      if (v.rows) v.rows.forEach(row => { value[row.w] = row; });
+      const row = {};
+      if (v.rows) v.rows.forEach(r => { row[r.w] = r; });
       root.querySelector('#chips').innerHTML = words.slice().reverse().map(w => {
-        const row = value[w];
-        if (!row) return '<span class="chip">' + esc(w.toUpperCase()) + '</span>';
-        return '<span class="chip ' + (row.dup ? 'shared' : 'uniq') + '">' +
-               esc(w.toUpperCase()) + '<i>+' + row.value + '</i></span>';
+        const r = row[w];
+        const tag = !r ? '' : (r.dup ? '<i>shared</i>' : '<i class="only">only you</i>');
+        return '<div class="chip' + (r ? (r.dup ? ' shared' : ' uniq') : '') + '">' +
+               '<span>' + esc(w.toUpperCase()) + '</span>' + tag + '</div>';
       }).join('');
     }
 
@@ -593,26 +672,24 @@ function createGame(Table, root) {
     if (doneBtn) doneBtn.disabled = !!v.done[MY];
 
     const scored = root.querySelector('#scored');
-    if (scored && v.points) {
-      const got = v.points[MY] || 0;
+    if (scored) {
+      const reading = v.revealed < v.totalRows;
       scored.innerHTML =
-        '<div class="rscore">+' + got + '</div>' +
-        '<div class="hint">' + (v.revealed < v.totalRows
-          ? 'counting… ' + v.revealed + ' of ' + v.totalRows
-          : 'that’s your round') + '</div>';
+        '<div class="big">' + (reading ? 'Reading the round out…' : 'Round scored') + '</div>' +
+        '<div class="hint">' + (v.totalRows
+          ? (reading ? v.revealed + ' of ' + v.totalRows : 'the screen has the scores')
+          : 'nobody found a thing') + '</div>';
     }
 
-    const ack = root.querySelector('#ack');
-    if (ack && privy.ack) {
+    if (privy.ack) {
       const a = privy.ack;
-      if (a.why) {
-        ack.className = 'ack bad';
-        ack.textContent = WHY[a.why] || 'no good';
-        feel('blocked', { el: ack, mine: true });
-      } else {
-        ack.className = 'ack good';
-        ack.textContent = 'banked';
-        feel('gain', { el: ack, mine: true });
+      const readout = root.querySelector('#forming');
+      const why = root.querySelector('#why');
+      if (readout && settling) {
+        readout.textContent = settling;
+        readout.className = 'forming ' + (a.why ? 'bad' : 'good');
+        if (why) why.textContent = a.why ? (WHY[a.why] || '') : '';
+        feel(a.why ? 'blocked' : 'gain', { el: readout, mine: true });
       }
       privy = { words: privy.words, ack: null };    // fired once, not on every render
     }

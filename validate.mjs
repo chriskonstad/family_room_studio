@@ -263,9 +263,11 @@ export function validateZip(zipPath) {
 /* A bundle's browser code is always a plain script — games are injected into a
  * WKWebView and cannot use imports — so `.mjs` in a sample directory is always
  * authoring-side: the fuzzer's bot, its invariants, SCRAMBLE's dictionary
- * builder. The Studio must not fetch those, and listing them by name meant every
- * new one was a silent 404 waiting to happen. */
-const nodeOnly = (f) => f.endsWith('.mjs');
+ * builder. `.swift` likewise (SCRAMBLE reads the Mac's spelling dictionary to
+ * build that list). The Studio must not fetch either, and listing them by name
+ * meant every new one was a silent 404 waiting to happen. */
+const AUTHORING_ONLY = ['.mjs', '.swift'];
+const nodeOnly = (f) => AUTHORING_ONLY.some(ext => f.endsWith(ext));
 
 export function buildSampleIndex() {
   const samples = join(REPO, 'playtest/samples');

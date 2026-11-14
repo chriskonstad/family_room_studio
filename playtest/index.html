@@ -313,9 +313,15 @@ async function loadSample(id){
   const list = SAMPLES.find(s=>s.id===id);
   if(!list) return;
   state.dirHandle = null;
+  state.sampleId = id;          // so Reload can re-read a built-in game too
   const vfs = {};
   for(const rel of list.files){
-    const res = await fetch(`samples/${id}/${rel}`);
+    /* no-store, because Reload has to actually reload. A plain fetch is served
+     * from the HTTP cache, so editing a game and pressing Reload could quietly
+     * re-run the version from ten minutes ago — and you would be looking at a
+     * change that is not there, which is worse than no Reload button at all.
+     * (This cost a real afternoon: a measurement run that was reading stale code.) */
+    const res = await fetch(`samples/${id}/${rel}`, { cache: 'no-store' });
     if(!res.ok) throw new Error(`sample fetch failed: ${rel} (${res.status})`);
     vfs[rel] = new Uint8Array(await res.arrayBuffer());
   }
@@ -885,7 +891,11 @@ function onBundleReady(){
   $('#startBtn').disabled = false;
   $('#resetBtn').disabled = false;
   $('#exportBtn').disabled = false;
-  $('#reloadBtn').disabled = !state.dirHandle && !lastFileList;
+  /* Reload used to be dead for the built-in games, which are exactly the ones
+   * being edited when someone is working in this repo: you changed a sample,
+   * pressed Reload, nothing happened, and the stale code looked like your change
+   * not working. */
+  $('#reloadBtn').disabled = !state.dirHandle && !lastFileList && !state.sampleId;
   empty.style.display = state.started ? 'none' : 'flex';
   if(!state.started){ stage.innerHTML=''; stage.appendChild(empty); empty.style.display='flex'; }
 }
@@ -909,6 +919,7 @@ $('#reloadBtn').onclick = async ()=>{
   try{
     if(state.dirHandle) await loadFromDirHandle(state.dirHandle);
     else if(lastFileList) await loadFromFileList(lastFileList);
+    else if(state.sampleId) await loadSample(state.sampleId);
     if(state.started) startSession();   // re-boot phones with fresh code
   }catch(e){ fail(e); }
 };
