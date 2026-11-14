@@ -1,12 +1,12 @@
 {
   "id": "com.chris.scramble",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "name": "SCRAMBLE",
   "entry": "index.html",
   "iconEmoji": "🔡",
-  "minPlayers": 2,
+  "minPlayers": 1,
   "maxPlayers": 8,
   "author": "Chris",
-  "description": "Sixteen letters on the TV, ninety seconds, everyone hunting at once. The catch: any word two of you found is worth nothing to either of you, so the points are in seeing what nobody else does.",
+  "description": "Sixteen letters on the screen, ninety seconds, everyone tracing words at once. Every word pays — and a word nobody else found pays double, so the game is in seeing what the rest of the table walks past. Scores stay secret until the round is read out, shortest shared word to longest lone one. Plays solo.",
   "screen": "required"
 }

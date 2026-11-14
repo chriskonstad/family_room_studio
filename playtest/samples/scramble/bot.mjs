@@ -28,7 +28,16 @@ const WORDS_PER_ROUND = 9;
 export default function scrambleBot({ table, playerId, rng, send }) {
   const v = table.view(playerId);
   const s = v && v.s;
-  if (!s || s.phase !== 'round') return false;     // everything else is a button
+  if (!s) return false;
+
+  /* Sit through the reveal rather than skipping it. "Skip" is a legal move, so
+   * the generic bot would press it on the first frame of every tally and the
+   * word-by-word scoring — a screen's whole reason for existing in this game —
+   * would never be drawn in a headless run. Hand back control once the last word
+   * has been read out. */
+  if (s.phase === 'tally') return s.revealed < s.totalRows;
+
+  if (s.phase !== 'round') return false;           // everything else is a button
 
   const mem = table._scramble || (table._scramble = {});
   const key = s.round + ':' + (s.grid || []).join('');

@@ -29,9 +29,13 @@ var SCRAMBLE_RULES = (function () {
   /* Classic Boggle scoring. The 8-letter cliff is what makes the long shot worth
    * burning the clock on. */
   var POINTS = { 3: 1, 4: 1, 5: 2, 6: 3, 7: 5, 8: 11 };
-  var GOLD = 5;                      // for the longest word nobody else found
+  var UNIQUE = 2;                    // a word nobody else found is worth double
 
+  /** What a word is worth on its own, before anyone else's sheet is looked at. */
   function score(word) { return POINTS[word.length] || 0; }
+
+  /** What a finder actually collects for it. */
+  function value(word, shared) { return score(word) * (shared ? 1 : UNIQUE); }
 
   /** Roll a grid. `r` is an FR.rng — the whole game replays from its seed. */
   function roll(r) {
@@ -178,11 +182,20 @@ var SCRAMBLE_RULES = (function () {
   }
 
   /**
-   * Score a round. The party rule: a word two people found is worth nothing to
-   * either of them, so the points are in seeing what nobody else sees.
+   * Score a round.
+   *
+   * Every word pays its finder. A word NOBODY else found pays double, which is
+   * where the game is: the safe four-letter word everybody sees is worth having,
+   * and the one only you saw is worth twice as much.
+   *
+   * The order is the running order of the reveal, and it is built to climb:
+   * short shared words first (everyone scores, nobody moves), then long shared
+   * ones, then the uniques from short to long — so the last word read out is the
+   * longest thing one person saw alone, and the biggest single jump on the board
+   * is the last one. Sorting by score would give that away in the first second.
    *
    * @param {Object} found  playerId -> [word]
-   * @returns {Object} { rows, points, golden }
+   * @returns {Object} { rows, points }
    */
   function tally(found) {
     var by = {}, ids = Object.keys(found).sort();
@@ -195,37 +208,28 @@ var SCRAMBLE_RULES = (function () {
 
     var rows = Object.keys(by).sort().map(function (w) {
       var who = by[w];
-      return { w: w, pts: score(w), by: who, dup: who.length > 1 };
+      var shared = who.length > 1;
+      return { w: w, pts: score(w), value: value(w, shared), by: who, dup: shared };
     });
     rows.sort(function (a, b) {
-      return (a.dup - b.dup) || (b.pts - a.pts) || (a.w < b.w ? -1 : a.w > b.w ? 1 : 0);
+      if (a.dup !== b.dup) return a.dup ? -1 : 1;        // shared first
+      return a.w.length - b.w.length ||                  // then short to long
+             (a.w < b.w ? -1 : a.w > b.w ? 1 : 0);
     });
 
     var points = {};
     for (i = 0; i < ids.length; i++) points[ids[i]] = 0;
-    var longest = 0;
     for (i = 0; i < rows.length; i++) {
-      if (rows[i].dup) continue;
-      points[rows[i].by[0]] += rows[i].pts;
-      if (rows[i].w.length > longest) longest = rows[i].w.length;
-    }
-
-    /* The GOLDEN WORD: the longest word nobody else found. Ties all collect —
-     * two people doing something that good on the same grid both earned it. */
-    var golden = [];
-    for (i = 0; i < rows.length; i++) {
-      if (!rows[i].dup && rows[i].w.length === longest && longest >= MIN) {
-        rows[i].gold = true;
-        points[rows[i].by[0]] += GOLD;
-        if (golden.indexOf(rows[i].by[0]) === -1) golden.push(rows[i].by[0]);
+      for (var k = 0; k < rows[i].by.length; k++) {
+        points[rows[i].by[k]] += rows[i].value;
       }
     }
-    return { rows: rows, points: points, golden: golden };
+    return { rows: rows, points: points };
   }
 
   return {
-    DICE: DICE, SIZE: SIZE, MIN: MIN, MAX: MAX, GOLD: GOLD, POINTS: POINTS,
-    roll: roll, score: score, placeable: placeable, known: known,
+    DICE: DICE, SIZE: SIZE, MIN: MIN, MAX: MAX, UNIQUE: UNIQUE, POINTS: POINTS,
+    roll: roll, score: score, value: value, placeable: placeable, known: known,
     check: check, solve: solve, tally: tally
   };
 })();

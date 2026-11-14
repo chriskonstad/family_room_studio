@@ -30,28 +30,30 @@
   .hint{color:var(--muted); font-size:13.5px; line-height:1.55}
   .waiting{color:var(--muted); font-size:15px; text-align:center; margin:auto}
 
-  /* The input sits high on purpose: the keyboard owns the bottom half of a phone,
-     and a word race where you cannot see what you typed is no race at all. */
-  input[type=text]{width:100%; font:inherit; font-size:21px; font-weight:800;
-    letter-spacing:.08em; text-transform:uppercase;
-    background:#1d1233; color:var(--text); border:2px solid var(--line);
-    border-radius:14px; padding:13px 14px}
-  input[type=text]:focus{outline:none; border-color:var(--accent)}
-  input[type=text]::placeholder{font-size:15px; font-weight:600; letter-spacing:0; text-transform:none; color:#6c5b90}
-  input:disabled{opacity:.4}
+  /* The letters, and a finger on them. Big targets: a 4x4 grid across a phone
+     gives ~80pt cells, which is twice the 44pt floor and about right for dragging
+     at speed without hitting the wrong one. */
+  .forming{min-height:34px; font-size:27px; font-weight:900; letter-spacing:.14em;
+    text-align:center; color:var(--muted)}
+  .forming.ok{color:var(--accent)}
 
-  .ack{min-height:22px; font-size:15px; font-weight:800; letter-spacing:.04em}
+  .boardwrap{position:relative; width:100%; max-width:390px; margin:2px auto 6px; aspect-ratio:1}
+  .board{position:absolute; inset:0; display:grid; grid-template-columns:repeat(4,1fr);
+    gap:7px; touch-action:none; -webkit-user-select:none; user-select:none}
+  .cell{background:#f3e9d2; color:#2a1b45; border-radius:14px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:30px; font-weight:900; letter-spacing:.02em;
+    transition:transform .08s ease, background .08s ease}
+  .cell.on{background:var(--accent); transform:scale(.94)}
+  .cell.on.head{background:#fff0c2; transform:scale(1.02)}
+  /* The trail sits over the tiles and must never eat a touch. */
+  .trail{position:absolute; inset:0; pointer-events:none}
+  .trail polyline{fill:none; stroke:rgba(255,209,102,.85); stroke-width:4;
+    stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke}
+
+  .ack{min-height:20px; font-size:14px; font-weight:800; letter-spacing:.04em; text-align:center}
   .ack.good{color:var(--good)}
   .ack.bad{color:var(--bad)}
-
-  .chips{flex:1; min-height:0; overflow-y:auto; display:flex; flex-wrap:wrap;
-    align-content:flex-start; gap:6px; padding:2px 0}
-  .chip{background:var(--panel); border:1px solid var(--line); border-radius:999px;
-    padding:6px 10px; font-size:14px; font-weight:800; letter-spacing:.06em;
-    display:inline-flex; align-items:center; gap:6px}
-  .chip i{font-style:normal; font-size:11px; color:var(--accent); font-weight:900}
-  .chip.dead{opacity:.45; text-decoration:line-through}
-  .chip.dead i{color:var(--muted)}
 
   .foot{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted)}
   button{font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--panel);

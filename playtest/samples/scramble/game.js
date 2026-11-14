@@ -1,25 +1,32 @@
-/* SCRAMBLE — the letters live on the TV.
+/* SCRAMBLE — sixteen letters, everyone at once.
  *
- * Sixteen Boggle dice are rolled onto the shared screen and everyone hunts words
- * at the same time, typing them on their own phone. The party rule: a word that
- * TWO of you found is worth nothing to either of you. So the points are not in
- * finding words, they are in finding the ones nobody else sees — and the longest
- * word nobody else found takes the GOLDEN WORD bonus on top.
+ * Boggle dice are rolled onto the shared screen and onto every phone, and for
+ * ninety seconds everybody traces words out of the grid with a finger. Every
+ * word you find pays. A word NOBODY else found pays DOUBLE — which is the whole
+ * game: the safe four-letter word everyone sees is worth having, and the one
+ * only you saw is worth twice as much.
  *
- * This game declares `"screen": "required"`. That is not decoration: the grid is
- * on the screen and nowhere else, the way a Boggle box sits in the middle of a
- * table. A phone is a pencil here, and the shell will not let the round start
- * without a display attached.
+ * Nobody is told their score while a round is running. The only thing the table
+ * can see is how many words each person has banked, which is exactly enough to
+ * panic about and not enough to play off. The scores arrive afterwards, one word
+ * at a time, on the screen: short shared words first, then long shared ones, then
+ * the uniques from short to long — so the last word read out is the longest thing
+ * one person saw alone, and the biggest jump on the board is the last one.
  *
- * Host authoritative. The rules themselves — the dice, placement, the word list,
- * scoring — live in rules.js, which the fuzzer's bots load too, so the bot cannot
- * be playing a different game from the one that ships.
+ * `"screen": "required"`. The round is scored THERE, in front of everyone, and
+ * the running order is the point of it — a phone cannot be the place where a
+ * table watches a scoreboard move. Plays solo too; with one person every word is
+ * unique by definition, so it becomes a race against your own best round.
+ *
+ * Host authoritative. The rules — dice, placement, the word list, scoring — are
+ * in rules.js, which the fuzzer's bots load too, so the bot cannot be playing a
+ * different game from the one that ships.
  *
  * PRIVACY. Your words are yours until the round ends: the host keeps them and
- * sends each player only their OWN list with `sendTo`. The shared screen is fed
- * the broadcast stream and never a `sendTo`, so it cannot show your words even by
- * accident — it is not given them. At the tally they all become public at once,
- * which is the moment the whole game is built around.
+ * sends each player only their OWN list. The shared screen is fed the broadcast
+ * stream and never a `sendTo`, so it cannot show your words even by accident —
+ * it is not given them. Nor are the unrevealed ones: during the reveal the host
+ * broadcasts only the words it has already read out.
  */
 
 function createGame(Table, root) {
@@ -29,7 +36,8 @@ function createGame(Table, root) {
   const ROUNDS = 3;
   const READY_SECONDS = 3;
   const PLAY_SECONDS = 90;
-  const TALLY_SECONDS = 16;
+  const REVEAL_MS = 420;             // one word at a time, fast enough to stay a reveal
+  const AFTER_REVEAL_SECONDS = 6;    // a beat to read the final board before the next grid
   /* A grid with nothing in it is a dead round nobody can do anything about, so a
    * dud is re-rolled rather than handed over. Every roll comes off the same seeded
    * stream, so the re-roll replays exactly like everything else. */
@@ -38,18 +46,17 @@ function createGame(Table, root) {
 
   const WHY = {
     letters: 'letters only',
-    length:  'words are 3–8 letters',
-    grid:    'not on the screen',
+    length:  'three to eight letters',
+    grid:    'that path isn’t on the grid',
     word:    'not in the word list',
     already: 'you already found that'
   };
 
   let view = null;                       // the public state, as the whole table sees it
   let privy = { words: [], ack: null };  // my own side of it
-  let submitted = {};                    // n -> what I typed, so the host never has to echo it
-  let nextN = 1;
   let lastPhase = null;
-  let lastCount = 0;
+  let lastCount = -1;
+  let lastRevealed = -1;
   let lastSecond = null;
 
   function feel(event, opts) {
@@ -61,8 +68,9 @@ function createGame(Table, root) {
   const rng = FR.rng(Table.seed);
   const timer = FR.timers();
   let G = null;
-  let found = {};        // playerId -> [word]  — HOST ONLY, private until the tally
-  let solution = [];     // HOST ONLY — every word on the grid, so we can say how many
+  let found = {};        // playerId -> [word]  — HOST ONLY, private until the reveal
+  let pending = [];      // HOST ONLY — the scored rows, handed out one at a time
+  let solution = [];     // HOST ONLY — every word on the grid, for the "were there" count
   let table = null;
   let ended = false;
 
@@ -72,7 +80,7 @@ function createGame(Table, root) {
       seats: players.map(p => p.id),
       names: {}, emojis: {}, totals: {}, counts: {}, done: {},
       grid: [], possible: 0, secondsLeft: READY_SECONDS,
-      rows: null, points: null, golden: [], roundFound: 0
+      rows: null, points: null, revealed: 0, totalRows: 0
     };
     players.forEach(p => seatPlayer(p));
     rollGrid();
@@ -122,13 +130,13 @@ function createGame(Table, root) {
     const list = found[id] || (found[id] = []);
     let why = R.check(G.grid, typed);
     if (!why && list.indexOf(typed) !== -1) why = 'already';
-    let pts = 0;
     if (!why) {
       list.push(typed);
-      pts = R.score(typed);
       G.counts[id] = list.length;
     }
-    sendPrivate(id, { n: msg && msg.n, why: why || null, pts });
+    // No points in here. Nobody learns their score mid-round, including from
+    // their own phone adding numbers up quietly.
+    sendPrivate(id, { n: msg && msg.n, why: why || null });
   }
 
   function sendPrivate(id, ack) {
@@ -146,26 +154,44 @@ function createGame(Table, root) {
     G.secondsLeft = PLAY_SECONDS;
   }
 
+  /* The reveal. Points land on the board one word at a time rather than all at
+   * once, because watching it climb IS the scoring. The host drives it so every
+   * screen and every phone is on the same word. */
   function endRound() {
     const result = R.tally(found);
-    G.rows = result.rows;
-    G.points = result.points;
-    G.golden = result.golden;
-    G.roundFound = result.rows.length;
-    G.seats.forEach(id => {
-      G.totals[id] = (G.totals[id] || 0) + (result.points[id] || 0);
-    });
-    // Everything is public now — including each player's own list, which is the
-    // reveal. Send it once more so a phone can strike through what was cancelled.
-    G.seats.forEach(id => sendPrivate(id, null));
+    pending = result.rows;
+    G.revealed = 0;
+    G.totalRows = pending.length;
+    G.points = {};
+    G.seats.forEach(id => { G.points[id] = 0; });
     G.phase = 'tally';
-    G.secondsLeft = TALLY_SECONDS;
+    G.secondsLeft = AFTER_REVEAL_SECONDS;
+    // Everything is public now — including each player's own list, which is the
+    // reveal. Send it once more so a phone can mark off what it had.
+    G.seats.forEach(id => sendPrivate(id, null));
+    timer.every('reveal', REVEAL_MS, () => { revealNext(); syncAll(); });
   }
 
+  function revealNext() {
+    if (G.revealed >= pending.length) { timer.cancel('reveal'); return false; }
+    const row = pending[G.revealed++];
+    for (const id of row.by) {
+      if (G.points[id] == null) continue;           // somebody who has since left
+      G.points[id] += row.value;
+      G.totals[id] = (G.totals[id] || 0) + row.value;
+    }
+    if (G.revealed >= pending.length) timer.cancel('reveal');
+    return true;
+  }
+
+  /** Skip to the end of the reveal with every point still awarded. */
+  function revealAll() { while (revealNext()) { /* keep going */ } }
+
   function nextRound() {
+    revealAll();                        // never advance past unawarded points
     if (G.round + 1 >= ROUNDS) return finish();
     G.round++;
-    G.rows = null; G.points = null; G.golden = [];
+    G.rows = null; G.points = null; G.revealed = 0; G.totalRows = 0;
     rollGrid();
     G.seats.forEach(id => sendPrivate(id, null));
     G.phase = 'ready';
@@ -195,6 +221,9 @@ function createGame(Table, root) {
   function startClock() {
     timer.every('clock', 1000, () => {
       if (!G || G.phase === 'gameOver') return;
+      // While words are still being read out, the clock waits: the reveal is not
+      // on a deadline and a long round must not be cut off mid-sentence.
+      if (G.phase === 'tally' && G.revealed < G.totalRows) return;
       G.secondsLeft = Math.max(0, G.secondsLeft - 1);
       if (G.secondsLeft <= 0) {
         if (G.phase === 'ready') beginRound();
@@ -213,8 +242,8 @@ function createGame(Table, root) {
       publish: syncAll,
       intents: {
         hello: { hidden: true, run: () => {} },
-        /* Free text: playable, never enumerable. The bundle's bot.mjs supplies it,
-         * using the same rules.js the host validates with. */
+        /* A traced word: playable, never enumerable. The bundle's bot.mjs supplies
+         * it, using the same rules.js the host validates with. */
         word: {
           hidden: true, phase: 'round',
           when: (ctx) => !G.done[ctx.from],
@@ -233,19 +262,25 @@ function createGame(Table, root) {
   }
 
   function publicState() {
+    /* Scores exist only once the round is over. Hiding them in the UI would be a
+     * promise; leaving them out of the broadcast is the thing itself — there is
+     * nothing on any phone, or any screen, to read them off. */
+    const scored = G.phase === 'tally' || G.phase === 'gameOver';
     return {
       phase: G.phase, round: G.round, rounds: G.rounds,
       names: { ...G.names }, emojis: { ...G.emojis },
       seats: G.seats.slice(),
-      totals: { ...G.totals }, counts: { ...G.counts }, done: { ...G.done },
+      counts: { ...G.counts }, done: { ...G.done },
       // The grid is public — it is the thing everyone is looking at.
       grid: G.grid.slice(), possible: G.possible,
       secondsLeft: G.secondsLeft,
-      // Spoiler-free until the round is over: null during play, by construction.
-      rows: G.phase === 'tally' ? G.rows : null,
-      points: G.phase === 'tally' ? G.points : null,
-      golden: G.phase === 'tally' ? G.golden : [],
-      gold: R.GOLD
+      totals: scored ? { ...G.totals } : null,
+      // Only the words already read out. The rest are still somebody's secret.
+      rows: scored ? pending.slice(0, G.revealed) : null,
+      points: scored ? { ...G.points } : null,
+      revealed: scored ? G.revealed : 0,
+      totalRows: scored ? G.totalRows : 0,
+      unique: R.UNIQUE
     };
   }
 
@@ -275,7 +310,7 @@ function createGame(Table, root) {
     });
     Table.onPlayerLeave(id => {
       if (!G) return;
-      // Their words stay in the round — a word they found still cancels yours,
+      // Their words stay in the round — a word they found still shares yours,
       // which is the only answer that doesn't rewrite everyone else's score.
       unseatPlayer(id);
       if (!G.seats.length) return finish();
@@ -301,47 +336,118 @@ function createGame(Table, root) {
     else Table.send(msg);
   }
 
-  function trySubmit() {
-    const input = root.querySelector('#entry');
-    if (!input) return;
-    const typed = String(input.value || '').trim().toLowerCase().replace(/[^a-z]/g, '');
-    input.value = '';
-    if (!typed) return;
-    const n = nextN++;
-    submitted[n] = typed;
-    send({ t: 'word', w: typed, n });
-  }
-
-  /* The keyboard is up for almost the whole of this game, and on a phone it owns
-   * the bottom half of the window — which is where "I'm done" and your word count
-   * were: present, laid out, and completely unreachable behind it. A headless
-   * harness has no keyboard, so nothing it checks could ever have shown this; it
-   * took one tap on a real phone.
-   *
-   * The visual viewport is the part of the page a person can actually see, and it
-   * shrinks when the keyboard comes up. Sizing the body to THAT rather than to the
-   * window compresses the layout above the keyboard instead of hiding the end of
-   * it. No-ops anywhere `visualViewport` doesn't exist. */
-  function keepAboveKeyboard() {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const fit = () => {
-      document.body.style.height = vv.height + 'px';
-      window.scrollTo(0, 0);
-    };
-    vv.addEventListener('resize', fit);
-    vv.addEventListener('scroll', fit);
-    fit();
-  }
-
   function clock(seconds) {
     const s = Math.max(0, seconds | 0);
     return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
   }
 
-  /* The shell of the screen is built ONCE per phase. Everything that changes
-   * second to second is patched in place, because rebuilding the DOM under an
-   * open keyboard throws away what someone is halfway through typing. */
+  /* --------------------------------------------------------- tracing --- */
+
+  /* A finger on the letters, not a keyboard. Typing meant the keyboard covered
+   * half the game and autocorrect fought every word; tracing is how a word game
+   * on a touchscreen is supposed to feel, and it makes an illegal path
+   * impossible to even draw rather than something the host explains afterwards.
+   *
+   * The path is held here, not in the DOM, because a render must never disturb a
+   * finger that is halfway through a word. */
+  let path = [];
+  let tracing = false;
+  let submitted = 0;
+
+  const rowOf = (i) => (i / 4) | 0;
+  const colOf = (i) => i % 4;
+  function adjacent(a, b) {
+    return a !== b && Math.abs(rowOf(a) - rowOf(b)) <= 1 && Math.abs(colOf(a) - colOf(b)) <= 1;
+  }
+
+  function cellIndexAt(x, y) {
+    if (!document.elementFromPoint) return -1;
+    const el = document.elementFromPoint(x, y);
+    const cell = el && el.closest ? el.closest('.cell') : null;
+    if (!cell) return -1;
+    const i = parseInt(cell.getAttribute('data-i'), 10);
+    return isNaN(i) ? -1 : i;
+  }
+
+  function extendTo(i) {
+    if (i < 0) return;
+    if (path.length >= 2 && path[path.length - 2] === i) { path.pop(); paintPath(); return; }
+    if (path.indexOf(i) !== -1) return;
+    if (path.length && !adjacent(path[path.length - 1], i)) return;
+    path.push(i);
+    feel('tick', { mine: true });
+    paintPath();
+  }
+
+  function wordOf(indices) {
+    const grid = (view && view.grid) || [];
+    return indices.map(i => grid[i] || '').join('');
+  }
+
+  function paintPath() {
+    const cells = root.querySelectorAll('.cell');
+    for (const cell of cells) {
+      const i = parseInt(cell.getAttribute('data-i'), 10);
+      const at = path.indexOf(i);
+      cell.className = 'cell' + (at === -1 ? '' : (at === path.length - 1 ? ' on head' : ' on'));
+    }
+    const readout = root.querySelector('#forming');
+    if (readout) {
+      const w = wordOf(path).toUpperCase();
+      readout.textContent = w || '—';
+      readout.className = 'forming' + (path.length >= R.MIN ? ' ok' : '');
+    }
+    const line = root.querySelector('#trailline');
+    if (line) {
+      // Pure arithmetic in a 0–100 box: a render must not have to measure the DOM,
+      // and the grid is a fixed 4x4 square whatever size the phone is.
+      line.setAttribute('points', path.map(i =>
+        ((colOf(i) + 0.5) * 25).toFixed(1) + ',' + ((rowOf(i) + 0.5) * 25).toFixed(1)).join(' '));
+    }
+  }
+
+  function endTrace() {
+    if (!tracing) return;
+    tracing = false;
+    const word = wordOf(path);
+    path = [];
+    paintPath();
+    if (word.length < R.MIN) return;
+    send({ t: 'word', w: word, n: ++submitted });
+  }
+
+  function wireBoard() {
+    const board = root.querySelector('#board');
+    if (!board || !board.addEventListener) return;
+    const point = (e) => (e && e.touches && e.touches[0]) || e;
+    const at = (e) => {
+      const p = point(e);
+      return (p && typeof p.clientX === 'number') ? cellIndexAt(p.clientX, p.clientY) : -1;
+    };
+    board.addEventListener('pointerdown', (e) => {
+      const i = at(e);
+      if (i < 0) return;
+      if (e.preventDefault) e.preventDefault();
+      if (board.setPointerCapture && e.pointerId != null) {
+        try { board.setPointerCapture(e.pointerId); } catch (err) {}
+      }
+      tracing = true;
+      path = [i];
+      feel('tick', { mine: true });
+      paintPath();
+    });
+    board.addEventListener('pointermove', (e) => {
+      if (!tracing) return;
+      if (e.preventDefault) e.preventDefault();
+      extendTo(at(e));
+    });
+    board.addEventListener('pointerup', endTrace);
+    board.addEventListener('pointercancel', endTrace);
+    board.addEventListener('pointerleave', (e) => { if (tracing && at(e) < 0) { /* keep tracing */ } });
+  }
+
+  /* ------------------------------------------------------------ rendering --- */
+
   function render() {
     if (!view) {
       root.innerHTML = '<div class="wrap"><div class="waiting">Getting the letters…</div></div>';
@@ -351,9 +457,23 @@ function createGame(Table, root) {
     if (view.phase !== lastPhase) {
       lastPhase = view.phase;
       lastCount = -1;
+      lastRevealed = -1;
+      path = [];
+      tracing = false;
       buildPhase();
     }
     patch();
+  }
+
+  function gridHTML(grid) {
+    let out = '<div class="boardwrap"><div class="board" id="board">';
+    for (let i = 0; i < 16; i++) {
+      out += '<div class="cell" data-i="' + i + '"><span>' +
+             esc(String(grid[i] || '').toUpperCase()) + '</span></div>';
+    }
+    out += '</div><svg class="trail" viewBox="0 0 100 100" preserveAspectRatio="none">' +
+           '<polyline id="trailline" points=""/></svg></div>';
+    return out;
   }
 
   function buildPhase() {
@@ -364,8 +484,8 @@ function createGame(Table, root) {
           '<div class="brand">SCRAMBLE</div>' +
           '<div class="count" id="ready">' + v.secondsLeft + '</div>' +
           '<div class="big">Round ' + (v.round + 1) + ' of ' + v.rounds + '</div>' +
-          '<div class="hint">Look up — the letters are on the screen.<br>' +
-          'Anything two of you find is worth nothing to either of you.</div>' +
+          '<div class="hint">Drag across the letters to spell a word.<br>' +
+          'A word nobody else finds is worth double.</div>' +
         '</div>';
       return;
     }
@@ -378,11 +498,8 @@ function createGame(Table, root) {
             '<span class="sub" id="roundlbl"></span>' +
             '<span class="time" id="time"></span>' +
           '</div>' +
-          '<form id="form" autocomplete="off">' +
-            '<input id="entry" type="text" inputmode="text" enterkeyhint="go" ' +
-              'autocomplete="off" autocorrect="off" autocapitalize="characters" ' +
-              'spellcheck="false" placeholder="type a word you can see">' +
-          '</form>' +
+          '<div class="forming" id="forming">—</div>' +
+          gridHTML(v.grid) +
           '<div class="ack" id="ack">&nbsp;</div>' +
           '<div class="chips" id="chips"></div>' +
           '<div class="foot">' +
@@ -390,13 +507,11 @@ function createGame(Table, root) {
             '<button id="done" type="button">I’m done</button>' +
           '</div>' +
         '</div>';
-      const form = root.querySelector('#form');
-      form.addEventListener('submit', (e) => { e.preventDefault(); trySubmit(); });
+      wireBoard();
       root.querySelector('#done').addEventListener('click', () => {
         feel('pass', { mine: true });
         send({ t: 'done' });
       });
-      root.querySelector('#entry').focus();
       return;
     }
 
@@ -405,14 +520,14 @@ function createGame(Table, root) {
         '<div class="wrap">' +
           '<div class="hdr">' +
             '<span class="brand">SCRAMBLE</span>' +
-            '<span class="sub">Round ' + (v.round + 1) + ' scored</span>' +
+            '<span class="sub">Round ' + (v.round + 1) + '</span>' +
             '<span class="time" id="time"></span>' +
           '</div>' +
           '<div class="scored" id="scored"></div>' +
           '<div class="chips" id="chips"></div>' +
           '<div class="foot">' +
-            '<span class="hint">Cancelled words are crossed out.</span>' +
-            '<button id="next" type="button">Next</button>' +
+            '<span class="hint">Scores are on the screen.</span>' +
+            '<button id="next" type="button">Skip</button>' +
           '</div>' +
         '</div>';
       root.querySelector('#next').addEventListener('click', () => send({ t: 'next' }));
@@ -438,7 +553,8 @@ function createGame(Table, root) {
 
     const time = root.querySelector('#time');
     if (time) {
-      time.textContent = clock(v.secondsLeft);
+      const waiting = v.phase === 'tally' && v.revealed < v.totalRows;
+      time.textContent = waiting ? '…' : clock(v.secondsLeft);
       time.className = 'time' + (v.phase === 'round' && v.secondsLeft <= 10 ? ' low' : '');
       if (v.phase === 'round' && v.secondsLeft <= 10 && v.secondsLeft !== lastSecond) {
         lastSecond = v.secondsLeft;
@@ -450,14 +566,21 @@ function createGame(Table, root) {
     if (roundlbl) roundlbl.textContent = 'Round ' + (v.round + 1) + ' of ' + v.rounds;
 
     const words = privy.words || [];
-    const chips = root.querySelector('#chips');
-    if (chips && words.length !== lastCount) {
+
+    // During the round a chip is just a word — no number, because a number is a
+    // score. During the reveal each one lights up as it is read out.
+    const shownAt = v.phase === 'tally' ? v.revealed : -1;
+    if (root.querySelector('#chips') && (words.length !== lastCount || shownAt !== lastRevealed)) {
       lastCount = words.length;
-      const cancelled = {};
-      if (v.rows) v.rows.forEach(row => { if (row.dup) cancelled[row.w] = true; });
-      chips.innerHTML = words.slice().reverse().map(w =>
-        '<span class="chip' + (cancelled[w] ? ' dead' : '') + '">' + esc(w.toUpperCase()) +
-        '<i>' + R.score(w) + '</i></span>').join('');
+      lastRevealed = shownAt;
+      const value = {};
+      if (v.rows) v.rows.forEach(row => { value[row.w] = row; });
+      root.querySelector('#chips').innerHTML = words.slice().reverse().map(w => {
+        const row = value[w];
+        if (!row) return '<span class="chip">' + esc(w.toUpperCase()) + '</span>';
+        return '<span class="chip ' + (row.dup ? 'shared' : 'uniq') + '">' +
+               esc(w.toUpperCase()) + '<i>+' + row.value + '</i></span>';
+      }).join('');
     }
 
     const tallyLine = root.querySelector('#tally');
@@ -468,40 +591,32 @@ function createGame(Table, root) {
 
     const doneBtn = root.querySelector('#done');
     if (doneBtn) doneBtn.disabled = !!v.done[MY];
-    const entry = root.querySelector('#entry');
-    if (entry && v.phase === 'round') {
-      entry.disabled = !!v.done[MY];
-      if (v.done[MY]) entry.placeholder = 'you’re done — waiting for the others';
-    }
 
     const scored = root.querySelector('#scored');
     if (scored && v.points) {
       const got = v.points[MY] || 0;
-      const gold = (v.golden || []).indexOf(MY) !== -1;
       scored.innerHTML =
         '<div class="rscore">+' + got + '</div>' +
-        '<div class="hint">' + (gold ? '🏅 GOLDEN WORD — the longest nobody else had' :
-          got ? 'from the words only you found' : 'everything you found, somebody else had too') +
-        '</div>';
+        '<div class="hint">' + (v.revealed < v.totalRows
+          ? 'counting… ' + v.revealed + ' of ' + v.totalRows
+          : 'that’s your round') + '</div>';
     }
 
     const ack = root.querySelector('#ack');
     if (ack && privy.ack) {
       const a = privy.ack;
-      const word = (submitted[a.n] || '').toUpperCase();
       if (a.why) {
         ack.className = 'ack bad';
-        ack.textContent = (word ? word + ' — ' : '') + (WHY[a.why] || 'no good');
+        ack.textContent = WHY[a.why] || 'no good';
         feel('blocked', { el: ack, mine: true });
       } else {
         ack.className = 'ack good';
-        ack.textContent = word + ' +' + a.pts;
+        ack.textContent = 'banked';
         feel('gain', { el: ack, mine: true });
       }
       privy = { words: privy.words, ack: null };    // fired once, not on every render
     }
   }
 
-  keepAboveKeyboard();
   render();
 }

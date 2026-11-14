@@ -106,8 +106,9 @@ routing rather than by the author remembering. Declare it in `manifest.json`:
 ```
 
 `required` means the shell will not start the game without a display attached.
-Use it when the screen holds something the game cannot be played without —
-SCRAMBLE's letter grid is on the TV and nowhere else, so a phone is a pencil.
+Use it when something the game cannot do without happens on the screen — in
+SCRAMBLE the round is SCORED there, word by word in front of everyone, and no
+phone can be the place a table watches a scoreboard move.
 `optional` or `required` means the bundle ships a `screen.js` beside `game.js`:
 
 ```js

@@ -52,6 +52,9 @@ export default function scrambleInvariants({ table, players, done, result }) {
       if (s.phase === 'ready' && s.counts[pid]) {
         return `${pid} already has ${s.counts[pid]} words before the round started`;
       }
+      // Scores only exist between rounds; the rest of the time there is nothing
+      // published to check, which is itself asserted below.
+      if (!s.totals) continue;
       const total = s.totals[pid] || 0;
       if (total < 0) return `${pid} has ${total} points`;
       const mine = seen[pid];
@@ -61,58 +64,69 @@ export default function scrambleInvariants({ table, players, done, result }) {
       seen[pid] = total;
     }
 
-    // NO SPOILERS. The tally does not exist until the round is over, so there is
-    // nothing for a screen (or a curious player) to read early.
-    if (s.phase !== 'tally' && (s.rows || s.points)) {
-      return `the tally was published during the "${s.phase}" phase`;
+    /* NOTHING IS KNOWN UNTIL IT IS READ OUT.
+     *
+     * Three separate secrets, and all three are kept by leaving things OUT of the
+     * broadcast rather than by leaving them off a layout:
+     *   - no tally at all before the round ends;
+     *   - NO SCORES while a round is running, so no phone and no screen can show
+     *     one even if it wanted to;
+     *   - during the reveal, only the words already read out. */
+    if (s.phase !== 'tally' && s.phase !== 'gameOver') {
+      if (s.rows || s.points) return `the tally was published during the "${s.phase}" phase`;
+      if (s.totals) return `scores were published during the "${s.phase}" phase`;
     }
 
     if (s.phase === 'tally') {
       const rows = s.rows || [];
-      if (rows.length > s.possible) {
-        return `${rows.length} words were found on a grid holding ${s.possible}`;
+      if (rows.length !== s.revealed) {
+        return `${rows.length} words were published but only ${s.revealed} have been read out`;
+      }
+      if (s.revealed > s.totalRows) return `${s.revealed} words read out of ${s.totalRows}`;
+      if (s.totalRows > s.possible) {
+        return `${s.totalRows} words were found on a grid holding ${s.possible}`;
       }
 
       const earned = {};
-      let longestUnique = 0;
       const words = new Set();
       for (const row of rows) {
         if (words.has(row.w)) return `"${row.w}" is in the tally twice`;
         words.add(row.w);
 
-        // The two things the host had to get right, re-derived.
+        // The three things the host had to get right, re-derived.
         if (!R.placeable(s.grid, row.w)) return `"${row.w}" scored but is not on this grid`;
         if (!R.known(row.w)) return `"${row.w}" scored but is not in the word list`;
-        if (row.pts !== R.score(row.w)) return `"${row.w}" scored ${row.pts}, not ${R.score(row.w)}`;
+        if (row.pts !== R.score(row.w)) return `"${row.w}" is worth ${row.pts}, not ${R.score(row.w)}`;
 
         if (!row.by.length) return `"${row.w}" was found by nobody`;
         if (new Set(row.by).size !== row.by.length) return `"${row.w}" credits someone twice`;
         if (row.dup !== row.by.length > 1) return `"${row.w}" has dup=${row.dup} with ${row.by.length} finders`;
 
-        if (!row.dup) {
-          earned[row.by[0]] = (earned[row.by[0]] || 0) + row.pts;
-          if (row.w.length > longestUnique) longestUnique = row.w.length;
+        // Every word pays; a word nobody else found pays double.
+        const want = row.pts * (row.dup ? 1 : s.unique);
+        if (row.value !== want) {
+          return `"${row.w}" paid ${row.value}, but a ${row.dup ? 'shared' : 'unique'} ` +
+                 `${row.pts}-pointer is worth ${want}`;
+        }
+        for (const pid of row.by) earned[pid] = (earned[pid] || 0) + row.value;
+      }
+
+      // The running order: shared before unique, short before long inside each.
+      for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1], b = rows[i];
+        if (a.dup === b.dup) {
+          if (a.w.length > b.w.length) {
+            return `"${a.w}" was read out before the shorter "${b.w}"`;
+          }
+        } else if (!a.dup && b.dup) {
+          return `the unique "${a.w}" was read out before the shared "${b.w}"`;
         }
       }
 
-      // The golden word, and nobody else, collects the bonus.
-      const gold = new Set();
-      for (const row of rows) {
-        if (!row.dup && row.w.length === longestUnique && longestUnique > 0) {
-          gold.add(row.by[0]);
-          earned[row.by[0]] = (earned[row.by[0]] || 0) + s.gold;
-          if (!row.gold) return `"${row.w}" is the longest unique word but is not marked golden`;
-        } else if (row.gold) {
-          return `"${row.w}" is marked golden but ${row.dup ? 'was cancelled' : 'is not the longest'}`;
-        }
-      }
       for (const pid of s.seats) {
         const claimed = (s.points || {})[pid] || 0;
         if (claimed !== (earned[pid] || 0)) {
-          return `${pid} was given ${claimed} for the round but their words are worth ${earned[pid] || 0}`;
-        }
-        if (gold.has(pid) !== ((s.golden || []).indexOf(pid) !== -1)) {
-          return `${pid}'s golden-word status disagrees with the words`;
+          return `${pid} was given ${claimed} so far but the words read out are worth ${earned[pid] || 0}`;
         }
       }
     }

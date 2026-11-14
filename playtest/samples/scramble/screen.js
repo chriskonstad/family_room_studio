@@ -1,15 +1,19 @@
 /* SCRAMBLE — the shared screen.
  *
- * This one is not optional. SCRAMBLE's grid lives HERE and nowhere else, the way
- * a Boggle box sits in the middle of a table: sixteen letters everybody reads
- * from the same place, while the phones are just pencils. `"screen": "required"`
- * in the manifest is the shell's version of that sentence.
+ * This one is not optional, and the reason is the SCORING. Every player traces
+ * words on their own phone and nobody is told a single score while the clock is
+ * running; when the round ends it is read out here, one word at a time, in front
+ * of everyone — short shared words first, then the long shared ones, then the
+ * uniques from short to long, so the board barely moves and then starts jumping
+ * and the last word is the longest thing one person saw alone. A phone cannot be
+ * the place a table watches that happen. `"screen": "required"` is the shell's
+ * version of that sentence.
  *
- * It can show the letters because the letters are public. It cannot show anybody's
- * words during a round because it is never given them — the host sends each
- * player's list with `sendTo`, and a screen receives only broadcasts. At the
- * tally the host broadcasts every word at once, and the reveal is the whole point
- * of the game.
+ * It can show the letters and the scores because both are public. It cannot show
+ * anybody's words during a round because it is never given them — the host sends
+ * each player's list with `sendTo`, and a screen receives only broadcasts. It
+ * cannot run ahead during the reveal either: the host broadcasts the words it has
+ * already read out and no more.
  *
  * Pure JS, no DOM: on an Apple TV this runs under JavaScriptCore and draws into a
  * SwiftUI Canvas. Everything goes through the recorded canvas vocabulary.
@@ -141,49 +145,59 @@ function createScreen(Table, screen) {
     fitted(ctx, line, b.w * 0.7, b.u(0.05), b.cx, b.cy + b.u(0.07), DIM, 'center', 'middle');
   }
 
-  /* The reveal. Uniques first, best first, then everything that cancelled — which
-   * is the order people want to read it in and, conveniently, the order the host
-   * already sorted it into. */
-  function drawTally(ctx, box, v, b) {
+  /* THE REVEAL — the reason this game needs a screen at all.
+   *
+   * One word at a time, in the running order the host built: short shared words
+   * first (everyone scores, nobody moves), then long shared ones, then the
+   * uniques from short to long. So the board barely shifts for the first half and
+   * then starts jumping, and the last word read out is the longest thing one
+   * person saw alone. The host drives the pacing, so every screen in the room is
+   * on the same word.
+   *
+   * Only the words already read out are even on this device — the host sends the
+   * revealed slice and nothing more, so there is no way to run ahead.
+   */
+  function drawTally(ctx, box, v, b, now) {
     var rows = v.rows || [];
-    var titleY = box.y + box.h * 0.07;
-    var head = rows.length
-      ? rows.length + (rows.length === 1 ? ' WORD' : ' WORDS') + ' · ' + (v.possible || 0) + ' WERE THERE'
-      : 'NOBODY FOUND A THING';
-    fitted(ctx, head, box.w * 0.9, box.h * 0.09, box.cx, titleY, DIM, 'center', 'middle');
+    var total = v.totalRows || 0;
+    var current = rows.length ? rows[rows.length - 1] : null;
 
-    var top = box.y + box.h * 0.16;
-    var space = box.h - (top - box.y);
-    var rowH = Math.min(space / 7, b.u(0.085));
-    var shown = Math.max(1, Math.min(rows.length, Math.floor(space / rowH)));
-    var pad = box.w * 0.04;
-    var wordMax = box.w * 0.46;
-    var ptsRight = box.x + box.w * 0.66;
-    var whoMax = box.w * 0.26;
+    var counter = total ? v.revealed + ' OF ' + total : 'NOBODY FOUND A THING';
+    fitted(ctx, counter, box.w * 0.6, box.h * 0.07, box.cx, box.y + box.h * 0.06,
+           DIM, 'center', 'middle');
 
-    for (var i = 0; i < shown; i++) {
-      var r = rows[i];
-      var y = top + rowH * i + rowH / 2;
-      var word = (r.gold ? '🏅 ' : '') + up(r.w);
-      var color = r.dup ? DIM : (r.gold ? GOLD : INK);
-      var size = fitted(ctx, word, wordMax, rowH * 0.62, box.x + pad, y, color, 'left', 'middle');
-
-      // Cancelled: struck through where the word actually sits.
-      if (r.dup) {
-        ctx.fillStyle = DIM;
-        ctx.fillRect(box.x + pad, y - size * 0.06, widthOf(word, size), Math.max(1, size * 0.08));
-      }
-
-      var pts = r.dup ? 'CANCELLED' : '+' + r.pts;
-      fitted(ctx, pts, box.w * 0.22, rowH * 0.5, ptsRight, y, r.dup ? DIM : GOOD, 'right', 'middle');
-
-      var who = (r.by || []).map(function (id) { return (v.emojis || {})[id] || '•'; }).join('');
-      fitted(ctx, who, whoMax, rowH * 0.55, box.x + box.w - pad, y, INK, 'right', 'middle');
+    if (!current) {
+      fitted(ctx, 'ROUND ' + (v.round + 1) + ' SCORED', box.w * 0.8, box.h * 0.12,
+             box.cx, box.cy, DIM, 'center', 'middle');
+      return;
     }
 
-    if (rows.length > shown) {
-      fitted(ctx, '+' + (rows.length - shown) + ' MORE', box.w * 0.5, rowH * 0.45,
-             box.cx, top + rowH * shown + rowH * 0.35, DIM, 'center', 'middle');
+    // The word itself, landing. A new one arrives scaled up and settles.
+    var pop = motion.pulse('word', current.w, now, 320);
+    var grow = 1 + FRScreen.ease.outCubic(pop) * 0.12;
+    var shared = current.dup;
+    fitted(ctx, up(current.w), box.w * 0.84, box.h * 0.26 * grow,
+           box.cx, box.y + box.h * 0.32, shared ? INK : GOLD, 'center', 'middle');
+
+    var label = shared ? 'SHARED · +' + current.value + ' EACH'
+                       : 'ONLY THEM · ' + current.pts + ' ×' + (v.unique || 2) +
+                         ' = +' + current.value;
+    fitted(ctx, label, box.w * 0.7, box.h * 0.09,
+           box.cx, box.y + box.h * 0.52, shared ? DIM : GOOD, 'center', 'middle');
+
+    // Who it just paid.
+    var who = (current.by || []).map(function (id) {
+      return ((v.emojis || {})[id] || '') + ' ' + up((v.names || {})[id] || '');
+    }).join('   ');
+    fitted(ctx, who, box.w * 0.9, box.h * 0.1,
+           box.cx, box.y + box.h * 0.68, INK, 'center', 'middle');
+
+    // A thin bar for how far through the reading we are.
+    if (total) {
+      var barW = box.w * 0.6, barH = Math.max(2, box.h * 0.016);
+      var barX = box.cx - barW / 2, barY = box.y + box.h * 0.84;
+      panel(ctx, barX, barY, barW, barH, barH / 2, FAINT);
+      panel(ctx, barX, barY, barW * (v.revealed / total), barH, barH / 2, GOOD);
     }
   }
 
@@ -209,13 +223,25 @@ function createScreen(Table, screen) {
 
   /* --------------------------------------------------------- the people --- */
 
+  /* What a name is worth looking at right now.
+   *
+   * During a round that is a WORD COUNT and nothing else. Scores do not exist on
+   * this screen while the clock is running — not hidden, not greyed out: the host
+   * does not send them, so there is nothing here to show. Knowing Ava has eleven
+   * words and you have four is the right amount of pressure; knowing she is nine
+   * points ahead would just tell you to give up. */
   function cellValue(v, id) {
-    if (v.phase === 'round') {
+    if (v.phase === 'round' || v.phase === 'ready') {
       return String((v.counts || {})[id] || 0) + ((v.done || {})[id] ? ' ✓' : '');
     }
-    var total = (v.totals || {})[id] || 0;
-    var gained = v.points ? (v.points[id] || 0) : 0;
-    return gained ? total + ' (+' + gained + ')' : String(total);
+    return String(Math.round(motion.follow('t' + id, (v.totals || {})[id] || 0, 0.22, screen.dt)));
+  }
+
+  /** Did the word being read out just pay this person? */
+  function justPaid(v, id) {
+    var rows = v.rows || [];
+    var row = rows.length ? rows[rows.length - 1] : null;
+    return !!(row && row.by && row.by.indexOf(id) !== -1);
   }
 
   function shortName(v, id) {
@@ -223,6 +249,16 @@ function createScreen(Table, screen) {
     if (name.length > 9) name = name.slice(0, 8) + '…';
     var emoji = (v.emojis || {})[id] || '';
     return (emoji ? emoji + ' ' : '') + name;
+  }
+
+  /* Everyone is on the board for the scoring, in seat order so nobody has to
+   * find themselves again between words. */
+  function highlight(v, id, now) {
+    var paid = v.phase === 'tally' && justPaid(v, id);
+    var hit = motion.pulse('p' + id, cellValue(v, id), now, 600);
+    if (paid) return 'rgba(110,231,168,0.26)';
+    if (hit > 0) return 'rgba(255,209,102,0.22)';
+    return 'rgba(244,238,255,0.07)';
   }
 
   /** A TV is wide: the table goes down the right-hand side. */
@@ -234,14 +270,12 @@ function createScreen(Table, screen) {
     for (var i = 0; i < seats.length; i++) {
       var id = seats[i];
       var y = top + rowH * i;
-      var hit = motion.pulse('p' + id, cellValue(v, id), now, 600);
-      panel(ctx, box.x, y + rowH * 0.08, box.w, rowH * 0.84, rowH * 0.18,
-            hit > 0 ? 'rgba(255,209,102,0.22)' : 'rgba(244,238,255,0.07)');
+      panel(ctx, box.x, y + rowH * 0.08, box.w, rowH * 0.84, rowH * 0.18, highlight(v, id, now));
       fitted(ctx, shortName(v, id), box.w * 0.62, rowH * 0.34,
              box.x + box.w * 0.06, y + rowH * 0.5, INK, 'left', 'middle');
       fitted(ctx, cellValue(v, id), box.w * 0.3, rowH * 0.4,
              box.x + box.w * 0.94, y + rowH * 0.5,
-             (v.golden || []).indexOf(id) !== -1 ? GOLD : INK, 'right', 'middle');
+             justPaid(v, id) && v.phase === 'tally' ? GOOD : INK, 'right', 'middle');
     }
   }
 
@@ -253,14 +287,13 @@ function createScreen(Table, screen) {
     for (var i = 0; i < seats.length; i++) {
       var id = seats[i];
       var x = box.x + colW * i;
-      var hit = motion.pulse('p' + id, cellValue(v, id), now, 600);
       panel(ctx, x + colW * 0.05, box.y + box.h * 0.1, colW * 0.9, box.h * 0.8, colW * 0.12,
-            hit > 0 ? 'rgba(255,209,102,0.22)' : 'rgba(244,238,255,0.07)');
+            highlight(v, id, now));
       fitted(ctx, shortName(v, id), colW * 0.82, box.h * 0.22,
              x + colW / 2, box.y + box.h * 0.34, INK, 'center', 'middle');
       fitted(ctx, cellValue(v, id), colW * 0.82, box.h * 0.34,
              x + colW / 2, box.y + box.h * 0.68,
-             (v.golden || []).indexOf(id) !== -1 ? GOLD : INK, 'center', 'middle');
+             justPaid(v, id) && v.phase === 'tally' ? GOOD : INK, 'center', 'middle');
     }
   }
 
@@ -297,7 +330,7 @@ function createScreen(Table, screen) {
 
     if (v.phase === 'ready') drawReady(ctx, main, v, now);
     else if (v.phase === 'round') drawGrid(ctx, main, v, now);
-    else if (v.phase === 'tally') drawTally(ctx, main, v, b);
+    else if (v.phase === 'tally') drawTally(ctx, main, v, b, now);
     else drawWinner(ctx, main, v, b, now);
 
     if (tall) drawPeopleStrip(ctx, people, v, now);
