@@ -19,7 +19,7 @@
  * Exit code 0 clean, 1 errors, 2 the validator itself couldn't run.
  * Warnings never fail the run — they're style, not correctness.
  */
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from 'node:fs';
 import { discoverIntents } from './harness/intents.mjs';
 import { join, basename, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -242,6 +242,73 @@ export function validateZip(zipPath) {
   return validateBundle(root);
 }
 
+/* --------------------------------------------- the Studio's sample index --- */
+
+/**
+ * `playtest/samples/index.json` tells the browser Studio which files to fetch
+ * for each sample. A browser cannot list a directory, so this list has to exist
+ * — but it was hand-kept, and a hand-kept list of files is a drift trap.
+ *
+ * SUMMIT shipped a `screen.js` that the Studio never fetched because nobody
+ * added it here, so the game declared a shared screen and the Studio showed no
+ * TV panel, silently. Everything else about it worked. That is the exact shape
+ * of failure this repo keeps having: two descriptions of the same thing, only
+ * one of them checked.
+ *
+ * So it is derived now. Everything in the index comes from the bundle itself —
+ * the label from the manifest's name and emoji, the files from the directory —
+ * and `node validate.mjs --write` rewrites it. Nothing here is a judgement
+ * call, which is why nothing here should be typed by hand.
+ */
+const NODE_ONLY = new Set(['bot.mjs', 'invariants.mjs']);
+
+export function buildSampleIndex() {
+  const samples = join(REPO, 'playtest/samples');
+  const ids = readdirSync(samples)
+    .filter(d => existsSync(join(samples, d, 'manifest.json')))
+    .sort();
+
+  // Keep the dropdown in the order it is in today; new games go on the end.
+  const indexPath = join(samples, 'index.json');
+  let order = [];
+  if (existsSync(indexPath)) {
+    try { order = JSON.parse(readFileSync(indexPath, 'utf8')).map(e => e.id); } catch { /* rebuild */ }
+  }
+  ids.sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia === -1 ? order.length : ia) - (ib === -1 ? order.length : ib) || a.localeCompare(b);
+  });
+
+  return ids.map(id => {
+    const dir = join(samples, id);
+    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+    const entry = manifest.entry || 'index.html';
+    // Everything a browser needs: the bundle minus the node-only test hooks.
+    const files = readdirSync(dir)
+      .filter(f => !f.startsWith('.') && !NODE_ONLY.has(f)
+                && statSync(join(dir, f)).isFile())
+      .sort((a, b) => {
+        const rank = f => f === 'manifest.json' ? 0 : f === entry ? 1 : f === 'game.js' ? 2 : 3;
+        return rank(a) - rank(b) || a.localeCompare(b);
+      });
+    return { id, label: `${manifest.name} ${manifest.iconEmoji || '🎲'}`, files };
+  });
+}
+
+export function checkSampleIndex({ write = false } = {}) {
+  const indexPath = join(REPO, 'playtest/samples/index.json');
+  const wanted = JSON.stringify(buildSampleIndex(), null, 2) + '\n';
+  const have = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
+  if (have === wanted) return { ok: true };
+  if (write) {
+    writeFileSync(indexPath, wanted);
+    return { ok: true, written: true };
+  }
+  return { ok: false, detail: 'playtest/samples/index.json is out of date with the samples '
+                            + 'directory — the Studio would fetch the wrong files. '
+                            + 'Run: node validate.mjs --write' };
+}
+
 /* ------------------------------------------------------------------ cli --- */
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -275,6 +342,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     for (const w of out.warnings) console.log(`      ⚠ ${w}`);
   }
+  // The Studio's file list is part of the bundles being valid: a game whose
+  // files the Studio cannot fetch is not playable, however good the bundle is.
+  const index = checkSampleIndex({ write: args.includes('--write') });
+  if (index.written) console.log('  ↻ playtest/samples/index.json rewritten from the samples directory');
+  if (!index.ok) { failed++; console.log(`  ✗ samples index  ${index.detail}`); }
+
   console.log(failed ? `\n${failed} bundle(s) invalid` : `\nAll ${targets.length} bundle(s) valid`);
   process.exit(failed ? 1 : 0);
 }

@@ -32,7 +32,8 @@
     "files": [
       "manifest.json",
       "index.html",
-      "game.js"
+      "game.js",
+      "screen.js"
     ]
   },
   {
