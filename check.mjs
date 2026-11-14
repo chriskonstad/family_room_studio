@@ -14,6 +14,7 @@
  *   2b. fr-screen    the shared-screen drawing vocabulary both renderers honour
  *   3. validate      every bundle would import cleanly into the app
  *   4. playtest      every bundle actually plays to a finish under bot pressure
+ *   5. screens       every shared screen draws, at three shapes, and leaks nothing
  *
  * Exit code 0 clean, 1 something failed.
  */
@@ -28,7 +29,8 @@ const steps = [
   ['fr-game library',       'sdk/fr-game.test.mjs',       []],
   ['fr-screen library',     'sdk/fr-screen.test.mjs',     []],
   ['bundle validation',     'validate.mjs',               ['--all']],
-  ['headless playtest',     'harness/playtest.mjs',       ['--all', '--games', '10']]
+  ['headless playtest',     'harness/playtest.mjs',       ['--all', '--games', '10']],
+  ['shared screens',        'harness/screen.mjs',         ['--all', '--games', '4']]
 ];
 
 let failed = 0;

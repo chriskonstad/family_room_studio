@@ -1,6 +1,6 @@
 {
   "id": "com.chris.fishbowl",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "name": "FISHBOWL",
   "entry": "index.html",
   "iconEmoji": "🐟",
@@ -8,5 +8,6 @@
   "maxPlayers": 10,
   "teams": "required",
   "author": "Chris",
-  "description": "Teams race to pull phrases from a shared bowl across three rounds with the same phrases each time: describe it freely, then act it out, then get it across in a single word."
+  "description": "Teams race to pull phrases from a shared bowl across three rounds with the same phrases each time: describe it freely, then act it out, then get it across in a single word.",
+  "screen": "optional"
 }

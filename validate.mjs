@@ -35,7 +35,7 @@ const REPO = dirname(fileURLToPath(import.meta.url));
  * the library with no error the author will ever see. */
 const REQUIRED = ['id', 'version', 'name', 'entry'];
 const KNOWN = new Set([...REQUIRED, 'iconEmoji', 'minPlayers', 'maxPlayers',
-                       'author', 'description', 'teams']);
+                       'author', 'description', 'teams', 'screen']);
 
 const MAX_BUNDLE_MB = 12;      // bundles transfer phone-to-phone when friends join
 
@@ -84,6 +84,18 @@ export function validateBundle(dir) {
   }
   if (manifest.teams !== undefined && manifest.teams !== 'required') {
     warn(`manifest.teams is "${manifest.teams}"; only "required" does anything — anything else means no teams`);
+  }
+  // A bundle that claims a shared screen has to ship one, or the TV sits blank.
+  if (manifest.screen && manifest.screen !== 'none') {
+    if (!['optional', 'required'].includes(manifest.screen)) {
+      err(`manifest.screen is "${manifest.screen}"; use "none", "optional" or "required"`);
+    }
+    if (!existsSync(join(dir, 'screen.js'))) {
+      err(`manifest.screen is "${manifest.screen}" but there is no screen.js — tvOS has no DOM, so a screen view is a .js file that draws, never HTML`);
+    }
+  }
+  if (existsSync(join(dir, 'screen.js')) && !manifest.screen) {
+    warn('screen.js is present but manifest.screen is not set — the shell will never attach a screen to this game');
   }
   if (manifest.teams === 'required' && Number.isInteger(lo) && lo < 2) {
     err(`a "teams":"required" game needs minPlayers >= 2`);
