@@ -1,7 +1,7 @@
 [
   {
     "id": "liarsdice",
-    "label": "Liar's Dice \ud83c\udfb2",
+    "label": "Liar's Dice 🎲",
     "files": [
       "manifest.json",
       "index.html",
@@ -10,7 +10,7 @@
   },
   {
     "id": "streak",
-    "label": "STREAK \ud83d\udd25",
+    "label": "STREAK 🔥",
     "files": [
       "manifest.json",
       "index.html",
@@ -19,7 +19,7 @@
   },
   {
     "id": "blitz",
-    "label": "BLITZ \u26a1\ufe0f",
+    "label": "BLITZ ⚡️",
     "files": [
       "manifest.json",
       "index.html",
@@ -28,7 +28,7 @@
   },
   {
     "id": "summit",
-    "label": "SUMMIT \ud83c\udfd4",
+    "label": "SUMMIT 🏔",
     "files": [
       "manifest.json",
       "index.html",
@@ -37,16 +37,17 @@
   },
   {
     "id": "fishbowl",
-    "label": "FISHBOWL \ud83d\udc1f",
+    "label": "FISHBOWL 🐟",
     "files": [
       "manifest.json",
       "index.html",
-      "game.js"
+      "game.js",
+      "screen.js"
     ]
   },
   {
     "id": "meltdown",
-    "label": "MELTDOWN \u2622\ufe0f",
+    "label": "MELTDOWN ☢️",
     "files": [
       "manifest.json",
       "index.html",
@@ -55,7 +56,7 @@
   },
   {
     "id": "tapas",
-    "label": "TAPAS \ud83e\uded2",
+    "label": "TAPAS 🫒",
     "files": [
       "manifest.json",
       "index.html",
@@ -64,7 +65,7 @@
   },
   {
     "id": "tempo",
-    "label": "TEMPO \ud83c\udfb5",
+    "label": "TEMPO 🎵",
     "files": [
       "manifest.json",
       "index.html",
@@ -73,7 +74,7 @@
   },
   {
     "id": "passbomb",
-    "label": "Pass the Bomb \ud83d\udca3",
+    "label": "Pass the Bomb 💣",
     "files": [
       "manifest.json",
       "index.html",
@@ -82,7 +83,7 @@
   },
   {
     "id": "detonator",
-    "label": "The Detonator \ud83e\udde8",
+    "label": "The Detonator 🧨",
     "files": [
       "manifest.json",
       "index.html",
@@ -91,7 +92,7 @@
   },
   {
     "id": "captain",
-    "label": "Captain Says \ud83e\udee1",
+    "label": "Captain Says 🫡",
     "files": [
       "manifest.json",
       "index.html",
@@ -100,7 +101,7 @@
   },
   {
     "id": "lookaway",
-    "label": "Look Away \ud83d\udc40",
+    "label": "Look Away 👀",
     "files": [
       "manifest.json",
       "index.html",

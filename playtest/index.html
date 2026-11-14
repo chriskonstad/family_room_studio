@@ -43,7 +43,9 @@
   aside h3{margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
   aside section{margin-bottom:20px}
   main{flex:1;display:flex;flex-direction:column;min-width:0}
-  #stage{flex:1;overflow:auto;padding:22px;display:flex;flex-wrap:wrap;gap:26px;align-content:flex-start;justify-content:center}
+  .screenpanel{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+  .screenpanel .plabel{opacity:.85}
+    #stage{flex:1;overflow:auto;padding:22px;display:flex;flex-wrap:wrap;gap:26px;align-content:flex-start;justify-content:center}
   #empty{margin:auto;text-align:center;color:var(--muted);max-width:440px;line-height:1.6}
   #empty h2{color:var(--text);font-weight:700}
   .dropzone{border:2px dashed var(--line2);border-radius:16px;padding:34px}
@@ -237,6 +239,7 @@ const state = {
   vfs:null,            // { path: Uint8Array }
   feelRuntime:null,    // tools/sdk/fr-feel.js source, fetched once (see loadFeelRuntime)
   gameRuntime:null,    // tools/sdk/fr-game.js source (FR.deck/seats/host/…), fetched once
+  screenRuntime:null,  // tools/sdk/fr-screen.js — the shared-screen drawing vocabulary
   tableSDK:null,       // tools/sdk/table-sdk.js — the ONE Table implementation, shared with iOS
   seed:0,              // shared RNG seed for this boot; every phone gets the same one
   manifest:null,
@@ -442,6 +445,112 @@ function sdkScript(player, roster){
   })();`;
 }
 
+
+/* ============================ Shared screen (Apple TV / iPad) ============================
+ *
+ * A screen is an auxiliary display, not a player: it takes the host's public broadcasts
+ * and never a private sendTo. On an Apple TV there is no DOM at all, so a screen view is
+ * plain JS that DRAWS through the fr-screen recorder. Here we replay those recorded ops
+ * onto a real <canvas>, which is exactly what an iPad will do — the Apple TV replays the
+ * same ops onto a native SwiftUI Canvas instead.
+ *
+ * Running it in THIS page rather than an iframe is deliberate: tvOS has no document, so a
+ * screen that accidentally depended on one would work here and die on the TV. No document
+ * is handed to it, so it cannot.
+ */
+const Screens = {
+  live: [],
+
+  supported(){
+    return !!(state.screenRuntime && state.vfs && state.vfs['screen.js']
+              && state.manifest && state.manifest.screen && state.manifest.screen !== 'none');
+  },
+
+  /* The runtime is fetched as SOURCE so it can be injected into each phone's iframe.
+   * The screen panel, though, runs in THIS page — so the same source has to be
+   * evaluated here too, or FRScreen is simply undefined and the canvas stays black. */
+  ready(){
+    if(!window.FRScreen && state.screenRuntime){
+      try { (0, eval)(state.screenRuntime); }
+      catch(e){ console.error('[studio] fr-screen failed to load', e); }
+    }
+    return !!window.FRScreen;
+  },
+
+  /** Build the panel + boot the bundle's screen.js. Returns the element, or null. */
+  mount(shape){
+    if(!this.supported() || !this.ready()) return null;
+    const src = new TextDecoder().decode(state.vfs['screen.js']);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'phone screenpanel';
+    wrap.innerHTML = `<div class="plabel"><b>📺 ${shape.name}</b> <span class="muted">${shape.w}×${shape.h} · shared screen · public state only</span></div>`;
+    const canvas = document.createElement('canvas');
+    canvas.width = shape.w; canvas.height = shape.h;
+    canvas.style.width = Math.round(shape.w * shape.zoom) + 'px';
+    canvas.style.height = Math.round(shape.h * shape.zoom) + 'px';
+    canvas.style.background = '#000';
+    canvas.style.borderRadius = '8px';
+    wrap.appendChild(canvas);
+
+    let drawFn = null, onMsg = null;
+    const api = { dt: 16, onDraw(f){ drawFn = f; } };
+    const table = {
+      isScreen: true, isHost: false,
+      onMessage(cb){ onMsg = cb; }, onStart(){},
+      onPlayerJoin(){}, onPlayerLeave(){}, onPause(){}, onResume(){}
+    };
+
+    // Scoped, and handed only what a tvOS screen will have: FRScreen and the Table.
+    // No document, no window — if it needs them it must fail HERE, on a laptop.
+    let createScreen;
+    try {
+      createScreen = new Function('FRScreen', 'Table', 'screen',
+        '"use strict";' + src + '\nreturn typeof createScreen === "function" ? createScreen : null;'
+      )(window.FRScreen, table, api);
+    } catch(e){
+      wrap.innerHTML += `<div class="muted" style="padding:10px;color:#ef476f">screen.js failed to load: ${e.message}</div>`;
+      return wrap;
+    }
+    if(!createScreen){
+      wrap.innerHTML += '<div class="muted" style="padding:10px;color:#ef476f">screen.js must define createScreen(Table, screen)</div>';
+      return wrap;
+    }
+    try { createScreen(table, api); } catch(e){
+      wrap.innerHTML += `<div class="muted" style="padding:10px;color:#ef476f">createScreen threw: ${e.message}</div>`;
+      return wrap;
+    }
+
+    const c2d = canvas.getContext('2d');
+    const rec = window.FRScreen.context();
+    const env = { width: shape.w, height: shape.h, safe: shape.safe, t: 0, dt: 16 };
+    let last = performance.now(), raf = 0;
+
+    // Note for whoever tests this next: a HIDDEN browser tab does not run
+    // requestAnimationFrame, so the panel freezes while the pane is in the
+    // background and resumes when it is shown. That is the browser, not the
+    // screen — an Apple TV is always foreground. It cost me a confused hour.
+    const frame = (now) => {
+      env.dt = api.dt = Math.min(64, now - last); last = now;
+      env.t = now;
+      rec.reset();
+      try { drawFn && drawFn(rec, env); }
+      catch(e){ cancelAnimationFrame(raf); console.error('[screen] draw threw', e); return; }
+      c2d.setTransform(1,0,0,1,0,0);
+      c2d.clearRect(0,0,shape.w,shape.h);
+      window.FRScreen.replay(rec.ops(), c2d);
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+
+    this.live.push({ deliver(p){ if(onMsg) onMsg('p0', p); }, stop(){ cancelAnimationFrame(raf); } });
+    return wrap;
+  },
+
+  deliver(payload){ this.live.forEach(s => { try { s.deliver(payload); } catch(e){} }); },
+  clear(){ this.live.forEach(s => s.stop()); this.live = []; }
+};
+
 /* ============================ Router (authoritative star topology) ============================ */
 
 const HarnessBus = {
@@ -459,6 +568,8 @@ const HarnessBus = {
     if(from!==this.hostId()){ log('error', from, '*', 'broadcast ignored (not host)'); return; }
     log('broadcast', from, '*', payload);
     state.players.forEach(p=>{ if(p.id!==from && !p.dropped) this._deliver(p.id, from, payload); });
+    // A screen is public-only: it sees broadcasts and is never passed a sendTo.
+    Screens.deliver(structuredClone(payload));
   },
   sendTo(from, to, payload){              // host → one player
     if(from!==this.hostId()){ log('error', from, to, 'sendTo ignored (not host)'); return; }
@@ -591,6 +702,7 @@ function startSession(){
 
 function renderStage(){
   empty.style.display='none';
+  Screens.clear();                 // stop the old panel's frame loop before it is detached
   stage.innerHTML='';
   const scale = (+$('#scale').value)/100;
   const roster = state.players.map(p=>({id:p.id,name:p.name,emoji:p.emoji,teamId:p.teamId||undefined}));
@@ -637,6 +749,15 @@ function renderStage(){
       (state.gameRuntime ? '<script>'+state.gameRuntime+'<\/script>' : ''));
     loads.push(new Promise(res=>{ iframe.onload = ()=>res(p); iframe.srcdoc = html; }));
   });
+
+  // A shared screen, if this bundle declares one. It sits beside the phones at a real
+  // TV shape so a layout built for 16:9 with overscan is visible as such, not guessed at.
+  if(Screens.supported()){
+    const z = Math.min(0.42, (+$('#scale').value)/100 * 0.6);
+    const panel = Screens.mount({ name:'Apple TV', w:1920, h:1080, zoom:z,
+                                  safe:{top:54,right:96,bottom:54,left:96} });
+    if(panel) stage.appendChild(panel);
+  }
 
   // Fire onStart on every phone once all documents (and their game scripts) have run.
   Promise.all(loads).then(()=>{
@@ -853,6 +974,7 @@ async function loadRuntime(file) {
   state.tableSDK    = await loadRuntime('table-sdk.js');
   state.feelRuntime = await loadRuntime('fr-feel.js');
   state.gameRuntime = await loadRuntime('fr-game.js');
+  state.screenRuntime = await loadRuntime('fr-screen.js');
 })();
 
 fetch('samples/index.json').then(r=>r.ok?r.json():[]).then(list=>{
