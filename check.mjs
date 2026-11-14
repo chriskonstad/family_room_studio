@@ -11,6 +11,7 @@
  *
  *   1. conformance   the shared Table SDK still matches the spec both harnesses are held to
  *   2. fr-game       the game-structure library's own suite, including its fuzz soak
+ *   2b. fr-screen    the shared-screen drawing vocabulary both renderers honour
  *   3. validate      every bundle would import cleanly into the app
  *   4. playtest      every bundle actually plays to a finish under bot pressure
  *
@@ -25,6 +26,7 @@ const REPO = dirname(fileURLToPath(import.meta.url));
 const steps = [
   ['Table SDK conformance', 'conformance/run-studio.mjs', []],
   ['fr-game library',       'sdk/fr-game.test.mjs',       []],
+  ['fr-screen library',     'sdk/fr-screen.test.mjs',     []],
   ['bundle validation',     'validate.mjs',               ['--all']],
   ['headless playtest',     'harness/playtest.mjs',       ['--all', '--games', '10']]
 ];
