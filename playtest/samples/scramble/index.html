@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>SCRAMBLE</title>
+<style>
+  :root{
+    --bg1:#2a1b45; --bg2:#160d27; --panel:#352457; --line:#4b3677;
+    --text:#f4eeff; --muted:#a493c7; --accent:#ffd166; --good:#6ee7a8; --bad:#ff7a8a;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(circle at 50% 0%,#3b2660,var(--bg1) 55%,var(--bg2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0}
+  .wrap{flex:1; display:flex; flex-direction:column; min-height:0; padding:10px 14px 12px; gap:8px}
+  .wrap.center{align-items:center; justify-content:center; text-align:center; gap:14px}
+
+  .hdr{display:flex; align-items:baseline; gap:8px}
+  .brand{font-size:19px; letter-spacing:.16em; font-weight:800; color:var(--accent)}
+  .sub{color:var(--muted); font-size:12.5px}
+  .time{margin-left:auto; font-size:21px; font-weight:900; font-variant-numeric:tabular-nums}
+  .time.low{color:var(--bad)}
+
+  .count{font-size:84px; font-weight:900; line-height:1; color:var(--accent)}
+  .big{font-size:23px; font-weight:800}
+  .hint{color:var(--muted); font-size:13.5px; line-height:1.55}
+  .waiting{color:var(--muted); font-size:15px; text-align:center; margin:auto}
+
+  /* The input sits high on purpose: the keyboard owns the bottom half of a phone,
+     and a word race where you cannot see what you typed is no race at all. */
+  input[type=text]{width:100%; font:inherit; font-size:21px; font-weight:800;
+    letter-spacing:.08em; text-transform:uppercase;
+    background:#1d1233; color:var(--text); border:2px solid var(--line);
+    border-radius:14px; padding:13px 14px}
+  input[type=text]:focus{outline:none; border-color:var(--accent)}
+  input[type=text]::placeholder{font-size:15px; font-weight:600; letter-spacing:0; text-transform:none; color:#6c5b90}
+  input:disabled{opacity:.4}
+
+  .ack{min-height:22px; font-size:15px; font-weight:800; letter-spacing:.04em}
+  .ack.good{color:var(--good)}
+  .ack.bad{color:var(--bad)}
+
+  .chips{flex:1; min-height:0; overflow-y:auto; display:flex; flex-wrap:wrap;
+    align-content:flex-start; gap:6px; padding:2px 0}
+  .chip{background:var(--panel); border:1px solid var(--line); border-radius:999px;
+    padding:6px 10px; font-size:14px; font-weight:800; letter-spacing:.06em;
+    display:inline-flex; align-items:center; gap:6px}
+  .chip i{font-style:normal; font-size:11px; color:var(--accent); font-weight:900}
+  .chip.dead{opacity:.45; text-decoration:line-through}
+  .chip.dead i{color:var(--muted)}
+
+  .foot{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted)}
+  button{font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--panel);
+    color:var(--text); border-radius:14px; padding:13px 18px; font-size:15px; font-weight:800;
+    margin-left:auto; min-height:46px}
+  button:disabled{opacity:.35}
+  #next{background:var(--accent); color:#2a1b45; border-color:var(--accent)}
+
+  .scored{text-align:center; padding:6px 0 2px}
+  .rscore{font-size:46px; font-weight:900; color:var(--accent); line-height:1}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="dict.js"></script>
+<script src="rules.js"></script>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>

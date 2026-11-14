@@ -127,7 +127,10 @@ function makeDom(clock) {
       while ((a = ar.exec(m[2]))) attrs[a[1]] = a[2];
       out.push({ tag: m[1].toLowerCase(), attrs, raw: m[2], text: '' });
     }
-    for (const tag of ['button', 'i', 'div', 'span', 'a', 'label', 'p', 'textarea', 'select']) {
+    // `form` is here because a game that types (SCRAMBLE) wraps its input in one to
+    // get the iOS keyboard's Go key, and a missing handle is not a silent miss —
+    // addEventListener on null takes the render down.
+    for (const tag of ['button', 'form', 'i', 'div', 'span', 'a', 'label', 'p', 'textarea', 'select']) {
       const re = new RegExp('<' + tag + '\\b([^>]*)>([\\s\\S]*?)</' + tag + '>', 'gi');
       let m;
       while ((m = re.exec(html))) {
@@ -271,12 +274,29 @@ export async function runGame(opts = {}) {
    * `<script>createGame(window.Table, document.getElementById('app'))</script>`.
    * Running only game.js loads the game's definitions and never starts it, which
    * is exactly what happened the first time this ran: it booted cleanly and did
-   * nothing. Take the inline scripts (skipping src= includes, which we load in
-   * order ourselves) and run them after, as a browser would. */
+   * nothing. So run the document's scripts the way a browser would: in order,
+   * reading each `src=` include out of the bundle directory.
+   *
+   * That last part used to be a comment claiming it happened and no code doing
+   * it, which meant a bundle whose code spans more than one file (SCRAMBLE ships
+   * a 200k-word dictionary beside its game) loaded fine on a phone and in the
+   * Studio, and silently lost half of itself HERE — the one place that is
+   * supposed to be stricter than a phone. */
   const entryHTML = existsSync(join(dir, entry)) ? readFileSync(join(dir, entry), 'utf8') : '';
-  const inlineScripts = [...entryHTML.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)]
-    .map(m => m[1])
-    .filter(s => s.trim() && !s.includes('__TABLE_SDK__'));
+  const docScripts = [];
+  for (const m of entryHTML.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const src = /\bsrc\s*=\s*["']([^"']+)["']/.exec(m[1]);
+    if (!src) {
+      if (m[2].trim() && !m[2].includes('__TABLE_SDK__')) docScripts.push({ name: entry, code: m[2] });
+      continue;
+    }
+    // Offline-only is a bundle rule the validator enforces; nothing to fetch here.
+    if (/^[a-z]+:|^\/\//i.test(src[1])) continue;
+    const file = join(dir, src[1]);
+    if (existsSync(file)) docScripts.push({ name: src[1], code: readFileSync(file, 'utf8') });
+  }
+  // A bundle with no entry HTML — or one that forgot the tag — still gets its game.
+  if (!docScripts.some(s => s.name === 'game.js')) docScripts.unshift({ name: 'game.js', code: gameSrc });
   const bodyIds = [...entryHTML.matchAll(/id=["']([\w-]+)["']/g)].map(m => m[1]);
   const tableSDK = readFileSync(join(REPO, 'sdk/table-sdk.js'), 'utf8');
   const frFeel = readFileSync(join(REPO, 'sdk/fr-feel.js'), 'utf8');
@@ -428,12 +448,10 @@ export async function runGame(opts = {}) {
     // returns the same node the bootstrap and the game both reach for.
     for (const id of bodyIds) document.getElementById(id);
 
-    // game.js defines; the entry HTML's inline script starts. Both, in order.
-    try { vm.runInContext(gameSrc, sandbox); }
-    catch (e) { throw new Error(`${p.id}: game.js threw on load — ${e.message}`); }
-    for (const script of inlineScripts) {
-      try { vm.runInContext(script, sandbox); }
-      catch (e) { throw new Error(`${p.id}: ${entry} bootstrap threw — ${e.message}`); }
+    // game.js defines; the entry HTML's inline script starts. In document order.
+    for (const script of docScripts) {
+      try { vm.runInContext(script.code, sandbox); }
+      catch (e) { throw new Error(`${p.id}: ${script.name} threw on load — ${e.message}`); }
     }
   }
 

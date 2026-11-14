@@ -1,0 +1,12 @@
+{
+  "id": "com.chris.scramble",
+  "version": "1.0.0",
+  "name": "SCRAMBLE",
+  "entry": "index.html",
+  "iconEmoji": "🔡",
+  "minPlayers": 2,
+  "maxPlayers": 8,
+  "author": "Chris",
+  "description": "Sixteen letters on the TV, ninety seconds, everyone hunting at once. The catch: any word two of you found is worth nothing to either of you, so the points are in seeing what nobody else does.",
+  "screen": "required"
+}

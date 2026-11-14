@@ -21,6 +21,14 @@
  * A correct screen ignores every message type but its own public `state`; one
  * that stashes whatever it is given fails here instead of in a living room.
  *
+ * The probe is delivered twice: once as the host actually sent it, and once with
+ * every string swapped for a sentinel. Hunting for the real strings alone was a
+ * check a game could pass by accident — SCRAMBLE draws its board in capitals, so
+ * a screen that rendered a player's private word list drew "CATS" while the wire
+ * said "cats", and the leak check shrugged. The sentinel has no case, no spelling
+ * and no innocent explanation: if it reaches the glass, the screen rendered
+ * something it was only handed.
+ *
  * A string the host ALSO broadcasts is public by definition and is not treated as
  * a secret — a route colour is in both SUMMIT's private hand and its public board.
  * The other leak, a host that puts a secret INTO a broadcast, is not a screen bug
@@ -52,6 +60,28 @@ function rng(seed) {
   r.int = (n) => Math.floor(r() * n);
   r.pick = (a) => (a.length ? a[r.int(a.length)] : undefined);
   return r;
+}
+
+/* A string no game could draw on purpose. Lowercase, so a case-insensitive
+ * comparison catches it however the screen chose to render it. */
+const SENTINEL = 'zqxjvleak';
+let markN = 0;
+
+/**
+ * The same payload with every string value replaced by a sentinel.
+ *
+ * `t` is left alone: it is the message TYPE, the thing a screen branches on, and
+ * scrambling it would mean the probe never reached the code being tested.
+ */
+function marked(value, key) {
+  if (typeof value === 'string') return key === 't' ? value : SENTINEL + (markN++).toString(36);
+  if (Array.isArray(value)) return value.map(v => marked(v));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const k of Object.keys(value)) out[k] = marked(value[k], k);
+    return out;
+  }
+  return value;
 }
 
 /** Every string anywhere in a payload — what a leak would look like. */
@@ -252,8 +282,14 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
       // the leak assertion below could never fail and would be a test that passes
       // by construction. Hand the screen the private payload anyway: a screen is
       // only safe if it renders the public state and ignores everything else.
+      //
+      // Then hand it the same payload with every string replaced by a sentinel.
+      // Matching the real strings is necessary but not sufficient: a screen that
+      // uppercases, truncates or reformats what it renders would slip past it. A
+      // sentinel on the glass is proof the screen drew what it was handed,
+      // whatever it did to the characters on the way.
       const priv = table.wire('sendTo').slice(-1)[0];
-      if (priv) screen.deliver(priv.payload);
+      if (priv) { screen.deliver(priv.payload); screen.deliver(marked(priv.payload)); }
 
       const last = table.wire('broadcast').slice(-1)[0];
       if (last) {
@@ -286,6 +322,10 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
         if (failures.length > 6) return false;
 
         for (const text of out.texts) {
+          if (text.toLowerCase().includes(SENTINEL)) {
+            failures.push({ seed: s, why: `LEAK: drew "${text}" — a payload the host sent privately` });
+            return false;
+          }
           for (const secret of secrets) {
             if (text.includes(secret)) {
               failures.push({ seed: s, why: `LEAK: drew "${text}" containing private "${secret}"` });

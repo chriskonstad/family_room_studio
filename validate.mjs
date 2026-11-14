@@ -260,7 +260,12 @@ export function validateZip(zipPath) {
  * and `node validate.mjs --write` rewrites it. Nothing here is a judgement
  * call, which is why nothing here should be typed by hand.
  */
-const NODE_ONLY = new Set(['bot.mjs', 'invariants.mjs']);
+/* A bundle's browser code is always a plain script — games are injected into a
+ * WKWebView and cannot use imports — so `.mjs` in a sample directory is always
+ * authoring-side: the fuzzer's bot, its invariants, SCRAMBLE's dictionary
+ * builder. The Studio must not fetch those, and listing them by name meant every
+ * new one was a silent 404 waiting to happen. */
+const nodeOnly = (f) => f.endsWith('.mjs');
 
 export function buildSampleIndex() {
   const samples = join(REPO, 'playtest/samples');
@@ -285,7 +290,7 @@ export function buildSampleIndex() {
     const entry = manifest.entry || 'index.html';
     // Everything a browser needs: the bundle minus the node-only test hooks.
     const files = readdirSync(dir)
-      .filter(f => !f.startsWith('.') && !NODE_ONLY.has(f)
+      .filter(f => !f.startsWith('.') && !nodeOnly(f)
                 && statSync(join(dir, f)).isFile())
       .sort((a, b) => {
         const rank = f => f === 'manifest.json' ? 0 : f === entry ? 1 : f === 'game.js' ? 2 : 3;

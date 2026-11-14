@@ -313,6 +313,42 @@ test('particles restore alpha so they cannot bleed into the next draw', () => {
   assert.equal(c.globalAlpha, 1);
 });
 
+test('bounded particles never draw outside the box they were given', () => {
+  const m = FRScreen.motion(), c = FRScreen.context();
+  const box = { x: 100, y: 50, w: 400, h: 300 };
+  m.burst(300, 200, { count: 60, speed: 900, life: 9000, size: 12 });
+  // Long enough for anything unbounded to be well off the screen.
+  for (let f = 0; f < 120; f++) {
+    c.reset();
+    m.particles(c, 16, { bounds: box });
+    for (const it of FRScreen.bounds(c.ops()).items) {
+      assert.ok(it.x >= box.x && it.y >= box.y &&
+                it.x + it.w <= box.x + box.w && it.y + it.h <= box.y + box.h,
+        `frame ${f}: a particle drew at ${it.x},${it.y} ${it.w}x${it.h}, outside the box`);
+    }
+  }
+});
+
+test('particles with no bounds still fly free — the old behaviour is intact', () => {
+  const m = FRScreen.motion(), c = FRScreen.context();
+  m.burst(0, 0, { count: 40, speed: 900, life: 9000, size: 12 });
+  let escaped = false;
+  for (let f = 0; f < 120 && !escaped; f++) {
+    c.reset();
+    m.particles(c, 16);
+    escaped = FRScreen.bounds(c.ops()).items.some(it => it.x < -50 || it.y > 2000);
+  }
+  assert.ok(escaped, 'unbounded confetti should leave the area; nothing is clamping it');
+});
+
+test('a bare gravity number still works as the third argument', () => {
+  const m = FRScreen.motion(), c = FRScreen.context();
+  m.burst(0, 0, { count: 1, speed: 0, lift: 0, life: 9000, size: 4 });
+  m.particles(c, 1000, 1000);          // 1s at 1000px/s/s
+  const [it] = FRScreen.bounds(c.ops()).items;
+  assert.ok(it.y > 400, `gravity should have pulled it down, it sat at ${it.y}`);
+});
+
 test('easings start at 0 and end at 1', () => {
   for (const [name, fn] of Object.entries(FRScreen.ease)) {
     assert.ok(Math.abs(fn(0)) < 1e-6, `${name}(0) should be 0, got ${fn(0)}`);

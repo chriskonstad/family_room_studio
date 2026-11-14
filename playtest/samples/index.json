@@ -108,5 +108,17 @@
       "index.html",
       "game.js"
     ]
+  },
+  {
+    "id": "scramble",
+    "label": "SCRAMBLE 🔡",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js",
+      "dict.js",
+      "rules.js",
+      "screen.js"
+    ]
   }
 ]

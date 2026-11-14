@@ -75,7 +75,10 @@ replays move for move.
 Per-bundle hooks, dropped beside `game.js`:
 
 - **`bot.mjs`** — supplies input the generic bot can't invent (typed text).
-  See `playtest/samples/fishbowl/bot.mjs`.
+  See `playtest/samples/fishbowl/bot.mjs`. A bot that needs the game's own rules
+  to play (SCRAMBLE has to find real words on the grid) loads the bundle's own
+  files rather than reimplementing them — two implementations would agree with
+  each other right up until a player disagreed.
 - **`invariants.mjs`** — game-specific properties checked after every turn and
   at game end ("exactly one bomb holder", "dice never come back", "60 cards are
   always somewhere"). **Every sample ships one** — copy the closest game's.
@@ -102,6 +105,9 @@ routing rather than by the author remembering. Declare it in `manifest.json`:
 "screen": "none" | "optional" | "required"
 ```
 
+`required` means the shell will not start the game without a display attached.
+Use it when the screen holds something the game cannot be played without —
+SCRAMBLE's letter grid is on the TV and nowhere else, so a phone is a pencil.
 `optional` or `required` means the bundle ships a `screen.js` beside `game.js`:
 
 ```js
@@ -135,8 +141,18 @@ It plays a real game (using the bundle's `bot.mjs`), drives the screen at TV
 1080p/4K/720p and iPad landscape/portrait/mini, and fails on: a throw, a blank
 frame, anything **clipped by the edge or under a TV's overscan**, two different
 labels **drawn on top of each other**, fewer than two game phases reached, and
-any string the host sent privately being drawn — it probes that last one by
-handing the screen private payloads the shell never would.
+any private payload being drawn.
+
+That last one is probed, not hoped for: the screen is handed the host's private
+payloads — which the shell never does — once as sent and once with every string
+replaced by a sentinel. The sentinel is there because matching the real strings
+is not enough. SCRAMBLE draws its board in capitals, so a screen that rendered a
+player's private word list drew `CATS` while the wire said `cats`, and the leak
+check saw nothing. A sentinel on the glass has no innocent explanation.
+
+Celebrating? Pass the safe box to `motion.particles(ctx, dt, {bounds})`.
+Unbounded confetti leaves the screen, which is a layout failure like any other —
+and one that only shows up at the moment of winning, the hardest frame to reach.
 
 A host putting a secret INTO a broadcast is not a screen bug (it is already on
 every phone); assert that in the game's `invariants.mjs`, as `fishbowl` does.

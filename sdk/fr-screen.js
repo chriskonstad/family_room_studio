@@ -406,15 +406,34 @@
         return api;
       },
 
-      /** Step and draw the particles. Call once per frame, after your board. */
-      particles: function (ctx, dt, gravity) {
-        var g = gravity == null ? 520 : gravity;
+      /**
+       * Step and draw the particles. Call once per frame, after your board.
+       *
+       * @param {Object|number} [opts] `{gravity, bounds}`, or a bare gravity number.
+       *   `bounds` is a rectangle confetti may not leave — pass the SAFE box and a
+       *   celebration can no longer throw squares under a TV's overscan or off the
+       *   canvas. Without it a burst is the one thing on a screen that reliably
+       *   breaks the layout contract every other part of this library keeps, and
+       *   it does so only at the moment of winning, which is the hardest moment to
+       *   get a headless run to reach.
+       */
+      particles: function (ctx, dt, opts) {
+        var o = (opts == null || typeof opts === 'number') ? { gravity: opts } : opts;
+        var g = o.gravity == null ? 520 : o.gravity;
+        var b = o.bounds || null;
         var s = Math.max(0, dt || 16) / 1000;
         for (var i = parts.length - 1; i >= 0; i--) {
           var p = parts[i];
           p.age += dt;
           if (p.age >= p.life) { parts.splice(i, 1); continue; }
           p.vy += g * s; p.x += p.vx * s; p.y += p.vy * s;
+          if (b) {
+            var half = p.size / 2;
+            if (p.x - half < b.x || p.y - half < b.y ||
+                p.x + half > b.x + b.w || p.y + half > b.y + b.h) {
+              parts.splice(i, 1); continue;      // gone over the edge; it is not drawn there
+            }
+          }
           ctx.globalAlpha = 1 - p.age / p.life;
           ctx.fillStyle = p.color;
           ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
