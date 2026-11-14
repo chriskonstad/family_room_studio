@@ -14,8 +14,9 @@ node check.mjs
 
 Run it before every commit; CI (`.github/workflows/check.yml`) runs it on every
 push and PR. It runs, in order: the Table SDK conformance suite, the FR library's
-own tests (including a fuzz soak), bundle validation, and a headless bot playtest
-of every sample. All four must be green.
+own tests (including a fuzz soak), the fr-screen library's tests, bundle
+validation, a headless bot playtest of every sample, and a headless run of every
+shared screen at six screen shapes. All six must be green.
 
 ## Layout
 
@@ -24,6 +25,7 @@ of every sample. All four must be green.
 | `sdk/table-sdk.js` | The ONE `Table` implementation, shared verbatim with the iOS shell. Changing it changes every game on every device. |
 | `sdk/fr-game.js` | `FR` — seeded RNG, decks, seats, standings, timers, and the `FR.host` intent reducer. `sdk/fr-game.test.mjs` is its suite. |
 | `sdk/fr-feel.js` | Animations / haptics / sound. |
+| `sdk/fr-screen.js` | `FRScreen` — the SHARED SCREEN drawing vocabulary (see below). `sdk/fr-screen.test.mjs` is its suite. |
 | `harness/` | Headless runner + fuzzer. `runner.mjs` boots N virtual phones on a virtual clock (including `Date`); `playtest.mjs` plays bundles to completion under bots and asserts the invariants below. |
 | `playtest/` | The browser Playtest Studio, plus `samples/<key>/` — the game bundles. |
 | `validate.mjs` | Static bundle checks (manifest schema, offline-only, authoring lints). |
@@ -89,6 +91,55 @@ Per-bundle hooks, dropped beside `game.js`:
 The playtest also reports intents that were **never sent** across a batch —
 treat that as an untested code path, not noise: either the bots can't reach it
 (declare `options`) or the feature is dead.
+
+## The shared screen (Apple TV, an iPad, the Studio panel)
+
+A screen is an auxiliary DISPLAY, not a player. It is handed the host's public
+broadcasts and never a private `sendTo`, so a game's hands stay on the phones by
+routing rather than by the author remembering. Declare it in `manifest.json`:
+
+```json
+"screen": "none" | "optional" | "required"
+```
+
+`optional` or `required` means the bundle ships a `screen.js` beside `game.js`:
+
+```js
+function createScreen(Table, screen) {
+  var view = null;
+  Table.onMessage(function (_from, msg) { if (msg.t === 'state') view = msg.s; });
+  screen.onDraw(function (ctx, env) { /* env: width, height, safe, t, dt */ });
+}
+```
+
+**There is no DOM here, and no HTML.** tvOS has no WebKit at all — not a
+restricted one, none — so a screen cannot be a web page. `ctx` is a RECORDER
+with exactly the canvas-2d vocabulary in `FRScreen.PROPS`/`METHODS`; anything
+outside it throws on your laptop rather than drawing nothing on a TV. The
+recorded frame is replayed onto a real `<canvas>` in the Studio and on an iPad,
+and onto a SwiftUI Canvas on an Apple TV.
+
+Helpers worth knowing: `FRScreen.box(env)` for a safe-area-aware layout box with
+`u(fraction)`/`rows`/`cols`/`portrait`, `FRScreen.fitFont(text, maxWidth, max)`,
+`FRScreen.motion()` for `follow`/`pulse`/`burst`/`particles`, and
+`FRScreen.ease`. `ctx.measureText` is a consistent ESTIMATE, not a measurement —
+deliberately wrong by the same amount on every renderer. Position with
+`textAlign`/`textBaseline`, not arithmetic on it.
+
+```sh
+node harness/screen.mjs <key> --verbose      # one bundle, six screen shapes
+node harness/screen.mjs --all --games 20     # harder soak
+```
+
+It plays a real game (using the bundle's `bot.mjs`), drives the screen at TV
+1080p/4K/720p and iPad landscape/portrait/mini, and fails on: a throw, a blank
+frame, anything **clipped by the edge or under a TV's overscan**, two different
+labels **drawn on top of each other**, fewer than two game phases reached, and
+any string the host sent privately being drawn — it probes that last one by
+handing the screen private payloads the shell never would.
+
+A host putting a secret INTO a broadcast is not a screen bug (it is already on
+every phone); assert that in the game's `invariants.mjs`, as `fishbowl` does.
 
 ## When the harness and a game disagree
 
