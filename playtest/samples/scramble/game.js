@@ -312,6 +312,28 @@ function createGame(Table, root) {
     send({ t: 'word', w: typed, n });
   }
 
+  /* The keyboard is up for almost the whole of this game, and on a phone it owns
+   * the bottom half of the window — which is where "I'm done" and your word count
+   * were: present, laid out, and completely unreachable behind it. A headless
+   * harness has no keyboard, so nothing it checks could ever have shown this; it
+   * took one tap on a real phone.
+   *
+   * The visual viewport is the part of the page a person can actually see, and it
+   * shrinks when the keyboard comes up. Sizing the body to THAT rather than to the
+   * window compresses the layout above the keyboard instead of hiding the end of
+   * it. No-ops anywhere `visualViewport` doesn't exist. */
+  function keepAboveKeyboard() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const fit = () => {
+      document.body.style.height = vv.height + 'px';
+      window.scrollTo(0, 0);
+    };
+    vv.addEventListener('resize', fit);
+    vv.addEventListener('scroll', fit);
+    fit();
+  }
+
   function clock(seconds) {
     const s = Math.max(0, seconds | 0);
     return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
@@ -446,6 +468,11 @@ function createGame(Table, root) {
 
     const doneBtn = root.querySelector('#done');
     if (doneBtn) doneBtn.disabled = !!v.done[MY];
+    const entry = root.querySelector('#entry');
+    if (entry && v.phase === 'round') {
+      entry.disabled = !!v.done[MY];
+      if (v.done[MY]) entry.placeholder = 'you’re done — waiting for the others';
+    }
 
     const scored = root.querySelector('#scored');
     if (scored && v.points) {
@@ -475,5 +502,6 @@ function createGame(Table, root) {
     }
   }
 
+  keepAboveKeyboard();
   render();
 }
