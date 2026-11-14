@@ -52,17 +52,25 @@ function createScreen(Table, screen) {
 
   /* One expedition card. Small, high-contrast, readable across a room: the value
    * is the only thing that matters and the colour says which route it's on. */
-  function card(ctx, x, y, w, h, c, col, alpha) {
+  /* `band` is how much of the card the next one leaves showing, and `anchor`
+   * which end that sliver is at. A pile is fanned — cards overlap by design — so
+   * a value centred on the card is printed through the card above it. The number
+   * belongs in the part you can actually see, sized to fit it. */
+  function card(ctx, x, y, w, h, c, col, alpha, band, anchor) {
+    band = band == null ? h : Math.min(band, h);
     ctx.globalAlpha = alpha == null ? 1 : alpha;
     ctx.fillStyle = col;
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, Math.min(h * 0.3, w * 0.16));
     ctx.fill();
+    var ty = anchor === 'top' ? y + band / 2
+           : anchor === 'bottom' ? y + h - band / 2
+           : y + h / 2;
     ctx.fillStyle = 'rgba(0,0,0,0.42)';
-    ctx.font = (Math.min(h * 0.72, w * 0.5) | 0) + 'px sans-serif';
+    ctx.font = (Math.min(band * 0.7, w * 0.5) | 0) + 'px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(c.v === 0 ? '★' : String(c.v), x + w / 2, y + h / 2);
+    ctx.fillText(c.v === 0 ? '★' : String(c.v), x + w / 2, ty);
     ctx.globalAlpha = 1;
   }
 
@@ -97,15 +105,22 @@ function createScreen(Table, screen) {
 
     // Hand SIZE is public at a real table; the cards themselves never arrive here.
     var held = (v.handCounts && v.handCounts[id]) || 0;
+    // The total gets a column of its own. It used to be given a fixed 11% of the
+    // width, which is plenty for "42" and not nearly enough for "-108" — on a
+    // narrow screen the score printed straight through the card count.
+    var scoreText = String(Math.round(shown));
+    var scoreW = b.w * 0.2;
+
     ctx.textAlign = 'right';
     ctx.fillStyle = DIM;
     var cards = held + (held === 1 ? ' card' : ' cards');
-    ctx.font = FRScreen.fitFont(cards, b.w * 0.2, Math.min(h * 0.4, b.u(0.034))) + 'px sans-serif';
-    ctx.fillText(cards, b.right - pad - b.w * 0.11, mid);
+    ctx.font = FRScreen.fitFont(cards, b.w * 0.24, Math.min(h * 0.4, b.u(0.034))) + 'px sans-serif';
+    ctx.fillText(cards, b.right - pad - scoreW, mid);
 
     ctx.fillStyle = INK;
-    ctx.font = (Math.min(h * 0.62, b.u(0.062)) | 0) + 'px sans-serif';
-    ctx.fillText(String(Math.round(shown)), b.right - pad, mid);
+    ctx.font = FRScreen.fitFont(scoreText, scoreW - b.u(0.012),
+                                Math.min(h * 0.62, b.u(0.062))) + 'px sans-serif';
+    ctx.fillText(scoreText, b.right - pad, mid);
 
     // Keep the eye on the right strip when the turn changes.
     if (mine) {
@@ -155,11 +170,18 @@ function createScreen(Table, screen) {
     ctx.font = FRScreen.fitFont(deck, b.w * 0.34, b.u(0.036)) + 'px sans-serif';
     ctx.fillText(deck, b.right, b.y);
 
+    // The banner gets its own line rather than sharing one with the title and the
+    // deck count. Squeezed between them it fit comfortably on a 16:9 TV and landed
+    // straight on top of the title on an iPad stood up — found headlessly, at that
+    // exact shape, before any hardware was involved.
+    var bannerY = b.y + head * 1.1;
+    var headerH = head * 1.1;
     if (v.banner) {
       ctx.textAlign = 'center';
       ctx.fillStyle = INK;
-      ctx.font = FRScreen.fitFont(v.banner, b.w * 0.44, b.u(0.04)) + 'px sans-serif';
-      ctx.fillText(v.banner, b.cx, b.y + b.u(0.004));
+      ctx.font = FRScreen.fitFont(v.banner, b.w * 0.8, b.u(0.04)) + 'px sans-serif';
+      ctx.fillText(v.banner, b.cx, bannerY);
+      headerH = bannerY - b.y + b.u(0.05);
     }
 
     if (v.phase === 'gameOver') {
@@ -182,7 +204,7 @@ function createScreen(Table, screen) {
     // Two expeditions grow away from a shared centre line, the way the cards sit
     // on a real table: one player's routes climb up, the other's run down, with
     // the discard pile for each route between them.
-    var top = b.y + b.u(0.1);
+    var top = b.y + headerH + b.u(0.018);
     var bottom = b.bottom;
     var stripH = Math.max(b.u(0.07), Math.min(b.u(0.095), (bottom - top) * 0.13));
     var boardTop = top + stripH + b.u(0.02);
@@ -209,8 +231,13 @@ function createScreen(Table, screen) {
         if (pile.length > deepest) deepest = pile.length;
       }
     }
-    var cardH = Math.min(cardW * 0.62, (halfH - b.u(0.03)) / Math.max(deepest, 4) * 1.6);
-    var step = Math.min(cardH * 0.72, (halfH - cardH - b.u(0.01)) / Math.max(deepest - 1, 1));
+    // Each half holds the stack AND its running-total label, so the label's room
+    // is reserved here rather than clamped afterwards: clamping just pushed the
+    // number onto the top card instead of into the player's strip.
+    var labelGap = b.u(0.05);
+    var stackSpace = Math.max(b.u(0.08), halfH - b.u(0.012) - labelGap);
+    var cardH = Math.min(cardW * 0.62, stackSpace / Math.max(deepest, 4) * 1.6);
+    var step = Math.min(cardH * 0.72, (stackSpace - cardH) / Math.max(deepest - 1, 1));
 
     for (var i = 0; i < ROUTES.length; i++) {
       var r = ROUTES[i];
@@ -261,7 +288,11 @@ function createScreen(Table, screen) {
             ? discMid - discH / 2 - b.u(0.012) - cardH - c * step
             : discMid + discH / 2 + b.u(0.012) + c * step;
           var newest = c === pile.length - 1 ? fresh : 0;
-          card(ctx, cardX, y, cardW, cardH, pile[c], r.color, 0.72 + 0.28 * (c / Math.max(pile.length - 1, 1)));
+          // The newest card is on top and fully visible; the rest show `step`.
+          var isTop = c === pile.length - 1;
+          card(ctx, cardX, y, cardW, cardH, pile[c], r.color,
+               0.72 + 0.28 * (c / Math.max(pile.length - 1, 1)),
+               isTop ? cardH : step, isTop ? 'mid' : (s === 0 ? 'bottom' : 'top'));
           if (newest > 0) {
             ctx.globalAlpha = newest * 0.7;
             ctx.strokeStyle = '#ffffff';
@@ -275,9 +306,12 @@ function createScreen(Table, screen) {
         // What this route is worth right now — the number players argue about.
         if (pile.length) {
           var sc = routeScore(pile);
-          var sy = s === 0
-            ? discMid - discH / 2 - b.u(0.012) - cardH - (pile.length - 1) * step - b.u(0.022)
-            : discMid + discH / 2 + b.u(0.012) + (pile.length - 1) * step + cardH + b.u(0.022);
+          // A fixed lane at each end of the board, inside the room `labelGap`
+          // reserved above. Following the top of the stack made the label's
+          // position depend on how deep the pile was, and a deep one walked it
+          // into the player's strip — "-108" printed through "8 cards".
+          // A lane also just reads better: five totals on one line.
+          var sy = s === 0 ? boardTop + labelGap / 2 : boardBottom - labelGap / 2;
           ctx.fillStyle = sc < 0 ? '#ef476f' : '#06d6a0';
           ctx.font = (b.u(0.026) | 0) + 'px sans-serif';
           ctx.textAlign = 'center';

@@ -12,6 +12,7 @@
  *   never throws          a screen that crashes takes the room's focal point out
  *   draws something       a blank TV is indistinguishable from a broken one
  *   fits                  nothing clipped or under the overscan, at six shapes
+ *   reads                 no two labels drawn on top of each other
  *   NEVER LEAKS           no string the host sent privately is ever drawn
  *
  * The leak check is the reason this file exists, and it is run with a deliberate
@@ -123,6 +124,9 @@ const SHAPES = [
  * and deliberate, so a fill that covers the WHOLE canvas is exempt; anything else
  * poking out is content the room cannot read. */
 const SLOP = 0.5;
+/* Text boxes are estimated, not measured (see fr-screen's measureText), so a
+ * hair of overlap is noise. A real collision is much larger than this. */
+const OVERLAP_SLOP = 2;
 
 /**
  * Does this frame fit?
@@ -138,10 +142,24 @@ function layoutProblems(ops, shape) {
   const safe = { x: s.left, y: s.top, r: shape.width - s.right, b: shape.height - s.bottom };
   const problems = [];
 
+  const covers = (it) => it.x <= SLOP && it.y <= SLOP
+    && it.x + it.w >= shape.width - SLOP && it.y + it.h >= shape.height - SLOP;
+
+  // THE CURTAIN. A results panel or a round-over card is drawn as a near-opaque
+  // fill over the whole screen and then its own text on top. Everything painted
+  // before that fill is behind it, so complaining that a card value sits under
+  // the headline is complaining about something nobody can see. Find the last
+  // full-screen fill solid enough to hide what it covers, and judge only what
+  // comes after it.
+  let curtain = -1;
   for (const it of items) {
-    const full = it.x <= SLOP && it.y <= SLOP
-              && it.x + it.w >= shape.width - SLOP && it.y + it.h >= shape.height - SLOP;
-    if (full) continue;                       // a deliberate full-bleed background
+    if (it.alpha >= 0.75 && (it.op === 'fill' || it.op === 'fillRect') && covers(it)) curtain = it.i;
+  }
+
+  const visible = items.filter(it => it.i >= curtain && it.alpha > 0.02);
+
+  for (const it of visible) {
+    if (covers(it)) continue;                 // a deliberate full-bleed background
 
     const what = it.text != null ? `text "${it.text}"` : it.op;
 
@@ -162,6 +180,28 @@ function layoutProblems(ops, shape) {
       problems.push(`${what} spills outside the safe area: ` +
         `${Math.round(it.x)},${Math.round(it.y)} ${Math.round(it.w)}×${Math.round(it.h)} ` +
         `is outside ${Math.round(safe.x)},${Math.round(safe.y)}–${Math.round(safe.r)},${Math.round(safe.b)}`);
+    }
+  }
+
+  // TEXT ON TEXT. Fitting inside the screen is not the same as flowing on it: a
+  // header and a banner can both be comfortably inside the safe area and still
+  // land on top of each other at one aspect ratio. Two different strings in the
+  // same frame overlapping is always a bug — nobody draws one label through
+  // another on purpose. Identical strings are left alone, since drawing the same
+  // text twice is how shadows and outlines are done.
+  const texts = visible.filter(it => it.text != null && String(it.text).trim() !== '');
+  for (let i = 0; i < texts.length; i++) {
+    for (let j = i + 1; j < texts.length; j++) {
+      const a = texts[i], c = texts[j];
+      if (a.text === c.text) continue;
+      const ox = Math.min(a.x + a.w, c.x + c.w) - Math.max(a.x, c.x);
+      const oy = Math.min(a.y + a.h, c.y + c.h) - Math.max(a.y, c.y);
+      if (ox <= OVERLAP_SLOP || oy <= OVERLAP_SLOP) continue;
+      // Ignore a nick at the corner: real collisions share a meaningful area.
+      const share = (ox * oy) / Math.min(a.w * a.h, c.w * c.h);
+      if (share < 0.12) continue;
+      problems.push(`text "${a.text}" and "${c.text}" overlap by ` +
+        `${Math.round(ox)}×${Math.round(oy)} (${Math.round(share * 100)}% of the smaller)`);
     }
   }
   return problems;

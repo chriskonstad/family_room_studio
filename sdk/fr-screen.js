@@ -187,14 +187,23 @@
                w: Math.max(path.x + path.w, b.x + b.w) - x,
                h: Math.max(path.y + path.h, b.y + b.h) - y };
     }
+    var at = 0;               // index of the op being measured
+
     function emit(op, b, text) {
       if (!b || !isFinite(b.x) || !isFinite(b.y)) return;
-      var it = { op: op, x: b.x, y: b.y, w: b.w, h: b.h };
+      // `i` and `alpha` are what let a caller reason about painter's order:
+      // anything drawn before an opaque full-screen fill is covered up, and
+      // anything drawn at alpha 0 isn't there at all. A layout check that can't
+      // see either reports collisions with content nobody can see.
+      var a = style.globalAlpha;
+      var it = { op: op, i: at, alpha: a == null ? 1 : Number(a),
+                 x: b.x, y: b.y, w: b.w, h: b.h };
       if (text != null) it.text = text;
       items.push(it);
     }
 
     for (var i = 0; i < ops.length; i++) {
+      at = i;
       var o = ops[i], k = o[0];
 
       if (k === '=') { style[o[1]] = o[2]; continue; }
