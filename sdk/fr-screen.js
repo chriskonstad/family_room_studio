@@ -135,6 +135,135 @@
     return ops.length;
   };
 
+  /* -------------------------------------------------------------- bounds --- */
+
+  /**
+   * Where everything a frame drew actually ENDED UP, in screen coordinates.
+   *
+   * This is the point of recording rather than rasterising. A frame is a list of
+   * ops with coordinates, so "is anything clipped off the edge" and "does this
+   * text overflow its row" are arithmetic — answerable on a laptop, for every
+   * screen shape, with no renderer and no screenshot to eyeball.
+   *
+   * A TV makes this matter more than a phone does: the outer few percent of a
+   * panel can be physically cut by overscan, so content inside the canvas but
+   * outside the safe rect is content nobody in the room will ever see.
+   *
+   * Transforms are tracked properly — a translate/rotate/scale inside a
+   * save/restore moves the box, and ignoring that would make the whole check
+   * lie exactly where layouts are most likely to be wrong.
+   *
+   * @returns {{items:Array, union:?Object}} each item { op, x, y, w, h, text? }
+   */
+  FRScreen.bounds = function (ops) {
+    // [a,b,c,d,e,f], same convention as canvas.
+    var m = [1, 0, 0, 1, 0, 0];
+    var stack = [];
+    var style = { font: '16px sans-serif', textAlign: 'start', textBaseline: 'alphabetic', lineWidth: 1 };
+    var styleStack = [];
+    var items = [];
+    var path = null;          // bbox accumulated by moveTo/lineTo/arc/rect until fill/stroke
+
+    function mul(x, y) {
+      return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+    }
+    function compose(n) {
+      m = [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
+           m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+           m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+    }
+    function box(pts) {
+      var xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; });
+      var x = Math.min.apply(null, xs), y = Math.min.apply(null, ys);
+      return { x: x, y: y, w: Math.max.apply(null, xs) - x, h: Math.max.apply(null, ys) - y };
+    }
+    function rectPts(x, y, w, h) {
+      return [mul(x, y), mul(x + w, y), mul(x, y + h), mul(x + w, y + h)];
+    }
+    function grow(b) {
+      if (!path) { path = { x: b.x, y: b.y, w: b.w, h: b.h }; return; }
+      var x = Math.min(path.x, b.x), y = Math.min(path.y, b.y);
+      path = { x: x, y: y,
+               w: Math.max(path.x + path.w, b.x + b.w) - x,
+               h: Math.max(path.y + path.h, b.y + b.h) - y };
+    }
+    function emit(op, b, text) {
+      if (!b || !isFinite(b.x) || !isFinite(b.y)) return;
+      var it = { op: op, x: b.x, y: b.y, w: b.w, h: b.h };
+      if (text != null) it.text = text;
+      items.push(it);
+    }
+
+    for (var i = 0; i < ops.length; i++) {
+      var o = ops[i], k = o[0];
+
+      if (k === '=') { style[o[1]] = o[2]; continue; }
+      if (k === 'save') { stack.push(m.slice()); styleStack.push(JSON.parse(JSON.stringify(style))); continue; }
+      if (k === 'restore') {
+        if (stack.length) m = stack.pop();
+        if (styleStack.length) style = styleStack.pop();
+        continue;
+      }
+      if (k === 'translate') { compose([1, 0, 0, 1, o[1], o[2]]); continue; }
+      if (k === 'scale') { compose([o[1], 0, 0, o[2], 0, 0]); continue; }
+      if (k === 'rotate') {
+        var c = Math.cos(o[1]), s = Math.sin(o[1]);
+        compose([c, s, -s, c, 0, 0]);
+        continue;
+      }
+
+      if (k === 'beginPath') { path = null; continue; }
+      if (k === 'closePath') continue;
+
+      if (k === 'moveTo' || k === 'lineTo') { grow(box([mul(o[1], o[2])])); continue; }
+      if (k === 'rect' || k === 'roundRect') { grow(box(rectPts(o[1], o[2], o[3], o[4]))); continue; }
+      if (k === 'arc') {
+        var r = o[3];
+        grow(box(rectPts(o[1] - r, o[2] - r, r * 2, r * 2)));
+        continue;
+      }
+
+      if (k === 'fill' || k === 'stroke') {
+        if (path) {
+          var pad = k === 'stroke' ? (Number(style.lineWidth) || 1) / 2 : 0;
+          emit(k, { x: path.x - pad, y: path.y - pad, w: path.w + pad * 2, h: path.h + pad * 2 });
+        }
+        continue;
+      }
+
+      if (k === 'fillRect' || k === 'strokeRect' || k === 'clearRect') {
+        emit(k, box(rectPts(o[1], o[2], o[3], o[4])));
+        continue;
+      }
+
+      if (k === 'fillText') {
+        var text = String(o[1] == null ? '' : o[1]);
+        var size = parseFloat(String(style.font || '16px')) || 16;
+        var w = text.length * size * 0.55;       // same estimate measureText gives
+        var x = o[2], y = o[3];
+        var a = style.textAlign;
+        if (a === 'center') x -= w / 2;
+        else if (a === 'right' || a === 'end') x -= w;
+        var bl = style.textBaseline, top;
+        if (bl === 'top' || bl === 'hanging') top = y;
+        else if (bl === 'middle') top = y - size / 2;
+        else if (bl === 'bottom') top = y - size;
+        else top = y - size * 0.8;               // alphabetic
+        emit('fillText', box(rectPts(x, top, w, size)), text);
+      }
+    }
+
+    var union = null;
+    items.forEach(function (it) {
+      if (!union) { union = { x: it.x, y: it.y, w: it.w, h: it.h }; return; }
+      var x = Math.min(union.x, it.x), y = Math.min(union.y, it.y);
+      union = { x: x, y: y,
+                w: Math.max(union.x + union.w, it.x + it.w) - x,
+                h: Math.max(union.y + union.h, it.y + it.h) - y };
+    });
+    return { items: items, union: union };
+  };
+
   /* -------------------------------------------------------------- layout --- */
 
   /**
@@ -176,6 +305,23 @@
         return out;
       }
     };
+  };
+
+  /**
+   * The largest font size at which `text` fits in `maxWidth`.
+   *
+   * Screens come in shapes a layout did not anticipate — the same headline that
+   * sits comfortably across a 16:9 TV runs off the side of an iPad stood up. Sizing
+   * from the shorter edge helps but is not enough on its own, because the text's
+   * length is not in that calculation at all.
+   *
+   * Uses the same estimate as measureText, so what this promises and what the
+   * bounds check measures are the same number on every renderer.
+   */
+  FRScreen.fitFont = function (text, maxWidth, maxSize, minSize) {
+    var len = String(text == null ? '' : text).length || 1;
+    var ideal = maxWidth / (len * 0.55);
+    return Math.max(minSize == null ? 10 : minSize, Math.min(maxSize, Math.floor(ideal)));
   };
 
   /* ------------------------------------------------------------- motion --- */

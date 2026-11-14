@@ -27,6 +27,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import { runGame, REPO } from './runner.mjs';
+import FRScreenLib from '../sdk/fr-screen.js';
 
 const SAMPLES = join(REPO, 'playtest/samples');
 
@@ -101,10 +102,63 @@ function bootScreen(dir) {
 
 /* A TV and an iPad, so a screen is exercised at both shapes every run. */
 const SHAPES = [
+  // Overscan is 5% a side on a TV — content outside the safe rect is inside the
+  // canvas and still physically off the panel in somebody's living room.
   { name: 'Apple TV 1080p', width: 1920, height: 1080, safe: { top: 54, right: 96, bottom: 54, left: 96 } },
-  { name: 'iPad landscape', width: 1180, height: 820, safe: { top: 24, right: 24, bottom: 24, left: 24 } },
-  { name: 'iPad portrait',  width: 820, height: 1180, safe: { top: 24, right: 24, bottom: 24, left: 24 } }
+  { name: 'Apple TV 4K',    width: 3840, height: 2160, safe: { top: 108, right: 192, bottom: 108, left: 192 } },
+  { name: 'TV 720p',        width: 1280, height: 720,  safe: { top: 36, right: 64, bottom: 36, left: 64 } },
+  { name: 'iPad landscape', width: 1180, height: 820,  safe: { top: 24, right: 24, bottom: 24, left: 24 } },
+  { name: 'iPad portrait',  width: 820,  height: 1180, safe: { top: 24, right: 24, bottom: 24, left: 24 } },
+  { name: 'iPad mini',      width: 1024, height: 768,  safe: { top: 20, right: 20, bottom: 20, left: 20 } }
 ];
+
+/* How far outside the safe rect we tolerate. Full-bleed backgrounds are legitimate
+ * and deliberate, so a fill that covers the WHOLE canvas is exempt; anything else
+ * poking out is content the room cannot read. */
+const SLOP = 0.5;
+
+/**
+ * Does this frame fit?
+ *
+ * The question the whole headless screen story exists to answer: is anything
+ * clipped, and does everything flow inside the usable area at every shape? A
+ * recorded frame has coordinates, so this is arithmetic rather than eyeballing
+ * screenshots — and it runs at six screen sizes on every check.
+ */
+function layoutProblems(ops, shape) {
+  const { items } = FRScreenLib.bounds(ops);
+  const s = shape.safe || { top: 0, right: 0, bottom: 0, left: 0 };
+  const safe = { x: s.left, y: s.top, r: shape.width - s.right, b: shape.height - s.bottom };
+  const problems = [];
+
+  for (const it of items) {
+    const full = it.x <= SLOP && it.y <= SLOP
+              && it.x + it.w >= shape.width - SLOP && it.y + it.h >= shape.height - SLOP;
+    if (full) continue;                       // a deliberate full-bleed background
+
+    const what = it.text != null ? `text "${it.text}"` : it.op;
+
+    // Off the canvas entirely — drawn but unseeable.
+    if (it.x + it.w < 0 || it.y + it.h < 0 || it.x > shape.width || it.y > shape.height) {
+      problems.push(`${what} is drawn completely off-screen at (${Math.round(it.x)},${Math.round(it.y)})`);
+      continue;
+    }
+    // Cut by the canvas edge.
+    if (it.x < -SLOP || it.y < -SLOP || it.x + it.w > shape.width + SLOP || it.y + it.h > shape.height + SLOP) {
+      problems.push(`${what} is clipped by the screen edge: ` +
+        `${Math.round(it.x)},${Math.round(it.y)} ${Math.round(it.w)}×${Math.round(it.h)} ` +
+        `exceeds ${shape.width}×${shape.height}`);
+      continue;
+    }
+    // Inside the canvas but under the overscan — invisible on a real TV.
+    if (it.x < safe.x - SLOP || it.y < safe.y - SLOP || it.x + it.w > safe.r + SLOP || it.y + it.h > safe.b + SLOP) {
+      problems.push(`${what} spills outside the safe area: ` +
+        `${Math.round(it.x)},${Math.round(it.y)} ${Math.round(it.w)}×${Math.round(it.h)} ` +
+        `is outside ${Math.round(safe.x)},${Math.round(safe.y)}–${Math.round(safe.r)},${Math.round(safe.b)}`);
+    }
+  }
+  return problems;
+}
 
 export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = false } = {}) {
   const dir = join(SAMPLES, gameKey);
@@ -118,6 +172,7 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
   if (existsSync(botPath)) bot = (await import(pathToFileURL(botPath).href)).default;
 
   const failures = [];
+  const seenLayout = new Set();
   let frames = 0, drew = 0, phases = new Set();
 
   for (let g = 0; g < games; g++) {
@@ -150,6 +205,16 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
         frames++;
         if (out.ops.length > 0) drew++;
         else failures.push({ seed: s, why: `drew nothing on ${shape.name} — a blank screen reads as broken` });
+
+        // Clipping and overflow, at every shape, every frame.
+        for (const problem of layoutProblems(out.ops, shape)) {
+          const key = shape.name + '|' + problem;
+          if (!seenLayout.has(key)) {           // one report per distinct problem, not per frame
+            seenLayout.add(key);
+            failures.push({ seed: s, why: `${shape.name}: ${problem}` });
+          }
+        }
+        if (failures.length > 6) return false;
 
         for (const text of out.texts) {
           for (const secret of secrets) {
@@ -212,7 +277,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         console.log(`        reproduce: node harness/screen.mjs ${key} --games 1 --seed ${f.seed} --verbose`);
       }
     } else {
-      console.log(`  ✓ ${key.padEnd(12)} ${out.frames} frames · ${SHAPES.length} shapes · phases: ${out.phases.join(', ')} · no leaks`);
+      console.log(`  ✓ ${key.padEnd(12)} ${out.frames} frames · ${SHAPES.length} shapes · phases: ${out.phases.join(', ')} · fits, no leaks`);
     }
   }
   console.log(bad ? `\n${bad} screen(s) failing` : `\nAll ${list.length} screen(s) pass`);

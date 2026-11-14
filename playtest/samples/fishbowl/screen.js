@@ -84,7 +84,7 @@ function createScreen(Table, screen) {
       ctx.fill();
 
       ctx.fillStyle = active ? INK : DIM;
-      ctx.font = (b.u(0.055) | 0) + 'px sans-serif';
+      ctx.font = FRScreen.fitFont(t.name, w - b.u(0.22), b.u(0.055)) + 'px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.fillText(t.name, x + b.u(0.06), y);
@@ -100,11 +100,13 @@ function createScreen(Table, screen) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = INK;
-    ctx.font = (b.u(0.11) | 0) + 'px sans-serif';
+    // Size to the WIDTH available, not just the screen's short edge: the same
+    // headline that fits across a 16:9 TV runs off the side of an iPad stood up.
+    ctx.font = FRScreen.fitFont(big, b.w, b.u(0.11)) + 'px sans-serif';
     ctx.fillText(big, b.cx, b.cy - b.u(0.04));
     if (small) {
       ctx.fillStyle = DIM;
-      ctx.font = (b.u(0.045) | 0) + 'px sans-serif';
+      ctx.font = FRScreen.fitFont(small, b.w, b.u(0.045)) + 'px sans-serif';
       ctx.fillText(small, b.cx, b.cy + b.u(0.07));
     }
   }
@@ -123,19 +125,20 @@ function createScreen(Table, screen) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillStyle = INK;
-    ctx.font = (b.u(0.06) | 0) + 'px sans-serif';
+    ctx.font = FRScreen.fitFont(roundLabel(v), b.w * 0.62, b.u(0.06)) + 'px sans-serif';
     ctx.fillText(roundLabel(v), b.x, b.y);
     if (v.roundHint) {
       ctx.fillStyle = DIM;
-      ctx.font = (b.u(0.035) | 0) + 'px sans-serif';
+      ctx.font = FRScreen.fitFont(v.roundHint, b.w * 0.72, b.u(0.035)) + 'px sans-serif';
       ctx.fillText(v.roundHint, b.x, b.y + b.u(0.075));
     }
 
     // Bowl count, top right — the thing everyone keeps asking out loud.
     ctx.textAlign = 'right';
     ctx.fillStyle = DIM;
-    ctx.font = (b.u(0.04) | 0) + 'px sans-serif';
-    ctx.fillText('🐟 ' + (v.bowlLeft || 0) + ' left in the bowl', b.right, b.y);
+    var bowl = '🐟 ' + (v.bowlLeft || 0) + ' left in the bowl';
+    ctx.font = FRScreen.fitFont(bowl, b.w * 0.34, b.u(0.04)) + 'px sans-serif';
+    ctx.fillText(bowl, b.right, b.y);
 
     var body = { width: env.width, height: env.height,
                  safe: { top: (env.safe ? env.safe.top : 0) + b.u(0.17),
@@ -165,31 +168,47 @@ function createScreen(Table, screen) {
       return;
     }
 
-    // Playing: timer on the left, scoreboard on the right.
-    var split = inner.x + inner.w * 0.38;
-    if (v.phase === 'turn' && v.secondsLeft != null) {
-      drawTimer(ctx, inner.x + inner.w * 0.19, inner.cy, inner.u(0.26), v.secondsLeft, 60, now);
+    // A TV is wide, an iPad stood up is tall. Side by side only works for the
+    // first: at portrait the timer ring ran off the left edge entirely, which the
+    // headless layout check caught before any hardware existed to show it.
+    var tall = inner.portrait;
+    var timerCx, timerCy, timerR, teamsSafe;
+
+    if (tall) {
+      timerCx = inner.cx;
+      timerCy = inner.y + inner.h * 0.22;
+      timerR  = Math.min(inner.w * 0.3, inner.h * 0.16);
+      teamsSafe = { top: inner.y + inner.h * 0.44, right: env.safe ? env.safe.right : 0,
+                    bottom: env.safe ? env.safe.bottom : 0, left: env.safe ? env.safe.left : 0 };
     } else {
+      timerCx = inner.x + inner.w * 0.19;
+      timerCy = inner.cy;
+      timerR  = Math.min(inner.w * 0.15, inner.h * 0.3);
+      teamsSafe = { top: body.safe.top, right: env.safe ? env.safe.right : 0,
+                    bottom: env.safe ? env.safe.bottom : 0, left: inner.x + inner.w * 0.38 };
+    }
+
+    if (v.phase === 'turn' && v.secondsLeft != null) {
+      drawTimer(ctx, timerCx, timerCy, timerR, v.secondsLeft, 60, now);
+    } else {
+      var wait = v.phase === 'roundOver' ? 'round over' : 'get ready';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = DIM;
-      ctx.font = (inner.u(0.05) | 0) + 'px sans-serif';
-      ctx.fillText(v.phase === 'roundOver' ? 'round over' : 'get ready',
-                   inner.x + inner.w * 0.19, inner.cy);
+      ctx.font = FRScreen.fitFont(wait, timerR * 2.4, inner.u(0.05)) + 'px sans-serif';
+      ctx.fillText(wait, timerCx, timerCy);
     }
 
     if (v.giver && v.names) {
+      var giving = (v.emojis[v.giver] || '') + ' ' + (v.names[v.giver] || '') + ' is giving';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillStyle = INK;
-      ctx.font = (inner.u(0.045) | 0) + 'px sans-serif';
-      ctx.fillText((v.emojis[v.giver] || '') + ' ' + (v.names[v.giver] || '') + ' is giving',
-                   inner.x + inner.w * 0.19, inner.bottom - inner.u(0.08));
+      ctx.font = FRScreen.fitFont(giving, timerR * 2.6, inner.u(0.045)) + 'px sans-serif';
+      ctx.fillText(giving, timerCx, timerCy + timerR * 1.25);
     }
 
-    drawTeams(ctx, FRScreen.box({ width: env.width, height: env.height,
-      safe: { top: body.safe.top, right: env.safe ? env.safe.right : 0,
-              bottom: env.safe ? env.safe.bottom : 0, left: split } }), v, now);
+    drawTeams(ctx, FRScreen.box({ width: env.width, height: env.height, safe: teamsSafe }), v, now);
 
     motion.particles(ctx, screen.dt);
   });

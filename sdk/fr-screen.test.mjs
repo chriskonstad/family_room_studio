@@ -119,6 +119,92 @@ test('an unknown op is skipped, not thrown, during replay', () => {
   assert.deepEqual(target.log, [['fillRect', 0, 0, 1, 1]], 'later ops still draw');
 });
 
+/* -------------------------------------------------------------- bounds --- */
+section('bounds — where a frame actually put things');
+
+test('a plain rect reports itself', () => {
+  const c = FRScreen.context();
+  c.fillRect(10, 20, 30, 40);
+  assert.deepEqual(FRScreen.bounds(c.ops()).items, [{ op: 'fillRect', x: 10, y: 20, w: 30, h: 40 }]);
+});
+
+test('translate moves the box, and restore puts it back', () => {
+  const c = FRScreen.context();
+  c.save(); c.translate(100, 50); c.fillRect(0, 0, 10, 10); c.restore();
+  c.fillRect(0, 0, 10, 10);
+  const b = FRScreen.bounds(c.ops()).items;
+  assert.deepEqual(b[0], { op: 'fillRect', x: 100, y: 50, w: 10, h: 10 });
+  assert.deepEqual(b[1], { op: 'fillRect', x: 0, y: 0, w: 10, h: 10 }, 'restore must undo the translate');
+});
+
+test('scale and rotate are accounted for', () => {
+  const c = FRScreen.context();
+  c.save(); c.scale(2, 3); c.fillRect(10, 10, 5, 5); c.restore();
+  const s = FRScreen.bounds(c.ops()).items[0];
+  assert.deepEqual(s, { op: 'fillRect', x: 20, y: 30, w: 10, h: 15 });
+
+  const r = FRScreen.context();
+  r.save(); r.rotate(Math.PI / 2); r.fillRect(0, 0, 10, 0); r.restore();
+  const rb = FRScreen.bounds(r.ops()).items[0];
+  assert.ok(Math.abs(rb.h - 10) < 1e-6, 'a horizontal bar rotated 90° becomes vertical');
+});
+
+test('text boxes respect align and baseline', () => {
+  const mk = (align, baseline) => {
+    const c = FRScreen.context();
+    c.font = '40px sans-serif'; c.textAlign = align; c.textBaseline = baseline;
+    c.fillText('abcde', 500, 300);          // width estimate = 5 * 40 * 0.55 = 110
+    return FRScreen.bounds(c.ops()).items[0];
+  };
+  assert.equal(mk('left', 'top').x, 500);
+  assert.equal(mk('center', 'top').x, 445);
+  assert.equal(mk('right', 'top').x, 390);
+  assert.equal(mk('left', 'top').y, 300);
+  assert.equal(mk('left', 'middle').y, 280);
+  assert.equal(mk('left', 'bottom').y, 260);
+  assert.equal(mk('left', 'top').w, 110);
+  assert.equal(mk('left', 'top').h, 40);
+});
+
+test('an arc reports its full circle, not its centre', () => {
+  const c = FRScreen.context();
+  c.beginPath(); c.arc(200, 200, 50, 0, Math.PI * 2); c.fill();
+  assert.deepEqual(FRScreen.bounds(c.ops()).items[0], { op: 'fill', x: 150, y: 150, w: 100, h: 100 });
+});
+
+test('a stroke is fattened by its line width — a ring can overflow by half of it', () => {
+  const c = FRScreen.context();
+  c.lineWidth = 20;
+  c.beginPath(); c.arc(100, 100, 50, 0, Math.PI * 2); c.stroke();
+  const b = FRScreen.bounds(c.ops()).items[0];
+  assert.equal(b.x, 40); assert.equal(b.w, 120);
+});
+
+test('a path accumulates across moveTo/lineTo until it is drawn', () => {
+  const c = FRScreen.context();
+  c.beginPath(); c.moveTo(10, 10); c.lineTo(90, 10); c.lineTo(90, 60); c.fill();
+  assert.deepEqual(FRScreen.bounds(c.ops()).items[0], { op: 'fill', x: 10, y: 10, w: 80, h: 50 });
+});
+
+test('beginPath discards the previous path', () => {
+  const c = FRScreen.context();
+  c.beginPath(); c.moveTo(0, 0); c.lineTo(1000, 1000);
+  c.beginPath(); c.moveTo(10, 10); c.lineTo(20, 20); c.fill();
+  assert.deepEqual(FRScreen.bounds(c.ops()).items[0], { op: 'fill', x: 10, y: 10, w: 10, h: 10 });
+});
+
+test('union covers everything drawn', () => {
+  const c = FRScreen.context();
+  c.fillRect(100, 100, 10, 10);
+  c.fillRect(0, 50, 10, 10);
+  const u = FRScreen.bounds(c.ops()).union;
+  assert.deepEqual(u, { x: 0, y: 50, w: 110, h: 60 });
+});
+
+test('an empty frame has no union rather than a bogus one', () => {
+  assert.equal(FRScreen.bounds([]).union, null);
+});
+
 /* -------------------------------------------------------------- layout --- */
 section('box — screens are not one shape');
 
@@ -154,6 +240,21 @@ test('rows and cols give evenly spaced centres', () => {
   assert.deepEqual(b.cols(2), [250, 750]);
   const padded = b.rows(2, 100);
   assert.equal(padded[0], 275);
+});
+
+test('fitFont shrinks long text to fit, and agrees with the bounds check', () => {
+  const width = 600;
+  for (const text of ['Hi', 'Filling the bowl…', 'A rather long headline indeed, really quite long']) {
+    const size = FRScreen.fitFont(text, width, 120);
+    const c = FRScreen.context();
+    c.font = size + 'px sans-serif';
+    c.textAlign = 'left'; c.textBaseline = 'top';
+    c.fillText(text, 0, 0);
+    const b = FRScreen.bounds(c.ops()).items[0];
+    assert.ok(b.w <= width + 0.5, `"${text}" at ${size}px measured ${b.w}, over ${width}`);
+  }
+  assert.equal(FRScreen.fitFont('Hi', 600, 120), 120, 'short text keeps the ideal size');
+  assert.ok(FRScreen.fitFont('x'.repeat(200), 600, 120) >= 10, 'never shrinks below the floor');
 });
 
 /* -------------------------------------------------------------- motion --- */
