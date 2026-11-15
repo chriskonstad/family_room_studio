@@ -35,15 +35,49 @@ function createScreen(Table, screen) {
     if (msg && msg.t === 'state') view = msg.s;
   });
 
-  var BG = '#160d27';
-  var INK = '#f4eeff';
-  var DIM = 'rgba(244,238,255,0.55)';
-  var FAINT = 'rgba(244,238,255,0.12)';
-  var TILE = '#f3e9d2';
-  var TILEINK = '#2a1b45';
-  var GOLD = '#ffd166';
-  var HOT = '#ff7a8a';
-  var GOOD = '#6ee7a8';
+  /* The palette is the THEME'S, and it arrives in the host's broadcast — this
+   * file has no rules.js to look it up in. Everything drawn below reads these
+   * variables and nothing writes a colour of its own: a literal here is a patch
+   * of the TV that stays purple at Christmas, so `invariants.mjs` fails the
+   * bundle if one appears outside the fallback block.
+   *
+   * The fallback is Classic, for the seconds before the first broadcast lands,
+   * and it is the one copy of those values that is not in rules.js. */
+  var FALLBACK = {
+    glow: '#3b2660', bg1: '#2a1b45', bg2: '#160d27',
+    panel: '#352457', line: '#4b3677',
+    text: '#f4eeff', muted: '#a493c7',
+    accent: '#ffd166', accentLit: '#fff0c2',
+    good: '#6ee7a8', bad: '#ff7a8a',
+    tile: '#f3e9d2', tileInk: '#2a1b45',
+    spark: '#8ab6ff'
+  };
+
+  var BG, INK, DIM, FAINT, TILE, TILEINK, GOLD, HOT, GOOD, SPARK;
+  var PAID_TINT, HIT_TINT, SEAT_TINT;
+  var applied = null;
+
+  /* Alpha variants are derived rather than declared, so a theme states each
+   * colour once and the translucent versions can never disagree with it. */
+  function alpha(hex, a) {
+    var n = parseInt(String(hex).slice(1), 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+
+  function usePalette(p) {
+    if (!p || !p.bg2) p = FALLBACK;
+    if (p.bg2 === applied) return;        // once a game, not once a frame
+    applied = p.bg2;
+    BG = p.bg2; INK = p.text; TILE = p.tile; TILEINK = p.tileInk;
+    GOLD = p.accent; HOT = p.bad; GOOD = p.good; SPARK = p.spark;
+    DIM = alpha(p.text, 0.55);
+    FAINT = alpha(p.text, 0.12);
+    PAID_TINT = alpha(p.good, 0.26);
+    HIT_TINT = alpha(p.accent, 0.22);
+    SEAT_TINT = alpha(p.text, 0.07);
+  }
+
+  usePalette(FALLBACK);
 
   var PLAY_SECONDS = 90;        // only for the bar's fullness; the host owns the clock
 
@@ -171,18 +205,25 @@ function createScreen(Table, screen) {
              box.cx, box.cy, DIM, 'center', 'middle');
       return;
     }
+    /* Each option is shown in the palette it would paint the room with — the
+     * table is choosing a colour as much as a word list, and this is the one
+     * surface everybody is already looking at. */
     var n = choices.length;
     var slotW = box.w / n;
+    var cardW = slotW * 0.84, cardH = box.h * 0.44, cardY = box.y + box.h * 0.32;
     for (var i = 0; i < n; i++) {
       var cx = box.x + slotW * (i + 0.5);
+      var p = choices[i].palette || FALLBACK;
+      panel(ctx, cx - cardW / 2, cardY, cardW, cardH, cardH * 0.12, p.bg1);
+      panel(ctx, cx - cardW / 2, cardY, cardW, cardH * 0.035, cardH * 0.02, p.accent);
       var bob = Math.sin(now / 520 + i * 1.1) * box.h * 0.012;
-      fitted(ctx, choices[i].emoji, slotW * 0.5, box.h * 0.22,
-             cx, box.y + box.h * 0.5 + bob, INK, 'center', 'middle');
-      fitted(ctx, up(choices[i].name), slotW * 0.84, box.h * 0.08,
-             cx, box.y + box.h * 0.68, DIM, 'center', 'middle');
+      fitted(ctx, choices[i].emoji, cardW * 0.5, box.h * 0.2,
+             cx, cardY + cardH * 0.42 + bob, p.text, 'center', 'middle');
+      fitted(ctx, up(choices[i].name), cardW * 0.82, box.h * 0.075,
+             cx, cardY + cardH * 0.8, p.text, 'center', 'middle');
     }
     fitted(ctx, 'THE HOST IS PICKING', box.w * 0.6, box.h * 0.07,
-           box.cx, box.y + box.h * 0.86, FAINT, 'center', 'middle');
+           box.cx, box.y + box.h * 0.9, FAINT, 'center', 'middle');
   }
 
   function drawTally(ctx, box, v, b, now) {
@@ -249,7 +290,7 @@ function createScreen(Table, screen) {
     if (motion.pulse('win', best ? best.id : '-', now, 1) > 0.99) {
       motion.burst(box.cx, box.y + box.h * 0.4, {
         count: 90, speed: 420, life: 2600, size: b.u(0.018),
-        colors: [GOLD, HOT, GOOD, '#8ab6ff']
+        colors: [GOLD, HOT, GOOD, SPARK]
       });
     }
     var who = best ? ((v.emojis || {})[best.id] || '') + ' ' + up((v.names || {})[best.id] || '') : '';
@@ -294,9 +335,9 @@ function createScreen(Table, screen) {
   function highlight(v, id, now) {
     var paid = v.phase === 'tally' && justPaid(v, id);
     var hit = motion.pulse('p' + id, cellValue(v, id), now, 600);
-    if (paid) return 'rgba(110,231,168,0.26)';
-    if (hit > 0) return 'rgba(255,209,102,0.22)';
-    return 'rgba(244,238,255,0.07)';
+    if (paid) return PAID_TINT;
+    if (hit > 0) return HIT_TINT;
+    return SEAT_TINT;
   }
 
   /** A TV is wide: the table goes down the right-hand side. */
@@ -340,6 +381,8 @@ function createScreen(Table, screen) {
   screen.onDraw(function (ctx, env) {
     var b = FRScreen.box(env);
     var now = env.t;
+
+    usePalette(view && view.palette);
 
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, env.width, env.height);

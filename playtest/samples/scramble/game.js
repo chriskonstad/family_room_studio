@@ -341,9 +341,17 @@ function createGame(Table, root) {
       theme: G.theme, themeOnGrid: G.themeOnGrid,
       themeName: R.THEMES[G.theme].name,
       themeEmoji: R.THEMES[G.theme].emoji,
+      /* ...and so do its colours, for the same reason. A phone could look the
+       * palette up in rules.js and does; the screen has no rules.js to look in. */
+      palette: { ...R.THEMES[G.theme].palette },
       themeBonus: R.THEME_BONUS,
       themeChoices: G.phase === 'setup'
-        ? R.THEME_KEYS.map((k) => ({ k: k, name: R.THEMES[k].name, emoji: R.THEMES[k].emoji }))
+        ? R.THEME_KEYS.map((k) => ({
+            k: k, name: R.THEMES[k].name, emoji: R.THEMES[k].emoji,
+            // The TV shows the choice in its own colours, so each option carries
+            // them; they go away with the picker, one phase later.
+            palette: { ...R.THEMES[k].palette }
+          }))
         : null,
       secondsLeft: G.secondsLeft,
       totals: scored ? { ...G.totals } : null,
@@ -607,7 +615,27 @@ function createGame(Table, root) {
 
   /* ------------------------------------------------------------ rendering --- */
 
+  /* The occasion repaints the room.
+   *
+   * These are exactly the custom properties `:root` declares in index.html, so
+   * every rule in the stylesheet follows the theme without knowing that themes
+   * exist — and nothing in the markup has to be re-rendered to change colour.
+   * Keyed on the theme, so it writes fourteen properties once a game rather than
+   * on every state broadcast, and it is a no-op under the headless harness,
+   * which has no documentElement to style. */
+  let painted = null;
+  function paint(key) {
+    const k = R.themeOf(key || 'none');
+    if (k === painted) return;
+    painted = k;
+    const el = typeof document !== 'undefined' && document.documentElement;
+    if (!el || !el.style || !el.style.setProperty) return;
+    const p = R.THEMES[k].palette;
+    R.PALETTE_KEYS.forEach((name) => el.style.setProperty('--' + name.toLowerCase(), p[name]));
+  }
+
   function render() {
+    paint(view && view.theme);
     if (!view) {
       root.innerHTML = '<div class="wrap"><div class="waiting">Getting the letters…</div></div>';
       lastPhase = null;
@@ -653,12 +681,20 @@ function createGame(Table, root) {
           '<div class="brand">SCRAMBLE</div>' +
           '<div class="big">What\u2019s the occasion?</div>' +
           '<div class="themes">' +
+            /* Each row wears the palette it would apply, because "Christmas" is
+             * a word and the green is the thing being chosen. The colours come
+             * off the theme, never out of this file — see index.html's :root. */
             R.THEME_KEYS.map((k) => {
-              const t = R.THEMES[k];
-              return '<button class="theme" type="button" data-k="' + esc(k) + '">' +
+              const t = R.THEMES[k], p = t.palette;
+              return '<button class="theme" type="button" data-k="' + esc(k) + '"' +
+                ' style="background:' + p.bg1 + ';border-color:' + p.line +
+                ';color:' + p.text + '">' +
                 '<span class="te">' + esc(t.emoji) + '</span>' +
                 '<span class="tt"><b>' + esc(t.name) + '</b>' +
-                '<i>' + esc(t.blurb) + '</i></span></button>';
+                '<i style="color:' + p.muted + '">' + esc(t.blurb) + '</i></span>' +
+                '<span class="sw"><i style="background:' + p.accent + '"></i>' +
+                '<i style="background:' + p.tile + '"></i>' +
+                '<i style="background:' + p.good + '"></i></span></button>';
             }).join('') +
           '</div>' +
         '</div>';

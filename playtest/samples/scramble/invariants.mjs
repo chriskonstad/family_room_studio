@@ -46,8 +46,90 @@ const themeFault = (() => {
   return null;
 })();
 
+
+/* ---------------------------------------------------------------- colour ---
+ *
+ * A theme repaints the phones and the TV, which puts three new ways to ship a
+ * broken evening into a bundle that otherwise can't ship one:
+ *
+ *   a palette missing a key — canvas IGNORES `fillStyle = undefined` and keeps
+ *   whatever colour was set last, so the TV would draw a word in the colour of
+ *   the thing before it and nothing would throw;
+ *
+ *   a palette nobody can read — the game is light text on a dark room, and a
+ *   pastel occasion is exactly the request that ends in grey-on-grey;
+ *
+ *   and a colour written anywhere other than a palette, which is a patch of the
+ *   screen that stays purple at Christmas. That one can only be caught by
+ *   reading the files, so it is read here.
+ *
+ * Checked once per run, before the first turn.
+ */
+const HEX = /^#[0-9a-f]{6}$/;
+
+function lumOf(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (c) => (c /= 255, c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * ch((n >> 16) & 255) + 0.7152 * ch((n >> 8) & 255) + 0.0722 * ch(n & 255);
+}
+
+/** WCAG contrast ratio, 1 (identical) to 21 (black on white). */
+function contrast(a, b) {
+  const x = lumOf(a), y = lumOf(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+/* What has to stay readable, and how readable. The floors sit under the three
+ * shipped themes with room to spare; they are here to stop the next theme, not
+ * to grade these. 4.5 is WCAG AA for body text, 3.0 its large-text floor. */
+const READABLE = [
+  ['text', 'bg1', 6], ['text', 'bg2', 6], ['text', 'panel', 6],
+  ['muted', 'bg1', 3.5], ['muted', 'panel', 3.5],
+  ['accent', 'bg1', 4.5], ['good', 'bg1', 3.5], ['bad', 'bg1', 3.5],
+  // The letters on their tiles, and the label on the gold button.
+  ['tileInk', 'tile', 6], ['tileInk', 'accent', 6], ['tileInk', 'accentLit', 6]
+];
+
+/** Colour literals outside the one block that is allowed them. */
+function strayColour(file, allowed) {
+  const text = readFileSync(new URL('./' + file, import.meta.url), 'utf8');
+  const open = text.indexOf(allowed);
+  if (open < 0) return `${file} no longer has its ${allowed.trim()} block`;
+  const end = text.indexOf('\n  }', open);
+  const rest = text.slice(0, open) + text.slice(end < 0 ? open : end);
+  const hex = rest.match(/#[0-9a-fA-F]{3,8}\b/);
+  if (hex) return `${file} hard-codes ${hex[0]} — a theme cannot repaint it`;
+  const rgb = rest.match(/rgba?\(\s*[\d.]/);
+  if (rgb) return `${file} hard-codes an rgb() colour — a theme cannot repaint it`;
+  return null;
+}
+
+const paletteFault = (() => {
+  for (const key of R.THEME_KEYS) {
+    const p = R.THEMES[key].palette;
+    if (!p) return `theme "${key}" has no palette`;
+    for (const k of R.PALETTE_KEYS) {
+      if (!HEX.test(String(p[k]))) return `theme "${key}" palette.${k} is "${p[k]}", not a 6-digit hex`;
+    }
+    for (const k of Object.keys(p)) {
+      if (!R.PALETTE_KEYS.includes(k)) return `theme "${key}" palette has an unused "${k}"`;
+    }
+    for (const [a, b, floor] of READABLE) {
+      const got = contrast(p[a], p[b]);
+      if (got < floor) {
+        return `theme "${key}": ${a} on ${b} is ${got.toFixed(2)}:1, under ${floor}:1`;
+      }
+    }
+  }
+  // The stylesheet's :root and the screen's FALLBACK are the two places a colour
+  // may be written down; everywhere else must go through them.
+  return strayColour('screen.js', '  var FALLBACK = {') ||
+         strayColour('index.html', '  :root{');
+})();
+
 export default function scrambleInvariants({ table, players, done, result }) {
   if (themeFault) return themeFault;
+  if (paletteFault) return paletteFault;
   const seen = table._scTotals || (table._scTotals = {});
 
   for (const id of players) {
@@ -55,6 +137,15 @@ export default function scrambleInvariants({ table, players, done, result }) {
     if (!s) continue;
 
     if (s.round < 0 || s.round >= s.rounds) return `round ${s.round} is outside the game`;
+
+    /* The TV paints from this and from nothing else, so it has to be the whole
+     * palette of the theme that is actually running — not the one before it. */
+    const want = R.THEMES[R.themeOf(s.theme)].palette;
+    for (const k of R.PALETTE_KEYS) {
+      if (s.palette?.[k] !== want[k]) {
+        return `the broadcast palette.${k} is "${s.palette?.[k]}", not "${want[k]}" of theme "${s.theme}"`;
+      }
+    }
     if (s.secondsLeft < 0 || s.secondsLeft > 90) return `the clock shows ${s.secondsLeft}s`;
 
     // Sixteen dice, and the only two-letter face in Boggle is Qu.

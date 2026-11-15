@@ -33,6 +33,35 @@ var SCRAMBLE_RULES = (function () {
   var THEME_BONUS = 2;               // and a word that fits the occasion, again
 
   /**
+   * What a theme repaints.
+   *
+   * An occasion that only changes the word list is a scoring rule wearing a
+   * label. The table SEES Christmas before it scores a single Christmas word, so
+   * the palette is part of the theme — and it lives in the rules, not in the
+   * stylesheet, for one hard reason: the Apple TV runs `screen.js` alone, with no
+   * rules.js and no dictionary. The only way the TV and the phones can agree on
+   * what Christmas looks like is for the colours to travel in the host's
+   * broadcast. A second copy on the screen would drift, and the night it drifted
+   * the room would be green and the TV would still be purple.
+   *
+   * Every value is a solid 6-digit hex. Alpha variants are derived where they are
+   * used (`rgba()` on the screen, `opacity` in CSS) so a theme never restates the
+   * same colour twice, and `invariants.mjs` checks every theme carries every key,
+   * that the text can be read on the background, and that nothing anywhere draws
+   * a colour a theme cannot reach.
+   */
+  var PALETTE_KEYS = [
+    'glow',                          // the light behind the top of the page
+    'bg1', 'bg2',                    // the page, top and bottom
+    'panel', 'line',                 // chips, buttons, their borders
+    'text', 'muted',                 // what it says, and what it murmurs
+    'accent', 'accentLit',           // the live tile, the brand, the next button
+    'good', 'bad',                   // banked, bounced
+    'tile', 'tileInk',               // the letters, and the letters on them
+    'spark'                          // the fourth confetti colour
+  ];
+
+  /**
    * Themes.
    *
    * A theme does two things, and the second one is why it is in RULES and not in
@@ -52,10 +81,36 @@ var SCRAMBLE_RULES = (function () {
    * word that nobody can score is a test failure rather than a disappointment.
    */
   var THEMES = {
-    none: { name: 'Classic', emoji: '\uD83D\uDD21', blurb: 'The word list, nothing else.', words: [] },
+    none: {
+      name: 'Classic', emoji: '\uD83D\uDD21',
+      blurb: 'The word list, nothing else.',
+      palette: {
+        glow: '#3b2660', bg1: '#2a1b45', bg2: '#160d27',
+        panel: '#352457', line: '#4b3677',
+        text: '#f4eeff', muted: '#a493c7',
+        accent: '#ffd166', accentLit: '#fff0c2',
+        good: '#6ee7a8', bad: '#ff7a8a',
+        tile: '#f3e9d2', tileInk: '#2a1b45',
+        spark: '#8ab6ff'
+      },
+      words: []
+    },
     baby: {
       name: 'Baby Shower', emoji: '\uD83C\uDF7C',
       blurb: 'Baby words score double.',
+      /* Not pastel-on-white. The game is played in a dark room on bright
+       * phones, and a baby shower at 11pm is still a dark room — so this is
+       * twilight blue with the pastels doing the talking: soft pink on the live
+       * tile, mint for a word that banked, cream letters. */
+      palette: {
+        glow: '#4b6f94', bg1: '#2d4a66', bg2: '#152838',
+        panel: '#335573', line: '#4a7595',
+        text: '#f6f6ff', muted: '#a9c4da',
+        accent: '#ffc2d6', accentLit: '#ffe6ef',
+        good: '#9fe8cd', bad: '#ff8fa6',
+        tile: '#fdf5ec', tileInk: '#223b52',
+        spark: '#ffe9a8'
+      },
       words: [
         'aunt', 'babble', 'babies', 'baby', 'bath', 'bathe', 'bib', 'bibs', 'blanket',
         'bonnet', 'booties', 'booty', 'bottle', 'bottles', 'boy', 'buggy', 'bump', 'burp',
@@ -75,6 +130,18 @@ var SCRAMBLE_RULES = (function () {
     christmas: {
       name: 'Christmas', emoji: '\uD83C\uDF84',
       blurb: 'Christmas words score double.',
+      /* Evergreen and gold, with the red kept for the things that are already
+       * red — a bounced word and the last ten seconds. Red as the accent would
+       * have put Christmas on the clock running out. */
+      palette: {
+        glow: '#1d4d33', bg1: '#10331f', bg2: '#0c2a19',
+        panel: '#19402a', line: '#2b6340',
+        text: '#f2f8ee', muted: '#9dc0a6',
+        accent: '#f6c854', accentLit: '#fff0bd',
+        good: '#76dd9a', bad: '#ff6f6f',
+        tile: '#f7efdd', tileInk: '#10331f',
+        spark: '#ff6f6f'
+      },
       words: [
         'advent', 'angel', 'angels', 'bauble', 'bells', 'blitzen', 'bow', 'bows', 'candle',
         'candles', 'candy', 'cane', 'canes', 'card', 'cards', 'carol', 'carols', 'cheer',
@@ -326,6 +393,7 @@ var SCRAMBLE_RULES = (function () {
   return {
     DICE: DICE, SIZE: SIZE, MIN: MIN, MAX: MAX, UNIQUE: UNIQUE, POINTS: POINTS,
     THEMES: THEMES, THEME_KEYS: THEME_KEYS, THEME_BONUS: THEME_BONUS,
+    PALETTE_KEYS: PALETTE_KEYS,
     roll: roll, score: score, value: value, placeable: placeable, known: known,
     check: check, solve: solve, tally: tally,
     isThemeWord: isThemeWord, themeWords: themeWords, themeHits: themeHits, themeOf: themeOf

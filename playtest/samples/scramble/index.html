@@ -5,14 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>SCRAMBLE</title>
 <style>
+  /* The Classic palette, and the only place a colour is written down twice.
+     It is here so the first paint is right before any state arrives; from then
+     on game.js writes these same variables from the theme's palette in rules.js,
+     which is also what the Apple TV is sent. Nothing below may hard-code a
+     colour — a literal here is a pixel Christmas cannot repaint, and
+     invariants.mjs fails the bundle for one. */
   :root{
-    --bg1:#2a1b45; --bg2:#160d27; --panel:#352457; --line:#4b3677;
-    --text:#f4eeff; --muted:#a493c7; --accent:#ffd166; --good:#6ee7a8; --bad:#ff7a8a;
+    --glow:#3b2660; --bg1:#2a1b45; --bg2:#160d27; --panel:#352457; --line:#4b3677;
+    --text:#f4eeff; --muted:#a493c7; --accent:#ffd166; --accentlit:#fff0c2;
+    --good:#6ee7a8; --bad:#ff7a8a; --tile:#f3e9d2; --tileink:#2a1b45; --spark:#8ab6ff;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   html,body{height:100%}
   body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
-    background:radial-gradient(circle at 50% 0%,#3b2660,var(--bg1) 55%,var(--bg2));
+    background:radial-gradient(circle at 50% 0%,var(--glow),var(--bg1) 55%,var(--bg2));
+    transition:background .35s ease;
     display:flex; flex-direction:column;
     padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
   #app{flex:1; display:flex; flex-direction:column; min-height:0}
@@ -56,15 +64,17 @@
       calc((100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) * 0.40))}
   .board{position:absolute; inset:0; display:grid; grid-template-columns:repeat(4,1fr);
     gap:7px; touch-action:none; -webkit-user-select:none; user-select:none}
-  .cell{background:#f3e9d2; color:#2a1b45; border-radius:14px;
+  .cell{background:var(--tile); color:var(--tileink); border-radius:14px;
     display:flex; align-items:center; justify-content:center;
     font-size:30px; font-weight:900; letter-spacing:.02em;
     transition:transform .08s ease, background .08s ease}
   .cell.on{background:var(--accent); transform:scale(.94)}
-  .cell.on.head{background:#fff0c2; transform:scale(1.02)}
+  .cell.on.head{background:var(--accentlit); transform:scale(1.02)}
   /* The trail sits over the tiles and must never eat a touch. */
   .trail{position:absolute; inset:0; pointer-events:none}
-  .trail polyline{fill:none; stroke:rgba(255,209,102,.85); stroke-width:4;
+  /* Opacity rather than an rgba() literal: the stroke follows the theme's
+     accent and still sits under the letters. */
+  .trail polyline{fill:none; stroke:var(--accent); opacity:.85; stroke-width:4;
     stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke}
 
   /* Your words, one per line, newest on top — a list you can read down while you
@@ -90,6 +100,9 @@
   .theme .tt{display:flex; flex-direction:column; gap:2px; min-width:0}
   .theme .tt b{font-size:16px; font-weight:800}
   .theme .tt i{font-style:normal; font-size:12.5px; font-weight:600; color:var(--muted)}
+  /* Three bars of the palette that row would paint the room with. */
+  .theme .sw{margin-left:auto; display:flex; gap:4px; flex:0 0 auto}
+  .theme .sw i{display:block; width:10px; height:26px; border-radius:4px}
 
   .chip .tags{display:flex; align-items:center; gap:8px; flex:0 0 auto}
   .chip i.thm{font-size:14px}
@@ -100,7 +113,7 @@
     color:var(--text); border-radius:14px; padding:13px 18px; font-size:15px; font-weight:800;
     margin-left:auto; min-height:46px}
   button:disabled{opacity:.35}
-  #next{background:var(--accent); color:#2a1b45; border-color:var(--accent)}
+  #next{background:var(--accent); color:var(--tileink); border-color:var(--accent)}
 
   .scored{text-align:center; padding:4px 0 6px}
   .scored .big{font-size:21px; font-weight:800; margin-bottom:3px}
