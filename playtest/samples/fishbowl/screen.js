@@ -158,13 +158,18 @@ function createScreen(Table, screen) {
 
     if (v.phase === 'gameOver') {
       var best = (v.teams || []).slice().sort(function (a, c) { return c.score - a.score; })[0];
-      if (best && motion.pulse('win', best.id, now, 1) > 0.99) {
+      // `once`, not `pulse`: see fr-screen's note — a pulse first seen here is
+      // silent on this frame and unchanged on every frame after, so this never
+      // fired at all.
+      if (best && motion.once('win')) {
         motion.burst(inner.cx, inner.cy, { count: 80, speed: 420, life: 2200, size: inner.u(0.02) });
       }
       centred(ctx, inner, (best ? best.name : 'Nobody') + ' wins!', null, now);
       drawTeams(ctx, FRScreen.box({ width: env.width, height: env.height,
         safe: { top: env.height * 0.55, right: inner.x, bottom: b.u(0.04), left: inner.x } }), v, now);
-      motion.particles(ctx, screen.dt);
+      // Bounded to the safe box, now that the burst above can actually happen:
+      // confetti past the overscan is a layout failure like any other.
+      motion.particles(ctx, screen.dt, { bounds: b });
       return;
     }
 
@@ -210,6 +215,6 @@ function createScreen(Table, screen) {
 
     drawTeams(ctx, FRScreen.box({ width: env.width, height: env.height, safe: teamsSafe }), v, now);
 
-    motion.particles(ctx, screen.dt);
+    motion.particles(ctx, screen.dt, { bounds: b });
   });
 }

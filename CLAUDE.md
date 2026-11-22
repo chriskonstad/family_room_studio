@@ -72,6 +72,15 @@ fires exactly once · winner is a seated player or team · no timers left armed 
 a refused intent changes nothing · nothing moves while paused · same seed
 replays move for move.
 
+Some rules a property check cannot judge. Every outcome of a hand of HOLD'EM
+conserves chips perfectly, so "did the right hand win" is invisible to the
+fuzzer — that needs worked examples. A bundle may ship **`rules.test.mjs`**
+beside its `rules.js`, and `check.mjs` discovers and runs it:
+
+```sh
+node playtest/samples/holdem/rules.test.mjs
+```
+
 Per-bundle hooks, dropped beside `game.js`:
 
 - **`bot.mjs`** — supplies input the generic bot can't invent (typed text).
@@ -137,6 +146,26 @@ deliberately wrong by the same amount on every renderer. Position with
 node harness/screen.mjs <key> --verbose      # one bundle, six screen shapes
 node harness/screen.mjs --all --games 20     # harder soak
 ```
+
+A played game only reaches the phases it can reach in 160 ticks, which is not
+the last one: HOLDEM's tournament takes longer than that, so its game-over frame
+— the one with the confetti — was never drawn. A bundle may therefore ship
+**`screen-states.mjs`** with frames a real run won't reach:
+
+```js
+export default [{ name: 'game over', payload: { t:'state', s: { /* public state */ } } }];
+```
+
+Each is delivered and drawn for a stretch of frames at every shape, under the
+same layout rules. Use it for terminal frames, a full table, and the longest
+strings the game can produce. See `playtest/samples/holdem/screen-states.mjs`.
+
+**Fire a celebration with `FRScreen.motion().once(key)`, never `pulse`.** `pulse`
+is deliberately silent the first time it sees a key, so a pulse read inside the
+branch that only runs after somebody has won returns 0 on that frame and 0 on
+every frame after — the trigger never changes again. Every screen in this kit
+used `pulse` that way and no confetti had ever fired, in the one frame hardest
+to get a test to reach.
 
 It plays a real game (using the bundle's `bot.mjs`), drives the screen at TV
 1080p/4K/720p and iPad landscape/portrait/mini, and fails on: a throw, a blank

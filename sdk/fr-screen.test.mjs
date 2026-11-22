@@ -285,6 +285,29 @@ test('follow is frame-rate independent', () => {
   assert.ok(Math.abs(a - b) < 1.5, `30fps ${a.toFixed(2)} vs 60fps ${b.toFixed(2)} should agree`);
 });
 
+test('once is true exactly once per key', () => {
+  const m = FRScreen.motion();
+  assert.equal(m.once('win'), true, 'the first ask');
+  assert.equal(m.once('win'), false, 'and never again');
+  assert.equal(m.once('win:2'), true, 'a different key is its own latch');
+  m.clear();
+  assert.equal(m.once('win'), true, 'clear re-arms it');
+});
+
+/* The bug `once` exists for. A celebration is drawn inside the branch that only
+ * runs after someone has won, so the first time pulse sees the key is already
+ * inside that branch — it initialises silently, and the trigger never changes
+ * again, so it returns 0 forever. Every screen in the kit used this and no
+ * confetti had ever fired. Pinned here so nobody reaches for pulse again. */
+test('pulse never fires for a trigger first seen at the moment of the event', () => {
+  const m = FRScreen.motion();
+  let fired = 0;
+  for (let f = 0; f < 10; f++) {
+    if (m.pulse('win', 'p0', 1000 + f * 16, 1) > 0.99) fired++;
+  }
+  assert.equal(fired, 0, 'pulse cannot express fire-once; use once()');
+});
+
 test('pulse fires on change and decays to zero', () => {
   const m = FRScreen.motion();
   assert.equal(m.pulse('p', 0, 0), 0, 'no pulse on first sight');

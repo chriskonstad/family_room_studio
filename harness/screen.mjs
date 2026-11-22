@@ -35,6 +35,21 @@
  * at all (it is already on every phone) and is caught by the per-game invariants:
  * see `fishbowl/invariants.mjs`.
  *
+ * THE FRAMES A REAL RUN CANNOT REACH
+ *
+ * Playing a bundle for 160 ticks reaches its ordinary phases and not its last
+ * one. HOLDEM's tournament takes longer than that to finish, so its game-over
+ * frame — the one with the confetti on it — was never drawn here, which is the
+ * precise frame fr-screen warns about: a celebration is the one thing that
+ * reliably breaks the layout contract, and it only happens at the moment of
+ * winning. A bundle may therefore ship `screen-states.mjs`:
+ *
+ *   export default [{ name: 'game over', payload: { t:'state', s: {...} } }];
+ *
+ * Each is delivered and drawn for a stretch of frames at every shape, held to
+ * exactly the same layout rules. Hand-written state is a poor substitute for a
+ * played game and a fine way to reach a frame a played game won't.
+ *
  * No browser: the screen draws into the fr-screen recorder, so a frame is a value
  * and nothing needs rasterising to be checked.
  */
@@ -248,6 +263,12 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
   const botPath = join(dir, 'bot.mjs');
   if (existsSync(botPath)) bot = (await import(pathToFileURL(botPath).href)).default;
 
+  // Frames a played game cannot reach in its budget — a finished tournament, a
+  // table of eight all-in at once. See the note at the top of this file.
+  let extraStates = [];
+  const statesPath = join(dir, 'screen-states.mjs');
+  if (existsSync(statesPath)) extraStates = (await import(pathToFileURL(statesPath).href)).default || [];
+
   const failures = [];
   const seenLayout = new Set();
   let frames = 0, drew = 0, phases = new Set();
@@ -353,6 +374,46 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
       if (failures.length) break;
     }
     if (failures.length) break;
+  }
+
+  /* The hand-written frames. Drawn over a stretch of frames rather than once,
+   * because a celebration's confetti is in flight for seconds and it is the
+   * flight that leaves the screen — a single frame catches none of it. Time is
+   * advanced faster than real so a particle's whole life is covered. */
+  if (extraStates.length && !failures.length) {
+    const screen = bootScreen(dir);
+    let t = 1e6;
+    for (const entry of extraStates) {
+      const label = entry.name || 'extra state';
+      try { screen.deliver(entry.payload); }
+      catch (e) { failures.push({ seed, why: `${label}: delivering it threw: ${e.message}` }); break; }
+      if (entry.payload && entry.payload.s && entry.payload.s.phase) phases.add(entry.payload.s.phase);
+      for (const shape of SHAPES) {
+        for (let f = 0; f < 90; f++) {
+          t += 33;
+          let out;
+          try {
+            out = screen.frame({ width: shape.width, height: shape.height, safe: shape.safe, t, dt: 33 });
+          } catch (e) {
+            failures.push({ seed, why: `${label} threw on ${shape.name}: ${e.message}` });
+            break;
+          }
+          frames++;
+          if (out.ops.length > 0) drew++;
+          else failures.push({ seed, why: `${label}: drew nothing on ${shape.name}` });
+          for (const problem of layoutProblems(out.ops, shape)) {
+            const key = shape.name + '|' + label + '|' + problem;
+            if (!seenLayout.has(key)) {
+              seenLayout.add(key);
+              failures.push({ seed, why: `${shape.name}, ${label}: ${problem}` });
+            }
+          }
+          if (failures.length > 6) break;
+        }
+        if (failures.length > 6) break;
+      }
+      if (failures.length > 6) break;
+    }
   }
 
   // A run that only ever saw one phase proves almost nothing. Say so rather than

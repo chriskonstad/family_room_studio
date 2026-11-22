@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>HOLD'EM</title>
+<style>
+  :root{
+    --felt1:#13472f; --felt2:#0b2b1d; --panel:#123a28; --line:#1f5c40;
+    --text:#eef5ef; --muted:#93b7a4; --gold:#e8c15a; --bad:#e0695c; --good:#5fd39b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none}
+  html,body{height:100%}
+  body{margin:0; color:var(--text); font-family:ui-rounded,-apple-system,system-ui,sans-serif;
+    background:radial-gradient(120% 80% at 50% 0%,#1a5a3c,var(--felt1) 45%,var(--felt2));
+    display:flex; flex-direction:column;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  #app{flex:1; display:flex; flex-direction:column; min-height:0; padding:8px 12px 12px; gap:2px}
+
+  .hdr{display:flex; align-items:baseline; gap:8px}
+  .brand{font-size:18px; letter-spacing:.18em; font-weight:800; color:var(--gold)}
+  .hdr .sub{color:var(--muted); font-size:11.5px}
+  .hdr .chips{margin-left:auto; font-size:17px; font-weight:800; color:var(--text)}
+  .hdr .chips::after{content:' chips'; font-size:10px; font-weight:600; color:var(--muted)}
+
+  /* The board is on the television. This is the glance-down copy. */
+  .board{display:flex; gap:4px; justify-content:center; margin-top:8px}
+  .potline{display:flex; align-items:baseline; justify-content:center; gap:10px; margin-top:6px}
+  .pot{font-size:13px; font-weight:800; letter-spacing:.08em; color:var(--gold)}
+  .tocall{font-size:12px; color:var(--muted)}
+  .banner{min-height:18px; text-align:center; font-size:13px; font-weight:600;
+    color:var(--text); padding:6px 2px 2px}
+
+  .pc{background:#f6f8f4; color:#17241c; border-radius:7px; display:flex;
+    flex-direction:column; align-items:center; justify-content:center; line-height:1;
+    box-shadow:0 2px 6px rgba(0,0,0,.35); font-weight:800}
+  .pc.red{color:#c8322c}
+  .pc.sm{width:38px; height:54px; font-size:16px}
+  .pc.sm .s{font-size:14px; margin-top:2px}
+  .pc.empty{background:rgba(255,255,255,.055); box-shadow:none;
+    border:1px dashed rgba(255,255,255,.18)}
+  .pc.big{width:86px; height:124px; font-size:40px; border-radius:11px}
+  .pc.big .s{font-size:32px; margin-top:4px}
+
+  .mine{flex:1; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; min-height:0; gap:8px}
+  .mine.folded{opacity:.38}
+  .hole{display:flex; gap:10px}
+  .strength{font-size:16px; font-weight:800; color:var(--gold); letter-spacing:.01em;
+    text-align:center}
+
+  .actions{display:flex; flex-direction:column; gap:7px}
+  .btnrow{display:flex; gap:7px}
+  .btnrow.raises{gap:6px}
+  button{flex:1; min-height:52px; border-radius:12px; border:1px solid var(--line);
+    background:var(--panel); color:var(--text); font-size:15px; font-weight:700;
+    font-family:inherit; padding:8px 6px}
+  .btnrow.raises button{min-height:44px; font-size:13px}
+  button.primary{background:linear-gradient(180deg,#2a7f58,#1d6243); border-color:#38a271;
+    color:#fff}
+  button.danger{background:#3a1f1f; border-color:#6b3230; color:#f0b9b4; flex:0 0 32%}
+  button:disabled{opacity:.4}
+  .wait{color:var(--muted); font-size:13.5px; text-align:center; padding:10px 4px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="rules.js"></script>
+<script src="game.js"></script>
+<script>createGame(window.Table, document.getElementById('app'));</script>
+</body>
+</html>
