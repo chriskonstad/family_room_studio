@@ -358,6 +358,7 @@
     var values = {};     // key -> current, eased toward a target
     var pulses = {};     // key -> { at, last } a decaying 1->0 on change
     var parts = [];      // particles
+    var fired = {};      // keys `once` has already answered
 
     var api = {
       /**
@@ -387,6 +388,27 @@
         if (p.last !== trigger) { p.last = trigger; p.at = now; }
         var age = now - p.at;
         return age >= ms ? 0 : 1 - age / ms;
+      },
+
+      /**
+       * True the first time it is asked about `key`, false ever after.
+       *
+       * For "do this once, now that we are here" — fire the confetti the frame a
+       * winner appears. `pulse` cannot do this and four screens tried: it is
+       * deliberately silent the first time it sees a key (otherwise every score
+       * on the board would flash on the first frame it was drawn), so a `pulse`
+       * read inside the branch that only runs after somebody has won returns 0
+       * on that first frame and 0 for every frame after, because the trigger
+       * never changes again. Every celebration in the dev kit was dead code, in
+       * the one frame hardest to get a test to reach.
+       *
+       * Keys are cheap: `once('win')` for a game, `once('win:' + round)` to
+       * allow it again next round.
+       */
+      once: function (key) {
+        if (fired[key]) return false;
+        fired[key] = true;
+        return true;
       },
 
       /** Throw particles. Confetti on a win, sparks on a steal. */
@@ -444,7 +466,7 @@
 
       /** Particles currently alive — lets a test assert a celebration happened. */
       alive: function () { return parts.length; },
-      clear: function () { values = {}; pulses = {}; parts.length = 0; return api; }
+      clear: function () { values = {}; pulses = {}; fired = {}; parts.length = 0; return api; }
     };
     return api;
   };

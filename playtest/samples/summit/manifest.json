@@ -1,9 +1,9 @@
 {
   "id": "com.chris.summit",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "name": "SUMMIT",
   "entry": "index.html",
-  "iconEmoji": "\ud83c\udfd4",
+  "iconEmoji": "🏔",
   "minPlayers": 2,
   "maxPlayers": 2,
   "author": "Chris",

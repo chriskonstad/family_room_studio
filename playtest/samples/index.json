@@ -120,5 +120,16 @@
       "rules.js",
       "screen.js"
     ]
+  },
+  {
+    "id": "holdem",
+    "label": "HOLD'EM 🂡",
+    "files": [
+      "manifest.json",
+      "index.html",
+      "game.js",
+      "rules.js",
+      "screen.js"
+    ]
   }
 ]

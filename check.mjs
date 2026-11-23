@@ -19,10 +19,22 @@
  * Exit code 0 clean, 1 something failed.
  */
 import { spawnSync } from 'node:child_process';
+import { readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const REPO = dirname(fileURLToPath(import.meta.url));
+
+/* A bundle may ship `rules.test.mjs` beside its `rules.js`: a table of known
+ * answers for rules the fuzzer cannot judge. HOLDEM is the case that forced it —
+ * every outcome of a hand conserves chips perfectly, so "did the right hand win"
+ * is invisible to a property check and needs worked examples instead. Discovered,
+ * not listed, so the next game that needs one is covered by writing the file. */
+const samples = join(REPO, 'playtest/samples');
+const ruleSuites = readdirSync(samples)
+  .filter(d => existsSync(join(samples, d, 'rules.test.mjs')))
+  .sort()
+  .map(d => [`${d} rules`, `playtest/samples/${d}/rules.test.mjs`, []]);
 
 const steps = [
   ['Table SDK conformance', 'conformance/run-studio.mjs', []],
@@ -30,7 +42,8 @@ const steps = [
   ['fr-screen library',     'sdk/fr-screen.test.mjs',     []],
   ['bundle validation',     'validate.mjs',               ['--all']],
   ['headless playtest',     'harness/playtest.mjs',       ['--all', '--games', '10']],
-  ['shared screens',        'harness/screen.mjs',         ['--all', '--games', '4']]
+  ['shared screens',        'harness/screen.mjs',         ['--all', '--games', '4']],
+  ...ruleSuites
 ];
 
 let failed = 0;

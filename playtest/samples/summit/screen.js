@@ -189,14 +189,19 @@ function createScreen(Table, screen) {
         return ((v.totals && v.totals[c]) || 0) - ((v.totals && v.totals[a]) || 0);
       });
       var champ = ranked[0];
-      if (champ && motion.pulse('win', champ, now, 1) > 0.99) {
+      // `once`, not `pulse`: a pulse whose trigger is first seen inside the
+      // branch that only runs after somebody has won returns 0 on that frame and
+      // 0 forever after, so this confetti had never once fired.
+      if (champ && motion.once('win')) {
         motion.burst(b.cx, b.cy, { count: 70, speed: 400, life: 2200, size: b.u(0.016) });
       }
       centred(ctx, b, champ ? label(v, champ) + ' wins!' : 'Game over',
               ranked.map(function (id) {
                 return label(v, id) + ' ' + ((v.totals && v.totals[id]) || 0);
               }).join('   ·   '));
-      motion.particles(ctx, screen.dt);
+      // Bounded, because it is now reachable: confetti off the edge of a TV is a
+      // layout failure like any other.
+      motion.particles(ctx, screen.dt, { bounds: b });
       return;
     }
 
@@ -333,6 +338,6 @@ function createScreen(Table, screen) {
               }).join('   ·   '));
     }
 
-    motion.particles(ctx, screen.dt);
+    motion.particles(ctx, screen.dt, { bounds: b });
   });
 }
