@@ -36,7 +36,29 @@ function createGame(Table, root) {
   const ROUNDS = 3;
   const READY_SECONDS = 3;
   const PLAY_SECONDS = 90;
-  const REVEAL_MS = 420;             // one word at a time, fast enough to stay a reveal
+  /* The reveal's pacing. It used to be a flat 420ms a word, which read the whole
+   * round out at the same speed whether it was a shared three-letter word or the
+   * eight-letter one person saw alone — the scoring went past before anybody
+   * could react to it.
+   *
+   * The running order already climbs (shared short, shared long, then the
+   * uniques short to long), so the pacing climbs with it: the bulk goes briskly,
+   * a word only one person found is given room, and there is a real beat at the
+   * turn where the shared words run out and the uniques begin. The biggest jump
+   * on the board is the last one, and now it lands rather than flickers. */
+  const REVEAL_SHARED_MS = 520;      // the bulk, where nobody's score moves much
+  const REVEAL_UNIQUE_MS = 900;      // one person saw this
+  const REVEAL_PER_LETTER_MS = 70;   // and a long one hangs a little longer
+  const REVEAL_THEME_MS = 220;       // an occasion word pays double; let it register
+  const REVEAL_TURN_MS = 1100;       // the beat before the uniques start
+  /* ...all of which is a SHAPE, not a duration. Played out literally, a busy
+   * five-player round reads for 55 seconds — longer than the round itself, which
+   * is its own kind of wrong. So the weights above are relative, and the whole
+   * reveal is fitted into a budget: a long round compresses and keeps its shape,
+   * a short one is left alone (the scale never stretches). The floor stops a
+   * forty-word round from becoming a flicker. */
+  const REVEAL_BUDGET_MS = 30000;
+  const REVEAL_MIN_MS = 260;
   const AFTER_REVEAL_SECONDS = 6;    // a beat to read the final board before the next grid
   /* A grid with nothing in it is a dead round nobody can do anything about, so a
    * dud is re-rolled rather than handed over. Every roll comes off the same seeded
@@ -51,8 +73,12 @@ function createGame(Table, root) {
 
   /* A themed game is allowed more rolls to find a grid the theme can live on,
    * and stops early once it has this many theme words available. */
-  const THEMED_ROLLS = 24;
-  const THEME_WORDS_WANTED = 3;
+  /* How many theme words to plant, and how many planted boards to try before
+   * settling for a rolled one. Six is where the measurements stop improving:
+   * the dice only carry so many of a theme's letters at once (there is exactly
+   * one `b` among the sixteen), so asking for eight gets the same five. */
+  const THEME_WORDS_WANTED = 6;
+  const PLANT_TRIES = 4;
 
   const WHY = {
     letters: 'letters only',
@@ -80,6 +106,7 @@ function createGame(Table, root) {
   let G = null;
   let found = {};        // playerId -> [word]  — HOST ONLY, private until the reveal
   let pending = [];      // HOST ONLY — the scored rows, handed out one at a time
+  let revealPlan = [];   // HOST ONLY — how long to hold before each of those rows
   let solution = [];     // HOST ONLY — every word on the grid, for the "were there" count
   let table = null;
   let ended = false;
@@ -139,19 +166,33 @@ function createGame(Table, root) {
    */
   function rollGrid() {
     const themed = G.theme && G.theme !== 'none';
-    const tries = themed ? THEMED_ROLLS : MAX_ROLLS;
     let best = null;
-    for (let i = 0; i < tries; i++) {
-      const grid = R.roll(rng);
+
+    const consider = (grid) => {
       const words = R.solve(grid, G.theme);
       const hits = themed ? R.themeHits(grid, G.theme) : 0;
-      const ok = words.length >= MIN_WORDS_ON_GRID;
-      const cand = { grid, words, hits, ok };
+      const cand = { grid, words, hits, ok: words.length >= MIN_WORDS_ON_GRID };
       if (!best || better(cand, best)) best = cand;
-      // Unthemed, the first playable grid will do. Themed, a playable grid with
-      // theme words on it is the thing being looked for.
-      if (ok && (!themed || hits >= THEME_WORDS_WANTED)) break;
+      return cand.ok;
+    };
+
+    /* A themed grid is BUILT, not hoped for. Re-rolling found an average of two
+     * baby words on a board of 143 — the occasion was a scoring rule and a
+     * colour scheme and nothing you could see in the letters. Planting puts the
+     * words in and then lets the dice fill the rest, which roughly doubles it;
+     * the playability floor still decides whether a grid is good enough to keep,
+     * and a planted board that fails it falls through to an ordinary roll. */
+    if (themed) {
+      for (let i = 0; i < PLANT_TRIES; i++) {
+        const made = R.plant(G.theme, rng, THEME_WORDS_WANTED);
+        if (!made) break;
+        if (consider(made.grid)) break;
+      }
     }
+    if (!best || !best.ok) {
+      for (let i = 0; i < MAX_ROLLS; i++) if (consider(R.roll(rng))) break;
+    }
+
     G.grid = best.grid;
     solution = best.words;
     G.possible = best.words.length;
@@ -221,7 +262,40 @@ function createGame(Table, root) {
     // Everything is public now — including each player's own list, which is the
     // reveal. Send it once more so a phone can mark off what it had.
     G.seats.forEach(id => sendPrivate(id, null));
-    timer.every('reveal', REVEAL_MS, () => { revealNext(); syncAll(); });
+    planReveal();
+    scheduleReveal();
+  }
+
+  /** What a word is WORTH in time, before the budget is applied. */
+  function revealWeight(row, at) {
+    var ms = row.dup ? REVEAL_SHARED_MS : REVEAL_UNIQUE_MS;
+    ms += Math.max(0, row.w.length - 3) * REVEAL_PER_LETTER_MS;
+    if (row.theme) ms += REVEAL_THEME_MS;
+    // The turn: the first word nobody else found. Everything after this is
+    // somebody pulling ahead, so the room gets a moment to notice it starting.
+    if (!row.dup && at > 0 && pending[at - 1] && pending[at - 1].dup) ms += REVEAL_TURN_MS;
+    return ms;
+  }
+
+  /** Fit the whole running order into the budget, keeping its shape. */
+  function planReveal() {
+    const raw = pending.map(revealWeight);
+    const total = raw.reduce((a, b) => a + b, 0);
+    const scale = total > REVEAL_BUDGET_MS ? REVEAL_BUDGET_MS / total : 1;
+    revealPlan = raw.map(ms => Math.max(REVEAL_MIN_MS, Math.round(ms * scale)));
+  }
+
+  /* Self-scheduling rather than a fixed interval, because every word now waits a
+   * different amount of time. */
+  function scheduleReveal() {
+    const at = G.revealed;
+    const next = pending[at];
+    if (!next) { timer.cancel('reveal'); return; }
+    timer.after('reveal', revealPlan[at] || REVEAL_MIN_MS, () => {
+      revealNext();
+      syncAll();
+      scheduleReveal();
+    });
   }
 
   function revealNext() {
@@ -237,7 +311,10 @@ function createGame(Table, root) {
   }
 
   /** Skip to the end of the reveal with every point still awarded. */
-  function revealAll() { while (revealNext()) { /* keep going */ } }
+  function revealAll() {
+    timer.cancel('reveal');            // nothing left to land on its own
+    while (revealNext()) { /* keep going */ }
+  }
 
   function nextRound() {
     revealAll();                        // never advance past unawarded points
@@ -718,7 +795,15 @@ function createGame(Table, root) {
           'A word nobody else finds is worth double.' +
           (v.theme && v.theme !== 'none'
             ? '<br>' + esc(R.THEMES[v.theme].emoji) + ' ' +
-              esc(R.THEMES[v.theme].name) + ' words count double too.'
+              esc(R.THEMES[v.theme].name) + ' words count double too.' +
+              /* The promise, in numbers. The occasion used to be a scoring rule
+               * and a colour scheme — nothing you could point at in the letters.
+               * Now the words are planted in the grid, so the grid can say so,
+               * and a table starts the round hunting for them. */
+              (v.themeOnGrid > 0
+                ? '<br><b>' + v.themeOnGrid + ' of them ' +
+                  (v.themeOnGrid === 1 ? 'is' : 'are') + ' hiding in this grid.</b>'
+                : '')
             : '') + '</div>' +
         '</div>';
       return;
@@ -790,9 +875,17 @@ function createGame(Table, root) {
       const waiting = v.phase === 'tally' && v.revealed < v.totalRows;
       time.textContent = waiting ? '…' : clock(v.secondsLeft);
       time.className = 'time' + (v.phase === 'round' && v.secondsLeft <= 10 ? ' low' : '');
+      /* The last ten seconds, in the hand as well as on the wall.
+       *
+       * This used to be `tick`, which is a light haptic and a soft click — a
+       * notice you do not get while dragging a finger across a grid and staring
+       * at the television. `countdown` is the shell's countdown cue, and `mine`
+       * escalates it to a heavy thump for the final three, so the round does not
+       * simply stop while somebody is halfway through a word. */
       if (v.phase === 'round' && v.secondsLeft <= 10 && v.secondsLeft !== lastSecond) {
         lastSecond = v.secondsLeft;
-        feel('tick', { mine: true });
+        if (v.secondsLeft > 0) feel('countdown', { mine: v.secondsLeft <= 3 });
+        else feel('blocked', { mine: true });        // pencils down
       }
     }
 

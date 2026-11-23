@@ -203,6 +203,156 @@ var SCRAMBLE_RULES = (function () {
     return grid;
   }
 
+  /**
+   * Build a grid that actually HAS the occasion on it.
+   *
+   * Rolling dice and hoping does not work, and the numbers are not close. A
+   * themed round used to roll up to 24 grids and keep the one with the most
+   * theme words, and across 25 seeds that found an average of TWO baby words on
+   * a board offering 143 findable words — one and a half per cent of the puzzle.
+   * Searching 80 grids instead of 24 moved it to 2.4. Sixteen dice simply do not
+   * often land on a particular hundred-word list, so no amount of re-rolling
+   * turns the dice into a theme; it only costs the table time at the start of
+   * every round.
+   *
+   * So a themed grid is CONSTRUCTED. Theme words are traced through the cells
+   * first — reusing letters where two words cross, the way a crossword does —
+   * and whatever is left over is filled from the dice.
+   *
+   * It is still a legal Boggle roll. Each planted cell is matched to a die that
+   * genuinely has that letter on one of its six faces, so the finished grid is
+   * one the real dice could have produced. That is not pedantry: the dice are
+   * what keep vowels where they are needed, and a grid of freely chosen letters
+   * is how you end up with a wall of consonants and a round nobody can play.
+   *
+   * @param {string} themeKey
+   * @param {function} r an FR.rng, so a planted grid replays from the seed
+   * @param {number} want how many theme words to try to plant
+   * @returns {?{grid:Array<string>, planted:Array<string>}} null if it could not
+   */
+  function plant(themeKey, r, want) {
+    var pool = THEMES[themeOf(themeKey)].words.filter(function (w) {
+      // Qu is one cell holding two letters, which a letter-at-a-time trace
+      // cannot express. There is always plenty else to plant.
+      return w.length >= 3 && w.length <= 7 && w.indexOf('q') === -1;
+    });
+    if (!pool.length) return null;
+    pool = r.shuffle(pool);
+
+    var cells = [];
+    for (var i = 0; i < SIZE * SIZE; i++) cells.push(null);
+    var planted = [];
+
+    /* Plant one word at a time and keep it only if the sixteen real dice can
+     * still spell the whole board. The dice are the binding constraint and they
+     * are lopsided: `b` appears on exactly ONE of them, so a baby list wanting
+     * BABY and BIB and BOTTLE is asking for three dice that do not exist. Trying
+     * all the words and checking the dice once at the end failed outright on two
+     * thirds of baby seeds; checking after each word keeps whatever the dice can
+     * actually carry and quietly drops the rest. */
+    for (var p = 0; p < pool.length && planted.length < want; p++) {
+      var before = cells.slice();
+      if (!trace(cells, pool[p], r)) continue;
+      if (feasible(cells)) planted.push(pool[p]);
+      else cells = before;              // the dice cannot spell that; pretend we never tried
+    }
+    if (!planted.length) return null;
+
+    var grid = dress(cells, r);
+    return grid ? { grid: grid, planted: planted } : null;
+  }
+
+  /**
+   * Write `word` into the grid along a path of touching cells, or leave the grid
+   * exactly as it was. A cell already holding the letter we need is REUSED, so
+   * words cross and a 4x4 board can hold far more of them than sixteen letters
+   * would suggest.
+   */
+  function trace(cells, word, r) {
+    var used = [];
+
+    function walk(i, pos) {
+      if (used[i]) return false;
+      var need = word.charAt(pos);
+      if (cells[i] !== null && cells[i] !== need) return false;
+      var before = cells[i];
+      cells[i] = need;
+      used[i] = true;
+      if (pos + 1 === word.length) return true;
+      var near = r.shuffle(ADJ[i]);
+      for (var k = 0; k < near.length; k++) {
+        if (walk(near[k], pos + 1)) return true;
+      }
+      cells[i] = before;                 // put it back exactly as it was
+      used[i] = false;
+      return false;
+    }
+
+    var starts = r.shuffle(cells.map(function (_, i) { return i; }));
+    for (var s = 0; s < starts.length; s++) {
+      if (walk(starts[s], 0)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Give every cell a die.
+   *
+   * Planted cells need a die with that letter on it; the rest take whatever is
+   * left. That is a bipartite matching, solved with augmenting paths — a greedy
+   * pass fails on exactly the letters a theme leans on, because `b` and `y` live
+   * on few dice and a baby list wants several of each.
+   *
+   * @returns {?Array<string>} the grid, or null if the letters cannot be dealt
+   *   from one set of the real dice (at which point the caller rolls instead).
+   */
+  function match(cells) {
+    var n = DICE.length;
+    var dieOf = [], cellOf = [];
+    for (var i = 0; i < n; i++) { dieOf[i] = -1; cellOf[i] = -1; }
+
+    function fits(cell, die) {
+      return cells[cell] === null || DICE[die].indexOf(cells[cell]) !== -1;
+    }
+    function assign(cell, seen) {
+      for (var d = 0; d < n; d++) {
+        if (seen[d] || !fits(cell, d)) continue;
+        seen[d] = true;
+        if (cellOf[d] === -1 || assign(cellOf[d], seen)) {
+          cellOf[d] = cell; dieOf[cell] = d;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Constrained cells first: they have the fewest dice that can serve them,
+    // and a greedy pass that spends the one `b` die on a free cell fails.
+    var order = [];
+    for (i = 0; i < cells.length; i++) if (cells[i] !== null) order.push(i);
+    for (i = 0; i < cells.length; i++) if (cells[i] === null) order.push(i);
+    for (var k = 0; k < order.length; k++) {
+      if (!assign(order[k], [])) return null;
+    }
+    return dieOf;
+  }
+
+  /** Can one set of the real dice spell this board at all? No randomness, so it
+   *  is free to ask after every planted word. */
+  function feasible(cells) { return match(cells) !== null; }
+
+  function dress(cells, r) {
+    var dieOf = match(cells);
+    if (!dieOf) return null;
+    var grid = [];
+    for (var c = 0; c < cells.length; c++) {
+      if (cells[c] !== null) { grid.push(cells[c]); continue; }
+      var face = DICE[dieOf[c]].charAt(r.int(6));
+      grid.push(face === 'q' ? 'qu' : face);
+    }
+    return grid;
+  }
+
   /* Neighbours of every cell, once, rather than per step of every search. */
   var ADJ = (function () {
     var adj = [];
@@ -394,7 +544,7 @@ var SCRAMBLE_RULES = (function () {
     DICE: DICE, SIZE: SIZE, MIN: MIN, MAX: MAX, UNIQUE: UNIQUE, POINTS: POINTS,
     THEMES: THEMES, THEME_KEYS: THEME_KEYS, THEME_BONUS: THEME_BONUS,
     PALETTE_KEYS: PALETTE_KEYS,
-    roll: roll, score: score, value: value, placeable: placeable, known: known,
+    roll: roll, plant: plant, score: score, value: value, placeable: placeable, known: known,
     check: check, solve: solve, tally: tally,
     isThemeWord: isThemeWord, themeWords: themeWords, themeHits: themeHits, themeOf: themeOf
   };

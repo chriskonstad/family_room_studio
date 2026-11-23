@@ -109,23 +109,43 @@ function createScreen(Table, screen) {
 
   /* ------------------------------------------------------------- pieces --- */
 
-  function drawHead(ctx, b, head, v) {
+  function drawHead(ctx, b, head, v, now) {
     var mid = head.y + head.h * 0.40;
-    var left = 'ROUND ' + (v.round + 1) + ' OF ' + v.rounds +
-               (v.theme && v.theme !== 'none' ? '   ' + (v.themeEmoji || '') : '');
+    var left = 'ROUND ' + (v.round + 1) + ' OF ' + v.rounds;
+    if (v.theme && v.theme !== 'none') {
+      left += '   ' + (v.themeEmoji || '');
+      // What the occasion is actually worth looking for, while there is still
+      // time to look. The whole room reads this one, which is the point of it
+      // being here rather than only on the phones.
+      if ((v.phase === 'ready' || v.phase === 'round') && v.themeOnGrid > 0) {
+        left += ' ' + v.themeOnGrid + ' IN HERE';
+      }
+    }
     fitted(ctx, left, head.w * 0.5, head.h * 0.46, head.x, mid, INK, 'left', 'middle');
 
-    var right = '', color = DIM;
+    var right = '', color = DIM, rightSize = head.h * 0.46;
     if (v.phase === 'round') {
       var s = Math.max(0, v.secondsLeft | 0);
-      right = Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
-      color = s <= 10 ? HOT : INK;
+      if (s <= 10) {
+        /* The last ten seconds, said loudly. A clock that only changes colour is
+         * no notice at all to a room looking at the letters: the number itself
+         * becomes the biggest thing in the header and thumps once a second, so
+         * the end of the round arrives in peripheral vision. It stays inside the
+         * header band, so it cannot land on anything else at any screen shape. */
+        right = String(s);
+        color = HOT;
+        var beat = motion.pulse('sec', s, now, 400);
+        rightSize = head.h * (0.74 + 0.26 * FRScreen.ease.outCubic(beat));
+      } else {
+        right = Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+        color = INK;
+      }
     } else if (v.phase === 'tally') {
       right = 'NEXT IN ' + Math.max(0, v.secondsLeft | 0);
     } else if (v.phase === 'ready') {
       right = 'GET READY';
     }
-    if (right) fitted(ctx, right, head.w * 0.3, head.h * 0.46, head.x + head.w, mid, color, 'right', 'middle');
+    if (right) fitted(ctx, right, head.w * 0.3, rightSize, head.x + head.w, mid, color, 'right', 'middle');
 
     // The clock as a bar, for the half of the room that is not reading numbers.
     var barY = head.y + head.h * 0.78, barH = Math.max(2, head.h * 0.08);
@@ -135,6 +155,16 @@ function createScreen(Table, screen) {
       if (frac > 0) {
         panel(ctx, head.x, barY, head.w * frac, barH, barH / 2,
               v.secondsLeft <= 10 ? HOT : GOOD);
+      }
+      // The bar gets the same heartbeat, for the half of the room reading it
+      // rather than the number.
+      if (v.secondsLeft <= 10) {
+        var flash = motion.pulse('bar', v.secondsLeft | 0, now, 400);
+        if (flash > 0) {
+          ctx.globalAlpha = flash * 0.75;
+          panel(ctx, head.x, barY, head.w, barH, barH / 2, HOT);
+          ctx.globalAlpha = 1;
+        }
       }
     }
   }
@@ -407,7 +437,7 @@ function createScreen(Table, screen) {
       people = { x: b.right - pw, y: restY, w: pw, h: restH };
     }
 
-    drawHead(ctx, b, head, v);
+    drawHead(ctx, b, head, v, now);
 
     if (v.phase === 'setup') drawSetup(ctx, main, v, now);
     else if (v.phase === 'ready') drawReady(ctx, main, v, now);
