@@ -75,6 +75,31 @@
   .c.pop{animation:pop .4s cubic-bezier(.2,1.6,.4,1)}
   @keyframes pop{0%{transform:scale(.2) rotate(-10deg);opacity:0}100%{transform:scale(1) rotate(0);opacity:1}}
   .empty{color:var(--muted); font-size:13px; align-self:center}
+  .prow .tot{display:none}
+
+  /* A bigger table on a small phone: every row still on screen, nothing to scroll. */
+  .board.dense{gap:5px}
+  .board.dense .prow{padding:5px 10px; border-radius:12px}
+  .board.dense .prow .top{font-size:14px; gap:6px}
+  .board.dense .prow .pemoji{font-size:17px}
+  .board.dense .prow .meta{font-size:12px}
+  .board.dense .prow .meta b{font-size:14px}
+  .board.dense .prow .chips{margin-top:4px; min-height:26px; gap:4px}
+  .board.dense .c{min-width:26px; height:26px; font-size:14px; border-radius:7px; padding:0 5px}
+  .board.dense .empty{font-size:12px}
+  /* Seven or eight: one line a player — who, their cards, how it stands. */
+  .board.xdense{gap:4px}
+  .board.xdense .prow{display:flex; align-items:center; gap:6px; padding:4px 8px; border-radius:10px; min-height:36px}
+  .board.xdense .prow .top{flex:0 1 auto; max-width:34%; min-width:0; font-size:13.5px; gap:4px}
+  .board.xdense .prow .who{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+  .board.xdense .prow .pemoji{font-size:16px}
+  .board.xdense .prow .you, .board.xdense .prow .meta{display:none}
+  .board.xdense .prow .chips{flex:1; margin-top:0; min-height:24px; gap:2px; min-width:0}
+  .board.xdense .c{min-width:20px; height:24px; font-size:13px; border-radius:6px; padding:0 3px}
+  .board.xdense .c.save{font-size:9px}
+  .board.xdense .empty{font-size:11.5px}
+  .board.xdense .prow .tot{display:block; flex:none; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; text-align:right}
+  .board.xdense .prow .tot b{color:var(--text); font-size:14px}
 
   .ctrl{padding-top:10px}
   .btnrow{display:flex; gap:10px}

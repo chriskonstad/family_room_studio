@@ -80,8 +80,9 @@
   /* Your words, one per line, newest on top — a list you can read down while you
      play instead of a bag of chips to hunt through. No numbers anywhere: the
      whole point is that nobody knows where they stand until the screen says. */
-  .chips{flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column;
-    gap:4px; padding:2px 0; -webkit-overflow-scrolling:touch}
+  .chips{flex:1 1 auto; min-height:0; overflow:hidden; display:flex; flex-direction:column;
+    gap:4px; padding:2px 0}
+  .chip.more{background:none; border-style:dashed; color:var(--muted); font-size:12px; letter-spacing:.04em; font-weight:700}
   .chip{background:var(--panel); border:1px solid var(--line); border-radius:10px;
     padding:7px 12px; font-size:14.5px; font-weight:800; letter-spacing:.08em;
     flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:10px}

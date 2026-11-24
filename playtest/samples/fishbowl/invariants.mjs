@@ -62,6 +62,14 @@ export default function fishbowlInvariants({ table, players, done, result }) {
   for (const e of table.wire('sendTo')) {
     if (e.payload && typeof e.payload.phrase === 'string') priv.phrases.add(e.payload.phrase);
   }
+  // The phrase set must also come from what players typed. Learning it only
+  // from sendTo would miss the worst distribution bug of all: the host never
+  // sending privately in the first place, and broadcasting instead.
+  for (const e of table.wire('send')) {
+    if (e.payload && e.payload.t === 'addPhrase' && typeof e.payload.phrase === 'string') {
+      priv.phrases.add(e.payload.phrase.trim().slice(0, 40));
+    }
+  }
   const broadcasts = table.wire('broadcast');
   for (; priv.seen < broadcasts.length; priv.seen++) {
     const text = JSON.stringify(broadcasts[priv.seen].payload);

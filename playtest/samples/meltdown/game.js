@@ -74,7 +74,7 @@ function createGame(Table, root) {
       let to; do { to = rng.range(1, 3); } while (to === ctl.value);
       text = 'Set '+ctl.label+' to '+to+'!'; want = { kind:'dial', to };
     }
-    const order = { forPid:pid, controlId:ctl.id, want, text, deadline:Date.now()+orderTimeLimit()*1000 };
+    const order = { forPid:pid, controlId:ctl.id, want, text };
     G.orders[pid] = order;
     clearTimeout(G.timers[pid]);
     G.timers[pid] = setTimeout(() => { orderExpired(pid); }, orderTimeLimit()*1000);
@@ -174,9 +174,6 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: (ctx) => {
-                   Table.sendTo(ctx.from, { t:'panel', panel:G.panels[ctx.from] });
-                 } },
         begin: { phase: 'briefing', when: (ctx) => ctx.from === MY0(), run: () => beginGame() },
         act:   { phase: 'running',
                  when: (ctx) => !!G.panels[ctx.from] && !(G.dead && G.dead[ctx.from]),
@@ -197,15 +194,8 @@ function createGame(Table, root) {
       syncAll();
     });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G) return;
-      (G.dead = G.dead || {})[id] = true;
-      clearTimeout(G.timers[id]); delete G.orders[id];
-      G.banner = G.names[id]+' was ejected from the reactor!';
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view=null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
       if (msg.t === 'state') { view = msg.s; render(); }
       else if (msg.t === 'panel') { myPanel = msg.panel; render(); }
@@ -270,12 +260,15 @@ function createGame(Table, root) {
     } else {
       h += `<div class="order"><span class="t">${myOrder ? esc(myOrder.text) : '<span class="done">Stand by…</span>'}</span>
         <span class="clock"></span></div>`;
+      // Once the reactor has blown, the panel is a picture of what happened, not a set of
+      // controls: every tap between the meltdown and the results screen was refused.
+      const off = v.phase !== 'running' ? ' disabled' : '';
       h += `<div class="panel">` + myPanel.map(c => {
         let inner;
-        if (c.type === 'push') inner = `<button class="push" data-act="${c.id}">PUSH</button>`;
-        else if (c.type === 'switch') inner = `<button class="sw ${c.value?'on':''}" data-sw="${c.id}">${c.value?'ON':'OFF'}</button>`;
+        if (c.type === 'push') inner = `<button class="push" data-act="${c.id}"${off}>PUSH</button>`;
+        else if (c.type === 'switch') inner = `<button class="sw ${c.value?'on':''}" data-sw="${c.id}"${off}>${c.value?'ON':'OFF'}</button>`;
         else inner = `<div class="dialrow">` + [1,2,3].map(n =>
-          `<button class="${c.value===n?'cur':''}" data-dial="${c.id}" data-v="${n}">${n}</button>`).join('') + `</div>`;
+          `<button class="${c.value===n?'cur':''}" data-dial="${c.id}" data-v="${n}"${off}>${n}</button>`).join('') + `</div>`;
         return `<div class="ctl" id="${c.id}"><div class="nm">${esc(c.label)}</div>${inner}</div>`;
       }).join('') + `</div>`;
     }

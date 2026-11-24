@@ -60,7 +60,6 @@ function createGame(Table, root){
         phase:()=>G.phase,
         publish:syncAll,
         intents:{
-          hello: { hidden:true, run:()=>{} },
           // turn:true IS the out-of-turn guard — FR checks it before run() is reached.
           // `options` enumerates the plungers still unpressed, so the harness can play
           // this game with no DOM at all.
@@ -87,16 +86,8 @@ function createGame(Table, root){
       syncAll();
     });
     Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
-    Table.onPlayerLeave(id=>{
-      if(!G || seats.status(id)==='out') return;
-      const wasTheirTurn = curId()===id;
-      seats.eliminate(id);
-      if(wasTheirTurn) seats.next();
-      if(seats.settled && G.phase!=='over') return finish();
-      syncAll();
-    });
   } else {
-    Table.onStart(()=>{ view=null; render(); Table.send({t:'hello'}); });
+    Table.onStart(()=>{ view=null; render(); });
     Table.onMessage((_f,m)=>{ if(m.t==='state'){ view=m.s; render(); } });
   }
 

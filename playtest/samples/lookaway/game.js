@@ -49,7 +49,6 @@ function createGame(Table, root){
       phase:()=>G.phase,
       publish:syncAll,
       intents:{
-        hello: { hidden:true, run:()=>{} },
         go:    { host:true, phase:'ready', run:()=>nextRound() },
         look:  { phase:'pick',
                  when:(ctx)=> G.lives[ctx.from]>0 && G.picks[ctx.from]==null,
@@ -97,14 +96,8 @@ function createGame(Table, root){
   if(Table.isHost){
     Table.onStart(p=>{ initGame(p); table = buildTable(); syncAll(); });
     Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
-    Table.onPlayerLeave(id=>{
-      if(!G) return;
-      G.lives[id]=0;
-      if(G.phase==='pick' && Object.keys(G.picks).length>=withLives().length) resolve();
-      else syncAll();
-    });
   } else {
-    Table.onStart(()=>{ view=null; render(); Table.send({t:'hello'}); });
+    Table.onStart(()=>{ view=null; render(); });
     Table.onMessage((_f,m)=>{ if(m.t==='state') onState(m.s); });
   }
 

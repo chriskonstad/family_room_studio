@@ -124,7 +124,6 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: () => {} },
         // Free text: playable, but not enumerable. Hidden from legalMoves on purpose.
         addPhrase: { hidden: true, phase: 'entry',
           when: (ctx) => !G.done[ctx.from] && G.counts[ctx.from] < MAX_PHRASES_PER_PLAYER,
@@ -180,15 +179,8 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G) return;
-      G.teams.forEach(t => { t.playerIds = t.playerIds.filter(p => p !== id); });
-      G.teams = G.teams.filter(t => t.playerIds.length);
-      if (G.phase === 'entry') { delete G.done[id]; if (everyoneDone() && G.phrases.length) { G.phrases = shuffle(G.phrases); startRound(); } }
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view=null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
       if (msg.t === 'state') { view = msg.s; startLocalTimer(msg.s.secondsLeft); render(); }
       else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase}; startLocalTimer(msg.secondsLeft); render(); }

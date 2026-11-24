@@ -1,12 +1,12 @@
 {
   "id": "com.chris.holdem",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "name": "HOLD'EM",
   "entry": "index.html",
   "iconEmoji": "🂡",
   "minPlayers": 2,
   "maxPlayers": 8,
   "author": "Chris",
-  "description": "Texas Hold'em with the felt on the television and your two cards in your hand. The board, the pot, the chips and the button are on the big screen where the whole room can argue about them; your phone shows only what nobody else can see — and tells you what you're actually holding. Blinds climb, stacks bust, last player with chips takes the table.",
-  "screen": "required"
+  "description": "Texas Hold'em, with or without a TV. With an Apple TV the board, the pot, the chips and the button are on the big screen where the whole room can argue about them, and your phone shows only what nobody else can see — and tells you what you're actually holding. Without one, every phone is the table too. Blinds climb, stacks bust, last player with chips takes the table.",
+  "screen": "optional"
 }

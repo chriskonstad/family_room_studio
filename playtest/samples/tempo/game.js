@@ -38,7 +38,7 @@ function createGame(Table, root) {
   // ---------- host ----------
   function initGame(players) {
     G = { order:players.map(p=>p.id), names:{}, emojis:{}, scores:{}, finished:{}, phase:'ready',
-          seed: Table.seed };
+          seed: Table.seed, at:{} };
     players.forEach(p => { G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.scores[p.id]=0; G.finished[p.id]=false; });
   }
   // The move space. TEMPO is unusual: the real play is TAPPING TO A BEAT on your own
@@ -53,16 +53,24 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: () => {} },
         go:    { host: true, phase: 'ready', run: () => { G.phase = 'playing'; } },
         // A running score is a stream, not a choice — playable, but nothing to enumerate.
+        // A TEMPO score only ever goes up, so the host keeps the best it has heard.
+        // Taking the latest instead let a phone that reloaded mid-track — back from the
+        // lock screen, its run restarted at zero — wipe out everything it had scored.
+        // `at` is where in the track that score was made, so a reloaded phone can pick
+        // the same track up at the same beat rather than start a fresh 60 seconds.
         score: { hidden: true, phase: 'playing',
-                 run: (ctx) => { G.scores[ctx.from] = Number(ctx.msg.score) || 0; } },
+                 run: (ctx) => {
+                   G.scores[ctx.from] = Math.max(G.scores[ctx.from] || 0, Number(ctx.msg.score) || 0);
+                   const at = Number(ctx.msg.at);
+                   if (isFinite(at)) G.at[ctx.from] = Math.max(G.at[ctx.from] || 0, Math.min(TRACK_SECONDS, at));
+                 } },
         done:  { phase: 'playing',
                  when: (ctx) => !G.finished[ctx.from],
                  options: () => [{ score: 0 }],   // a bot finishes; a human finishes better
                  run: (ctx) => {
-                   G.scores[ctx.from] = Number(ctx.msg.score) || 0;
+                   G.scores[ctx.from] = Math.max(G.scores[ctx.from] || 0, Number(ctx.msg.score) || 0);
                    G.finished[ctx.from] = true;
                    if (G.order.every(id => G.finished[id])) {
                      G.phase = 'over';
@@ -75,7 +83,7 @@ function createGame(Table, root) {
   }
   function publicState() {
     return { phase:G.phase, seed:G.seed, names:G.names, emojis:G.emojis, order:G.order,
-             scores:{...G.scores}, finished:{...G.finished} };
+             scores:{...G.scores}, finished:{...G.finished}, at:{...G.at} };
   }
   function syncAll(){ const s = publicState(); Table.broadcast({ t:'state', s }); onState(s); }
 
@@ -83,28 +91,22 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    // Someone leaving counts as finishing — otherwise the game waits forever for a
-    // score that is never coming. (This called the old handleIntent, which no longer
-    // exists; a leave would have thrown.)
-    Table.onPlayerLeave(id => {
-      if (!G || G.finished[id]) return;
-      G.finished[id] = true;
-      if (G.phase === 'playing' && G.order.every(x => G.finished[x])) {
-        G.phase = 'over';
-        const r = FR.standings.byScore(G.scores);
-        Table.endGame({ winnerId: r.winnerId, standings: r.standings });
-      }
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view=null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => { if (msg.t === 'state') onState(msg.s); });
   }
   function onState(s) {
     const wasReady = !view || view.phase === 'ready';
     const wasPlaying = view && view.phase === 'playing';
     view = s;
-    if (s.phase === 'playing' && wasReady && !run) { startRun(s.seed); render(); return; }
+    // A phone that loads mid-track (it reloaded coming back from the lock screen)
+    // resumes where the host last heard from it, with the score it had — and one the
+    // host already marked finished doesn't get a second track at all.
+    if (s.phase === 'playing' && wasReady && !run) {
+      if (s.finished && s.finished[MY]) { run = { over:true, score:(s.scores && s.scores[MY]) || 0, combo:0 }; render(); return; }
+      startRun(s.seed, (s.at && s.at[MY]) || 0, (s.scores && s.scores[MY]) || 0);
+      render(); return;
+    }
     // during play, DON'T rebuild the DOM (it would kill the ring + tap zone):
     // just refresh the live score strip.
     if (s.phase === 'playing' && wasPlaying) { updateScoreStrip(); return; }
@@ -131,10 +133,15 @@ function createGame(Table, root) {
     return sharedAudio;
   }
 
-  function startRun(seed) {
+  function startRun(seed, resumeAt, resumeScore) {
     const audio = unlockAudio();          // already unlocked by the tap that got us here
-    run = { beats: buildBeats(seed), idx:0, score:0, combo:0, best:0, hits:0,
-            start: performance.now()/1000 + 0.15, audio, lastSent:0, over:false,
+    const at = resumeAt || 0;
+    const beats = buildBeats(seed);
+    // Resuming: skip every beat already behind us, so they don't all expire as misses.
+    let idx = 0;
+    while (at > 0 && idx < beats.length && beats[idx] <= at + 0.25) idx++;
+    run = { beats, idx, score:resumeScore || 0, combo:0, best:0, hits:0,
+            start: performance.now()/1000 + 0.15 - at, audio, lastSent:at, over:false,
             lastFeel:0, lastCount:null };
     scheduleLoop();
   }
@@ -188,7 +195,7 @@ function createGame(Table, root) {
       }
     }
     // stream score to host once per second
-    if (nowS - run.lastSent > 1) { run.lastSent = nowS; Table.send({ t:'score', score:run.score }); }
+    if (nowS - run.lastSent > 1) { run.lastSent = nowS; Table.send({ t:'score', score:run.score, at:Math.round(nowS*100)/100 }); }
     // last three seconds of the track — keyed on the whole second, so it can't
     // fire per frame the way anything else in this loop would
     const left = TRACK_SECONDS - nowS;

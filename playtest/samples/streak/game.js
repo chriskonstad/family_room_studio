@@ -118,7 +118,6 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: publish,
       intents: {
-        hello: { hidden: true, run: () => {} },
         next:  { host: true, phase: 'roundEnd', run: () => {
                    G.round++; G.dealer=(G.dealer+1)%G.order.length; G.lastRound={}; startRound();
                  } },
@@ -249,26 +248,8 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); publish(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G || G.phase === 'gameOver') return;   // results are up; don't re-score anyone
-      // If they were mid-choice, drop the pending action. It is the ONLY legal move in
-      // the game while it stands, and it belongs to them — leaving it behind froze the
-      // table permanently with no timer to recover. Losing the card is the right trade.
-      if (G.pending && G.pending.chooserId === id) {
-        G.pending = null;
-        G.banner = G.names[id] + ' left — their card is discarded';
-        resolveWork();
-        return;
-      }
-      if (G.status[id] === 'active') {
-        G.status[id]='stayed';
-        G.banner = G.names[id]+' left — auto-banked';
-        if (curId()===id) endTurnOrRound();
-      }
-      publish();
-    });
   } else {
-    Table.onStart(() => { view = { phase:'connecting' }; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view = { phase:'connecting' }; render(); });
     Table.onMessage((_from, msg) => { if (msg.t === 'state') { view = msg.s; render(); } });
   }
   function publish() {
@@ -327,11 +308,14 @@ function createGame(Table, root) {
                     : v.banner && v.banner.indexOf('🧊')===0 ? ' frozen'
                     : v.banner && v.banner.indexOf('🔥')===0 ? ' streak' : '';
 
+    // Every player on screen at once, at any table size: nobody scrolls to find out
+    // who is about to bust. Five or six get tighter rows; seven or eight get one line each.
+    const density = v.players.length >= 7 ? ' dense xdense' : v.players.length >= 5 ? ' dense' : '';
     let h = `<div class="hdr"><span class="brand">STREAK</span>
       <span class="roundlbl">Round ${v.round}</span>
       <span class="deckcount ${v.deckLeft <= 12 ? 'low' : ''}" title="cards left before the deck reshuffles">🎴 ${v.deckLeft}</span>
       <span class="goal">first to 200</span></div>
-      <div class="banner${bannerCls}">${esc(v.banner||'')}</div><div class="board">`;
+      <div class="banner${bannerCls}">${esc(v.banner||'')}</div><div class="board${density}">`;
 
     v.players.forEach(p => {
       const mine = p.id===MY;
@@ -350,11 +334,14 @@ function createGame(Table, root) {
       else if (p.status === 'stayed' && seenStatus[p.id] !== 'stayed') feel('gain', mine);
       if (mine && p.hasSave && !seenSave[p.id]) feel('heal', true);
       seenSave[p.id] = p.hasSave;
+      // The one-line version's status: an icon, not a sentence.
+      const short = p.status==='busted' ? '💥' : p.status==='frozen' ? '🧊' : p.status==='stayed' ? '🏦'
+                  : p.roundPts ? '+'+p.roundPts : '';
       h += `<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}${justBusted?' shake':''}${justFrozen?' freezeflash':''}">
         <div class="top"><span class="pemoji">${p.emoji}</span><span class="who">${esc(p.name)}</span>
           ${mine?'<span class="you">YOU</span>':''}
           <span class="meta">${state} · ${p.unique}/7 · <b>${p.total}</b></span></div>
-        <div class="chips">${chipsHTML(p)}</div></div>`;
+        <div class="chips">${chipsHTML(p)}</div><span class="tot">${short} <b>${p.total}</b></span></div>`;
     });
     h += '</div><div class="ctrl">';
 

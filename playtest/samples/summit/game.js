@@ -112,7 +112,6 @@ function createGame(Table, root) {
       phase: phaseNow,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: () => {} },
         next:  { host: true, phase: 'roundEnd',
                  run: () => { G.round++; startRound(G.round - 1); } },
 
@@ -210,26 +209,8 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      // This used to be an empty stub with a comment claiming the results screen was
-      // still reachable. It wasn't: endGame was never called, the turn was handed to the
-      // player who had left, and the one remaining player sat on a dead board forever.
-      // A two-player game with one player left is over — score it and show the result.
-      if (!G || G.phase === 'over') return;
-      G.phase = 'over';
-      const survivor = G.order.find(x => x !== id) || null;
-      const totals = {};
-      G.order.forEach(pid => { totals[pid] = G.totals[pid] || 0; });
-      if (survivor) totals[survivor] += 1;      // a walkover still has a winner
-      const r = FR.standings.byScore(totals, {
-        detail: (pid) => pid === id ? 'left the climb' : 'last on the mountain'
-      });
-      Table.endGame({ title: G.names[survivor] + ' takes the summit', winnerId: survivor,
-                      standings: r.standings });
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view = null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view = null; render(); });
     Table.onMessage((_f, msg) => {
       if (msg.t === 'state') { view = msg.s; sel = null; render(); }
       else if (msg.t === 'hand') { myHand = msg.hand; render(); }
@@ -261,6 +242,29 @@ function createGame(Table, root) {
     let s = (pile.reduce((a,x)=>a+x.v,0) - 20) * (1 + wagers);
     if (pile.length >= 8) s += 20;
     return s;
+  }
+
+  /**
+   * Nothing on a phone scrolls. A hand heavy in one route — six reef cards — is taller
+   * than an iPhone SE has room for, and the last card used to sit below the bottom of
+   * the screen. When the hand doesn't fit, each column fans like a real hand of
+   * cards: overlapped just enough to fit, the number moved up to the edge that still
+   * shows. Measured in the real layout; with no layout to measure, nothing changes.
+   */
+  function fanHand(hand) {
+    if (!hand || !hand.clientHeight || !hand.querySelectorAll || !hand.style) return;
+    hand.classList.remove('fanned');
+    hand.style.setProperty('--fan', '0px');
+    if (hand.scrollHeight <= hand.clientHeight + 1) return;
+    let deepest = 0;
+    hand.querySelectorAll('.handcol').forEach(col => {
+      deepest = Math.max(deepest, col.querySelectorAll('.card').length);
+    });
+    if (deepest < 2) return;
+    hand.classList.add('fanned');
+    const over = hand.scrollHeight - hand.clientHeight + 2;
+    // Never so much that a card shows less than its number: 52pt cards, 24pt visible.
+    hand.style.setProperty('--fan', -Math.min(34, Math.ceil(over / (deepest - 1))) + 'px');
   }
 
   function render() {
@@ -328,6 +332,7 @@ function createGame(Table, root) {
     }
 
     root.innerHTML = h;
+    fanHand(root.querySelector('.hand'));
 
     // ---- game feel, on the live nodes we just wrote ----
     // render() also runs on a plain card tap, so every call here is behind a
