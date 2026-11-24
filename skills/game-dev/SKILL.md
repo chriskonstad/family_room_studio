@@ -17,7 +17,9 @@ the workflow.
    `mutants.mjs`. HOLD'EM is the most complete example; BLITZ the smallest.
 2. **Write the game on `FR.host`** (`tools/FR-GAME.md`). Declare every intent's
    `options`; put every guard in `when(ctx)` (it sees each concrete option as
-   `ctx.msg`). Seed from `FR.rng(Table.seed)`. Time from `FR.timers`.
+   `ctx.msg`). Seed from `FR.rng(Table.seed)`. Time from `FR.timers`. Countdowns
+   from `FR.clock` — never from `Date.now()` at message arrival: a rebuilt phone
+   receives old messages late and would restart its countdown at the full limit.
 3. **Do not write any connection code.** No `onPlayerLeave`, no `onPlayerJoin`, no
    `hello`. The shell pauses the table when anyone drops and catches them up when they
    return — every message, in order, exactly once. The validator rejects it.

@@ -430,6 +430,73 @@
   };
 
   /* ------------------------------------------------------------------ *
+   * FR.clock — one game-time clock every phone can count down from
+   *
+   * Every timed game invented this alone, and the version three of them
+   * invented — "seconds left = the limit, counted from when the message
+   * ARRIVED" — is wrong in exactly the situation the shell creates on
+   * purpose: a phone rebuilt from its history receives an old order
+   * today and restarts it at the full limit while the table is seconds
+   * from expiry. (MELTDOWN shipped it; the harness's rebuilt-phone
+   * comparison caught it.) TEMPO and PASSBOMB avoided it by hand —
+   * the host streams where its clock has got to, phones anchor there.
+   *
+   * So, the block: the host runs one clock on FR.timers (it freezes
+   * while the table is paused, like every host timer), stamps `now`
+   * into its published state, and expresses deadlines in that time.
+   * A phone calls see(state) on each state and asks left(deadline):
+   * the answer is the same on a phone that never dropped and on one
+   * rebuilt a second ago, because neither counts from its own arrivals.
+   *
+   *   host:  var clock = FR.clock(timer); clock.start();
+   *          state = { ..., now: clock.now() };
+   *          var due = clock.deadlineIn(11);          // an order's expiry
+   *   phone: var clock = FR.clock();
+   *          onState: clock.see(state);
+   *          clock.left(due)                          // seconds, >= 0
+   *
+   * Naming is part of the contract: fields called `now`, `deadline` or
+   * `*Ends` are clock readings, and the harness's pause/reconnect comparisons
+   * treat them as readings (they may differ by a tick across a pause) while
+   * requiring everything else in the state to match exactly.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * @param {Object} [timers] an FR.timers instance (host only). Omit on a phone.
+   * @param {Function} [wallNow] wall clock in ms; tests inject a fake.
+   */
+  FR.clock = function (timers, wallNow) {
+    var wall = wallNow || function () { return Date.now(); };
+    var nowMs = 0;                 // host: ticked. phone: last seen host time
+    var seenAt = wall();           // wall moment nowMs was true
+    var TICK = 250;
+
+    var api = {
+      /** Arm the tick (host). Safe to call again; the name replaces itself. */
+      start: function () {
+        if (timers) timers.every('fr.clock', TICK, function () { nowMs += TICK; });
+        return api;
+      },
+      /** Game time now. On the host ONLY the tick moves it — a paused table's
+       *  clock must not creep forward on wall time between ticks. On a phone
+       *  it extrapolates from the last state it saw. */
+      now: function () { return timers ? nowMs : nowMs + (wall() - seenAt); },
+      /** A deadline `seconds` from now, in game time. */
+      deadlineIn: function (seconds) { return api.now() + seconds * 1000; },
+      /** Note where the host's clock was when this state arrived. */
+      see: function (state) {
+        if (state && typeof state.now === 'number') { nowMs = state.now; seenAt = wall(); }
+        return api;
+      },
+      /** Seconds until a game-time deadline, never negative. */
+      left: function (deadline) {
+        return Math.max(0, (deadline - api.now()) / 1000);
+      }
+    };
+    return api;
+  };
+
+  /* ------------------------------------------------------------------ *
    * FR.host — the host-authoritative intent reducer
    *
    * Clients send intents; the host decides. Every game wrote that switch by

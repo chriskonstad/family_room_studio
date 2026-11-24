@@ -16,7 +16,7 @@ function createGame(Table, root) {
 
   let view = null;         // shared state everyone renders
   let myPanel = [];        // my controls [{id,label,type,value}]
-  let myOrder = null;      // my current instruction {text, deadline}
+  let myOrder = null;      // my current instruction {text, deadline} — deadline in host game time (FR.clock)
   let prevIntegrity = null;
   let seenAct = 0;         // panel outcome we've already reacted to
   let localTick = null;
@@ -35,13 +35,20 @@ function createGame(Table, root) {
   const pick = a => rng.pick(a);
 
   // ---------- host ----------
+  // FR.clock is the table's one clock: the host ticks it on FR timers (so it
+  // freezes while the table is paused), stamps `now` into every state, and
+  // expresses order deadlines in that time; phones anchor their countdowns to
+  // it. Counting down from when a message ARRIVED instead restarted a rebuilt
+  // phone's order at the full limit — the bug this replaced, twice removed.
+  const timer = FR.timers();
+  const clock = FR.clock(Table.isHost ? timer : null);
   function initGame(players) {
     const names = shuffle(ADJ.flatMap(a => NOUN.map(n => a+' '+n))).slice(0, players.length*CONTROLS_PER_PLAYER);
     let ni = 0;
     G = {
       order: players.map(p=>p.id), names:{}, emojis:{},
       level:1, integrity:START_INTEGRITY, progress:0, actions:{},
-      panels:{}, orders:{}, timers:{}, phase:'briefing',
+      panels:{}, orders:{}, phase:'briefing',
     };
     players.forEach(p => {
       G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.actions[p.id]=0;
@@ -74,15 +81,14 @@ function createGame(Table, root) {
       let to; do { to = rng.range(1, 3); } while (to === ctl.value);
       text = 'Set '+ctl.label+' to '+to+'!'; want = { kind:'dial', to };
     }
-    const order = { forPid:pid, controlId:ctl.id, want, text };
+    const order = { forPid:pid, controlId:ctl.id, want, text, deadline:clock.deadlineIn(orderTimeLimit()) };
     G.orders[pid] = order;
-    clearTimeout(G.timers[pid]);
-    G.timers[pid] = setTimeout(() => { orderExpired(pid); }, orderTimeLimit()*1000);
+    timer.after('order:'+pid, orderTimeLimit()*1000, () => orderExpired(pid));
     Table.isHost && sendOrder(pid, order);
   }
   function sendOrder(pid, order) {
-    const payload = { t:'order', text:order.text, seconds:orderTimeLimit() };
-    if (pid === MY) { myOrder = { text:order.text, deadline:Date.now()+orderTimeLimit()*1000 }; render(); }
+    const payload = { t:'order', text:order.text, deadline:order.deadline };
+    if (pid === MY) { myOrder = { text:order.text, deadline:order.deadline }; render(); }
     else Table.sendTo(pid, payload);
   }
   function orderExpired(pid) {
@@ -135,13 +141,14 @@ function createGame(Table, root) {
     G.order.forEach(pid => { if (!(G.dead && G.dead[pid])) newOrderFor(pid); });
   }
   function beginGame() {
+    clock.start();
     G.phase = 'running';
     G.banner = 'Keep it together!';
     G.order.forEach(pid => { if (!(G.dead && G.dead[pid])) newOrderFor(pid); });
   }
   function gameOver() {
     G.phase = 'over';
-    Object.values(G.timers).forEach(clearTimeout);
+    timer.cancelAll();
     const ranked = G.order.slice().sort((a,b)=>G.actions[b]-G.actions[a]);
     Table.endGame({
       title: '☢️ MELTDOWN at Level '+G.level,
@@ -151,7 +158,7 @@ function createGame(Table, root) {
 
   function publicState() {
     return {
-      phase:G.phase, level:G.level, integrity:G.integrity,
+      phase:G.phase, level:G.level, integrity:G.integrity, now:clock.now(),
       progress:G.progress, goal:SUCCESSES_PER_LEVEL, banner:G.banner,
       names:G.names, emojis:G.emojis, lastAct:G.lastAct||null,
     };
@@ -159,7 +166,7 @@ function createGame(Table, root) {
   function syncAll() {
     const s = publicState();
     Table.broadcast({ t:'state', s });
-    view = s; render();
+    view = s; clock.see(s); render();
   }
 
   // ---------- wiring ----------
@@ -170,7 +177,7 @@ function createGame(Table, root) {
   let table = null;
   function buildTable() {
     return FR.host({
-      state: G, players: G.order, timers: FR.timers(), hostId: MY,
+      state: G, players: G.order, timers: timer, hostId: MY,
       phase: () => G.phase,
       publish: syncAll,
       intents: {
@@ -197,9 +204,12 @@ function createGame(Table, root) {
   } else {
     Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
-      if (msg.t === 'state') { view = msg.s; render(); }
+      if (msg.t === 'state') { view = msg.s; clock.see(msg.s); render(); }
       else if (msg.t === 'panel') { myPanel = msg.panel; render(); }
-      else if (msg.t === 'order') { myOrder = { text:msg.text, deadline:Date.now()+msg.seconds*1000 }; render(); }
+      else if (msg.t === 'order') {
+        myOrder = { text:msg.text, deadline: msg.deadline != null ? msg.deadline : clock.now() + (msg.seconds || 0) * 1000 };
+        render();
+      }
     });
   }
   function MY0(){ return G.order[0]; }
@@ -219,7 +229,7 @@ function createGame(Table, root) {
     localTick = setInterval(() => {
       const el = root.querySelector('.order .clock');
       if (!el || !myOrder) { clearInterval(localTick); return; }
-      const s = Math.max(0, (myOrder.deadline - Date.now())/1000);
+      const s = clock.left(myOrder.deadline);
       el.textContent = s.toFixed(1);
       const ord = root.querySelector('.order');
       if (ord && (s < 2.5) !== urgentOn) {

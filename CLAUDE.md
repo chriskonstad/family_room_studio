@@ -51,12 +51,17 @@ So a game has **no departure to handle and nothing to resync**: no
 `onPlayerLeave`, no `onPlayerJoin`, no `hello` handshake. A game that reacts to
 connectivity is doing the shell's job, and that code is where nearly every real bug
 the harness ever found lived. (The app's side is `GameEngine/Shared/TableLink.swift`,
-proven by `TableLinkTests` including a randomized network that fails at random.)
+proven by `TableLinkTests`: worked edge cases — per-player streams, intent gaps,
+stale games, the intent outbox cap — plus randomized networks, one phone and a
+three-phone table, dropping and being killed at random over thousands of seeds.)
 
 The one thing a rebuilt page can lose is state that never crossed the wire — what
 the phone worked out for itself (a selected card, a local timer). Put anything the
 player must see after a rebuild into what the host sends (CAPTAIN publishes WHETHER
-each sailor has tapped; TEMPO streams its track position with its score).
+each sailor has tapped; TEMPO streams its track position with its score). Countdowns
+are the recurring case: anchor them to the host's clock with `FR.clock`, never to
+when a message arrived — a rebuilt phone gets old messages late, and an
+arrival-anchored countdown restarts at the full limit (MELTDOWN, as shipped).
 
 ## Layout
 

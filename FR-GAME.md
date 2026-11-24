@@ -40,6 +40,12 @@ var timers = FR.timers();
 timers.after('boom', 3000, fn); timers.every('tick', 1000, fn);
 timers.cancel('boom'); timers.cancelAll(); timers.pending
 
+// One game-time clock every phone counts down from (NOT Date.now()).
+var clock = FR.clock(timers); clock.start();          // host
+clock.now(); clock.deadlineIn(11);                    // put now in state
+var phoneClock = FR.clock();                          // phone
+phoneClock.see(state); phoneClock.left(deadline);     // seconds left
+
 // The host-authoritative reducer.
 var table = FR.host({ state, seats, publish, phase, timers, intents });
 table.handle(from, msg); table.hold(ms, fn); table.sequence(ms, steps, done);
@@ -135,6 +141,31 @@ timers.cancelAll();
 Reusing a name replaces the old timer rather than running both. When a game ends, call
 `cancelAll()` (or `table.stop()`) — a finished game that keeps ticking under the results
 screen is a bug that has shipped here before.
+
+## `FR.clock` — countdowns that survive a rebuild
+
+Anything a player counts down — an order expiring, a pick window, a turn timer — must
+be measured against the HOST's clock, never against when a message happened to arrive
+on one phone. The arrival-anchored version (`deadline = Date.now() + limit`) is wrong
+in exactly the situation the shell creates on purpose: a rebuilt phone receives the
+order late and restarts it at the full limit while the table is seconds from expiry.
+MELTDOWN shipped that; LOOKAWAY and FISHBOWL had their own versions.
+
+```js
+// host
+var clock = FR.clock(timers); clock.start();
+state = { ..., now: clock.now() };
+var due = clock.deadlineIn(11);              // send `due` with the order
+// phone
+var clock = FR.clock();
+onState: clock.see(state);
+clock.left(due);                             // seconds left — same on every phone
+```
+
+Name clock fields `now`, `deadline` or `*Ends`: the harness's pause/reconnect
+comparisons treat those as clock readings (they may differ by a tick across a pause)
+and require everything else in the state to match exactly. MELTDOWN, LOOKAWAY and
+FISHBOWL run on this; TEMPO and PASSBOMB stream the same idea by hand.
 
 ## `FR.host` — the four checks games kept forgetting
 

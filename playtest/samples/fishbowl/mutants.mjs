@@ -6,8 +6,8 @@ export default [
     // on the shared screen).
     name: 'the current phrase is broadcast to the whole table',
     file: 'game.js',
-    find: "Table.sendTo(currentGiver(), { t:'phrase', phrase, secondsLeft: s.secondsLeft });",
-    replace: "Table.broadcast({ t:'phrase', phrase, secondsLeft: s.secondsLeft });"
+    find: "Table.sendTo(currentGiver(), { t:'phrase', phrase, secondsLeft: s.secondsLeft, turnEnds: G.turnEnds });",
+    replace: "Table.broadcast({ t:'phrase', phrase, secondsLeft: s.secondsLeft, turnEnds: G.turnEnds });"
   },
   {
     // Every phrase in the bowl was written by someone; if adds stop being

@@ -42,6 +42,7 @@ function createGame(Table, root) {
 
   // ---------- host ----------
   function initGame(players) {
+    clock.start();
     const teams = Table.teams.filter(t => t.playerIds.length > 0);
     G = {
       phase:'entry', names:{}, emojis:{},
@@ -69,6 +70,7 @@ function createGame(Table, root) {
     // freeze while the table is paused, so a wall-clock deadline would silently eat
     // the guesser's remaining seconds the moment somebody's phone drops.
     G.secondsLeft = TURN_SECONDS;
+    G.turnEnds = clock.deadlineIn(TURN_SECONDS);
     timer.after('turn', TURN_SECONDS*1000, () => { endTurn(); syncAll(); });
     timer.every('turnTick', 1000, () => { G.secondsLeft = Math.max(0, G.secondsLeft - 1); });
   }
@@ -115,6 +117,10 @@ function createGame(Table, root) {
   // that is a choice is declared here, and the one thing that is authorship (the phrase
   // itself) is supplied by the bundle's bot.mjs when the harness plays it.
   const timer = FR.timers();
+  // The turn countdown is anchored to the host's clock (FR.clock): the state
+  // carries `now` and the turn's end in that time, so a phone rebuilt from
+  // its history shows the same seconds as one that never dropped.
+  const clock = FR.clock(Table.isHost ? timer : null);
   const isGiver = (ctx) => ctx.from === currentGiver();
   let table = null;
   function buildTable() {
@@ -159,18 +165,21 @@ function createGame(Table, root) {
       activeTeamId: (G.phase==='turnReady'||G.phase==='turn') ? currentTeam().id : null,
       giver: (G.phase==='turnReady'||G.phase==='turn') ? currentGiver() : null,
       bowlLeft: G.bowl.length,
+      now: clock.now(),
+      turnEnds: G.phase==='turn' ? G.turnEnds : null,
       secondsLeft: G.phase==='turn' ? G.secondsLeft : null,
       canSkip: G.bowl.length >= 2,
     };
   }
   function syncAll() {
     const s = publicState();
+    clock.see(s);
     Table.broadcast({ t:'state', s });
     // the current phrase goes ONLY to the giver
     if (G.phase === 'turn' && G.current != null) {
       const phrase = G.phrases[G.current];
       if (currentGiver() === MY) { view = {...s, phrase}; startLocalTimer(s.secondsLeft); render(); return; }
-      Table.sendTo(currentGiver(), { t:'phrase', phrase, secondsLeft: s.secondsLeft });
+      Table.sendTo(currentGiver(), { t:'phrase', phrase, secondsLeft: s.secondsLeft, turnEnds: G.turnEnds });
     }
     view = s; startLocalTimer(s.secondsLeft); render();
   }
@@ -182,8 +191,8 @@ function createGame(Table, root) {
   } else {
     Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
-      if (msg.t === 'state') { view = msg.s; startLocalTimer(msg.s.secondsLeft); render(); }
-      else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase}; startLocalTimer(msg.secondsLeft); render(); }
+      if (msg.t === 'state') { view = msg.s; clock.see(msg.s); startLocalTimer(msg.s.secondsLeft); render(); }
+      else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase, turnEnds: msg.turnEnds ?? view?.turnEnds}; startLocalTimer(msg.secondsLeft); render(); }
     });
   }
 
@@ -224,6 +233,7 @@ function createGame(Table, root) {
       <span class="n">${esc(t.name.replace(' Team',''))}</span><span class="s">${t.score}</span></div>`).join('') + `</div>`;
 
   function secondsNow() {
+    if (view.turnEnds != null) return Math.max(0, Math.ceil(clock.left(view.turnEnds)));
     return localDeadline ? Math.max(0, Math.ceil((localDeadline-Date.now())/1000)) : (view.secondsLeft ?? 0);
   }
   function renderTimerOnly() {

@@ -1,6 +1,6 @@
 function createGame(Table, root){
   const MY = Table.me.id;
-  let view = null, G = null, myPick = null, tick = null, deadlineLocal = 0;
+  let view = null, G = null, myPick = null, tick = null;
   const DIRS = [
     {k:'up',    ic:'⬆️'}, {k:'left', ic:'⬅️'}, {k:'ctr', ic:'⏺️'},
     {k:'right', ic:'➡️'}, {k:'down', ic:'⬇️'}
@@ -23,6 +23,7 @@ function createGame(Table, root){
 
   // ---------- host ----------
   function initGame(players){
+    clock.start();
     G = {order:players.map(p=>p.id), names:{}, emojis:{}, lives:{},
          phase:'ready', round:0, banner:'Get ready to dodge!', lookerIdx:-1, reveal:false, win:4200};
     players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.lives[p.id]=3;});
@@ -35,6 +36,7 @@ function createGame(Table, root){
     G.looker = G.order[G.lookerIdx];
     G.picks = {}; G.reveal = false; G.phase = 'pick';
     G.banner = '👀 ' + G.names[G.looker] + ' is looking!';
+    G.pickEnds = clock.deadlineIn(G.win/1000);
     timer.after('round', G.win, resolve);
     syncAll();
   }
@@ -42,6 +44,9 @@ function createGame(Table, root){
   // and the choice is one of five directions — so `options` enumerates the directions
   // and `when` says who still has a life and hasn't already chosen.
   const timer = FR.timers();
+  // The pick window's countdown is anchored to the host's clock (FR.clock), so
+  // a phone rebuilt mid-round shows the same shrinking bar as everyone else.
+  const clock = FR.clock(Table.isHost ? timer : null);
   let table = null;
   function buildTable(){
     return FR.host({
@@ -81,12 +86,13 @@ function createGame(Table, root){
   }
   function publicState(){
     return {phase:G.phase, banner:G.banner, round:G.round, looker:G.looker, win:G.win,
+      now:clock.now(),
       lives:{...G.lives}, names:G.names, emojis:G.emojis, order:G.order,
       picks:G.reveal?{...G.picks}:null};
   }
   function syncAll(){ const s=publicState(); Table.broadcast({t:'state',s}); onState(s); }
   function onState(s){
-    const prev = view; view = s;
+    const prev = view; view = s; clock.see(s);
     if(s.phase==='pick' && (!prev || prev.phase!=='pick' || prev.round!==s.round)){
       myPick = null; startLocalTimer();
     }
@@ -103,11 +109,12 @@ function createGame(Table, root){
 
   function startLocalTimer(){
     clearInterval(tick);
-    deadlineLocal = Date.now() + (view.win||4000);
     tick = setInterval(()=>{
       const bar = root.querySelector('.tbar i');
       if(!bar || !view || view.phase!=='pick'){ clearInterval(tick); return; }
-      const left = Math.max(0, (deadlineLocal-Date.now())/(view.win||4000));
+      const left = view.pickEnds != null
+        ? Math.max(0, clock.left(view.pickEnds) / ((view.win||4000)/1000))
+        : 0;
       bar.style.width = (left*100) + '%';
       if(left<=0) clearInterval(tick);
     }, 60);
