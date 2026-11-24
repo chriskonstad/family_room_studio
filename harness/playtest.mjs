@@ -205,7 +205,10 @@ export async function playOne(game, {
   // drawn from `shape`, so the same game can be played again WITHOUT the pause and
   // compared move for move (see playtest()).
   const pauseAt = pause ? (2 + shape.int(25)) : 0;
-  const reconnectAt = reconnect ? (3 + shape.int(30)) : 0;
+  // Half of drops land early (turns 2..7), half late (3..32). A single late
+  // schedule left short games — BLITZ, THE DETONATOR — ending before the drop
+  // ever fired, so their reconnect path went untested while reporting green.
+  const reconnectAt = reconnect ? (shape() < 0.5 ? 2 + shape.int(6) : 3 + shape.int(30)) : 0;
   const reconnectWho = ids.length > 1 ? ids[1 + shape.int(ids.length - 1)] : null;
   let reconnected = null;       // { at, broadcasts } once the shadow is up
   let reconnectMode = null;
@@ -395,10 +398,11 @@ export async function playOne(game, {
     }
 
     // Somebody's phone goes to the lock screen and comes back. Not a Leave: the shell
-    // holds the seat and pauses the table, then the returning phone RELOADS the bundle
-    // and is replayed the host's last broadcast and its own last private payload. The
-    // run this is compared against takes the same pause with nobody dropping, so the
-    // games are otherwise identical move for move.
+    // holds the seat and pauses the table, then catches the phone up from the game's
+    // whole numbered history (TableLink) — just what it missed if its page survived,
+    // or a fresh page plus the whole history if it didn't. The run this is compared
+    // against takes the same pause with nobody dropping, so the games are otherwise
+    // identical move for move.
     // A phone drops — right after its player acted, when what it knows that a fresh
     // page wouldn't is greatest, or at the latest a few turns on. The shell pauses the
     // table; nobody's game hears a thing. Then it comes back:
@@ -590,7 +594,22 @@ export async function playOne(game, {
   const said = table.wire().filter(e => e.kind === 'broadcast' || e.kind === 'sendTo' || e.kind === 'endGame');
   const fingerprint = hash(JSON.stringify(said.map(e => [e.t, e.kind, e.to || '', e.payload])));
   // The same, without the clock: what was said, in order, regardless of when.
-  const story = hash(JSON.stringify(said.map(e => [e.kind, e.to || '', e.payload])));
+  // Clock readings inside payloads are scrubbed by name — FR.clock's contract is
+  // that `now`, `deadline` and `*Ends` fields are readings of the host's clock,
+  // and a reading taken either side of a pause (or a rebuild) may legitimately
+  // differ by a tick while the game logic is identical. Everything else — lives,
+  // picks, scores, who holds what — must match exactly.
+  const CLOCK_KEYS = new Set(['now', 'deadline', 'pickEnds', 'turnEnds']);
+  const scrub = (v) => {
+    if (Array.isArray(v)) return v.map(scrub);
+    if (v && typeof v === 'object') {
+      const out = {};
+      for (const [k, x] of Object.entries(v)) out[k] = CLOCK_KEYS.has(k) ? 0 : scrub(x);
+      return out;
+    }
+    return v;
+  };
+  const story = hash(JSON.stringify(said.map(e => [e.kind, e.to || '', scrub(e.payload)])));
   if (verbose) console.log(`    seed ${seed}: ${turns} turns, winner ${result.winnerId}`
     + (ui ? `, pressed ${clicked.presses} controls (${clicked.intents} intents)` : ''));
   return { ok: true, turns, result, sent, legal: legalSeen, vocab, fingerprint, story, declared: !!declared, reconnectMode,
@@ -711,6 +730,9 @@ export async function playtest(game, opts = {}) {
       failures.push({ seed, why: res.why, players, ...modes });
       if (failures.length >= 5) break;       // five is plenty to diagnose
       continue;
+    }
+    if (modes.reconnect && !res.reconnectMode) {
+      notes.push(`seed ${seed}: the game ended before its phone could drop — that seed's reconnect went untested`);
     }
     vocab = res.vocab;
     for (const ph of res.phases) if (!phases.includes(ph)) phases.push(ph);
