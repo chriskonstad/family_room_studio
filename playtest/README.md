@@ -47,10 +47,11 @@ directory picker or hot-reload.)
 4. **Start** — freezes the roster and boots every phone (fires `Table.onStart`). Click
    around in any phone; state routes to the others live.
 5. **Inspect** — the **Message log** at the bottom shows every wire message
-   (`send` / `broadcast` / `sendTo`, plus `leave` / `join` / errors) with direction and
-   payload — your debugger for game logic.
-6. **Test disconnects** — each phone's **Drop** button fires `onPlayerLeave` to the others
-   (host auto-bank paths, etc.); **Reconnect** rebuilds it and fires `onPlayerJoin`.
+   (`send` / `broadcast` / `sendTo`, plus `pause` / `resume` / `screens` / errors)
+   with direction and payload — your debugger for game logic.
+6. **Test disconnects** — each phone's **Drop** button pauses the table (nobody's game
+   hears a thing); **Reconnect** catches it up with exactly what it missed, or rebuilds
+   it from the whole history (cold: the app was killed). Games never see either event.
 7. **Iterate** — edit your `game.js`/`index.html`, hit **↻ Reload** then **Start** to
    re-boot with the new code (hot reload uses the retained directory handle).
 8. **Ship** — **Export .zip** packages the loaded bundle into the exact
@@ -67,8 +68,8 @@ Table.isHost
 Table.players       // finalized roster (seat order)
 Table.onStart(players => …)
 Table.onMessage((fromId, payload) => …)
-Table.onPlayerJoin(player => …)
-Table.onPlayerLeave(playerId => …)
+Table.onPause(waiting => …)     // the table paused: every timer freezes until onResume
+Table.onResume(() => …)         // carry on; a returning phone is caught up by the shell
 Table.send(payload)             // client → host (host's own send loops back to it)
 Table.broadcast(payload)        // host → all clients
 Table.sendTo(playerId, payload) // host → one client

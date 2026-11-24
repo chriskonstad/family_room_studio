@@ -63,9 +63,11 @@ shown again, and fuzzing it is pointless because a failure can't be reproduced. 
 store the seed in state, and the entire game becomes a function of `(seed, intents)`.
 
 ```js
-var G = { seed: Date.now() >>> 0 };     // host picks it once
-var r  = FR.rng(G.seed);                // everything random comes from here
+var r = FR.rng(Table.seed);             // everything random comes from here
 ```
+
+The seed comes from the table, never from the wall clock: a game that seeds
+itself with `Date.now()` is reproducible in principle and never in practice.
 
 `r.shuffle()` returns a **new** array — shuffling a caller's deck in place is how you
 accidentally shuffle the discard pile too.
@@ -325,10 +327,20 @@ Table.onMessage(function (from, msg) { table.handle(from, msg); });
 
 ## Testing your game
 
+The gate is one command — run it before every commit, and CI runs exactly it:
+
+```sh
+node check.mjs            # everything: conformance, validation, playtests,
+                          # screens, phone layouts, bundle tests, mutants
+node check.mjs --quick    # while iterating: skips phone layouts and mutants
+```
+
+Setup once: `npm ci && npx playwright-core install webkit`.
+
 `FR` has no DOM and no `Table` dependency, so host logic built on it runs under plain node:
 
 ```sh
-node sdk/fr-game.test.mjs      # the library's own suite: 51 tests incl. a fuzz soak
+node sdk/fr-game.test.mjs      # the library's own suite, incl. a fuzz soak
 ```
 
 The suite's `fakeClock` is worth copying: it makes a 60-second game run in a millisecond, so

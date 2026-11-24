@@ -18,10 +18,11 @@ function createGame(Table, root) {
   const haptic = (s) => { if (Table.haptic) Table.haptic(s); };
 
   // ---------- deterministic track from a shared seed ----------
-  function rng(seed){ let s = seed >>> 0; return () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296; }
+  // FR.rng, not a hand-rolled LCG: one seeded RNG for the whole dev kit, so a
+  // replayed seed means the same thing in every game.
   function buildBeats(seed) {
     // accelerating beat: 92 -> 168 BPM over 60s, with occasional double-taps
-    const rand = rng(seed);
+    const rand = FR.rng(seed);
     const beats = [];
     let t = 2.0;                       // lead-in
     while (t < TRACK_SECONDS) {

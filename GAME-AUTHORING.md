@@ -2,7 +2,7 @@
 
 This is the complete guide to authoring a game bundle that runs on the Family Room shell
 (iOS app) and in the [Playtest Studio](playtest/). If you're an LLM generating a game,
-**read this whole file first** — the rules in [§9](#9-rules--limits-read-before-you-write)
+**read this whole file first** — the rules in [§10](#10-rules--limits-read-before-you-write)
 are load-bearing: code that ignores them compiles and looks right but behaves wrong.
 
 Companion doc: [playtest/README.md](playtest/README.md) — how to test what you write. (The
@@ -174,7 +174,8 @@ screen, and Play-Again (free — see [§6](#6-ending-a-game)).
 
 `Table` is a global, injected **before your scripts run**. It is the **only** interface to
 the platform (see [§9](#9-rules--limits-read-before-you-write) — there is no filesystem,
-no sockets, no device APIs).
+no sockets, no device APIs — everything you need is here. (The load-bearing rules live
+in [§10](#10-rules--limits-read-before-you-write).)
 
 ### Identity & roster
 ```js
@@ -236,11 +237,20 @@ harness ever found lived there.
 
 **Your clocks freeze automatically.** `setTimeout` / `setInterval` are shimmed in the
 injected SDK, so a lit fuse or round timer stops while paused and resumes with the exact
-time remaining — no game code required. The one rule this imposes:
+time remaining — no game code required. Prefer `FR.timers()` (named timers you can
+`cancelAll()`) and `FR.clock()` (the table's one game-time clock) over raw calls.
 
-> Never derive game timing from raw `Date.now()` deltas across a pause. Drive time with
-> `setTimeout`/`setInterval` (which freeze) rather than by comparing wall-clock stamps
+Two rules this imposes:
+
+> Never derive game timing from raw `Date.now()` deltas. Drive time with
+> `FR.timers` (which freeze) rather than by comparing wall-clock stamps
 > (which don't) — otherwise a paused game "catches up" all at once on resume.
+> And never anchor a countdown to when a message ARRIVED (`deadline =
+> Date.now() + limit`): a phone rebuilt from the game's history receives old
+> messages late and restarts at the full limit. Express deadlines in the
+> host's time (`FR.clock().deadlineIn(s)`) and count down with `clock.left()` —
+> every phone then shows the same seconds, dropped or not. The validator fails
+> a built-in game that uses `Date.now()` in code.
 
 **The one thing a rebuilt page can lose** is state that never crossed the wire — what
 the phone worked out for itself (a selected card, a local track timer). If the player
@@ -292,9 +302,9 @@ The reliable shape for almost every game:
 
 There is no step for players leaving or reconnecting: the shell owns both (§4).
 
-**Randomness / secrets:** only the host should use `Math.random()` (shuffles, dice). Clients
-render host state, so they never diverge. Deal private info with `sendTo(playerId, …)` so a
-hidden hand never rides on a `broadcast`.
+**Randomness / secrets:** seed `FR.rng(Table.seed)` once (shuffles, dice) — never
+`Math.random()`, anywhere. Clients render host state, so they never diverge. Deal
+private info with `sendTo(playerId, …)` so a hidden hand never rides on a `broadcast`.
 
 ---
 
@@ -571,6 +581,8 @@ var seats  = FR.seats(playerIds);   // turn order, statuses, elimination, surviv
 var table  = FR.host({ ... });      // the reducer that refuses illegal intents for you
 FR.standings.byScore(totals)        // the payload Table.endGame wants
 FR.timers()                         // named timers, cancelAll() when the game ends
+FR.clock(timers)                    // the table's one clock: countdowns anchored
+                                    // to the host, so rebuilt phones agree
 ```
 
 Full reference with a complete example game: **[FR-GAME.md](FR-GAME.md)**.
@@ -733,20 +745,22 @@ A checklist. Violating these produces code that runs but misbehaves.
 10. **Reference assets via HTML/CSS, not runtime `fetch()`** (studio portability).
 11. **`Table` is the whole platform.** No filesystem, sockets, or device APIs beyond standard
     in-webview web APIs. Don't include your own copy of the `Table` SDK — it's injected.
-12. **Randomness lives on the host.** Shuffles/dice use `Math.random()` on the host only.
+12. **Randomness lives on the host.** Shuffles/dice use `FR.rng(Table.seed)` on the host only — never `Math.random()`.
 13. **Keep the bundle small** (it transfers over the air to every joiner).
 14. **Bump `version` on any change; keep `id` stable.** Same `id@version` must be identical
     on every device.
 
 ---
 
-## 10. Test & ship
+## 11. Test & ship
 
-- **Test:** open the [Playtest Studio](playtest/) (`cd playtest && python3 -m
-  http.server`, then browse to it). Load your game **folder**, add players, run them across
-  iPhone device sizes, watch the **message log** to debug your wire protocol, exercise
-  **Drop/Reconnect**, and drive an end-to-end game including `endGame` → Play Again. Edit
-  files and hit **Reload → Start** to hot-reload.
+- **Test:** `node check.mjs` is the gate — run it before every commit (CI runs exactly
+  it); `node check.mjs --quick` while iterating. Setup once: `npm ci && npx
+  playwright-core install webkit`. It covers validation, headless playtests under
+  bots (hostile input, pauses, warm/cold reconnects, real button presses), shared
+  screens, every phone screen in real WebKit, bundle tests, and mutants. For
+  interactive debugging, open the [Playtest Studio](playtest/) (serve the dev-kit
+  root, then browse to `playtest/`) and exercise **Drop/Reconnect** there.
 - **Package:** click **Export .zip** in the studio (or zip the folder). That's your bundle.
 - **Ship:** in the Family Room app, **Add Game from Zip** installs it into the library; it
   then appears in "Choose a game" and can be hosted. Joiners who lack it pull it from the

@@ -26,15 +26,20 @@ game. A **game** is just a bundle of HTML + JS + assets written against one inje
 
 ```sh
 npm ci && npx playwright-core install webkit   # once
-node check.mjs
+node check.mjs            # the gate: run before every commit, CI runs exactly this
+node check.mjs --quick    # while iterating: skips phone layouts and mutants
 ```
 
 Games never handle connections: the shell pauses the table when a phone drops and
-catches it up when it returns — every message, in order, exactly once.
+catches it up when it returns — every message, in order, exactly once. Game clocks
+freeze while the table is paused; countdowns anchor to the host's clock (`FR.clock`).
 
-Conformance + the `FR` library suite + bundle validation + a headless bot playtest of every
-bundle. Node only — no browser, no simulator, no Mac. If this is green, the only thing left
-that a Mac can tell you is how the game *feels*.
+Conformance + the `FR` library suites + strict bundle validation + version bumps +
+a headless bot playtest of every bundle (hostile input, pauses, warm/cold reconnects,
+real button presses) + shared screens + every phone screen in real WebKit + each
+bundle's own tests + mutants proving the suite catches the bugs it claims. Node only
+— no simulator, no Mac (one headless browser for layouts). If this is green, the only
+thing left that a Mac can tell you is how the game *feels*.
 
 ## Quick start
 

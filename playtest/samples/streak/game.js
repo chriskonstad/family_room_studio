@@ -20,6 +20,9 @@ function createGame(Table, root) {
   // which is what makes a fuzz failure something you can look at rather than a rumour.
   const rng = FR.rng(Table.seed);
   const shuffle = a => rng.shuffle(a);
+  // Named timers, so a finished game (or a new round) can kill them all at once —
+  // raw setTimeouts here once outlived the round that armed them.
+  const timer = FR.timers();
 
   // ---- setup (host only) ----
   function initGame(players) {
@@ -35,8 +38,8 @@ function createGame(Table, root) {
     G.deck = shuffle(buildDeck()); G.discard = [];
     G.order.forEach(id => { G.lines[id] = { nums:[], mods:[], hasSave:false }; G.status[id]='active'; });
     G.pending = null; G.work = []; G.roundOver = false; G.winner = null;
-    clearTimeout(G.workTimer);            // no stale forced flips across rounds
-    clearTimeout(G.endTimer); G.ending = false;
+    timer.cancel('work'); timer.cancel('endRound');   // no stale forced flips across rounds
+    G.ending = false;
     G.turn = nextActiveFrom(G.dealer % G.order.length, true);
     G.phase = 'playing';
     G.banner = 'Round ' + G.round + ' — ' + G.names[curId()] + ' starts';
@@ -114,7 +117,7 @@ function createGame(Table, root) {
   };
   function buildTable() {
     return FR.host({
-      state: G, seats: seatsView, timers: FR.timers(), hostId: MY,
+      state: G, seats: seatsView, timers: timer, hostId: MY,
       phase: () => G.phase,
       publish: publish,
       intents: {
@@ -158,8 +161,7 @@ function createGame(Table, root) {
     if (G.work.length) {
       // More forced flips queued: show this one, land the next after a beat.
       publish();
-      clearTimeout(G.workTimer);
-      G.workTimer = setTimeout(resolveWork, FORCED_FLIP_DELAY);
+      timer.after('work', FORCED_FLIP_DELAY, resolveWork);
       return;
     }
     endTurnOrRound();
@@ -181,10 +183,9 @@ function createGame(Table, root) {
     if (G.ending) return;                       // already counting down
     G.ending = true;
     G.work = [];
-    clearTimeout(G.workTimer);
+    timer.cancel('work');
     publish();                                  // the triggering banner, held
-    clearTimeout(G.endTimer);
-    G.endTimer = setTimeout(finalizeRound, ROUND_END_DELAY);
+    timer.after('endRound', ROUND_END_DELAY, finalizeRound);
   }
 
   function finalizeRound() {
@@ -204,6 +205,7 @@ function createGame(Table, root) {
     const leader = ranked[0];
     if (G.totals[leader] >= 200) {
       G.phase='gameOver'; G.winner=leader; G.banner = '🏆 '+G.names[leader]+' wins with '+G.totals[leader]+'!';
+      timer.cancelAll();   // nothing may tick under the results screen
       // Hand the terminal result to the shell for a native results screen + "Play Again".
       Table.endGame({
         winnerId: leader,

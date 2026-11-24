@@ -179,7 +179,11 @@ export function validateBundle(dir, { strict = false } = {}) {
       if (/\bDate\.now\s*\(/.test(line)) dateLine = i + 1;
     }
     if (dateLine) {
-      warn(`${f.rel}:${dateLine} uses Date.now() — host game state must never be derived from wall-clock deltas (timers freeze across a pause, the wall clock doesn't); drive host timing from FR.timers and keep Date.now() to client display only`);
+      // An error under --strict, like connection code: the arrival-anchored
+      // countdown (deadline = Date.now() + limit) restarts on a rebuilt phone,
+      // and FR.clock exists so no game needs to write one. Zero-noise today —
+      // no built-in game has a code-position Date.now() left.
+      (strict ? err : warn)(`${f.rel}:${dateLine} uses Date.now() — host game state must never be derived from wall-clock deltas (timers freeze across a pause, the wall clock doesn't); drive host timing from FR.timers, countdowns from FR.clock, and keep Date.now() to client display only`);
     }
     // An intent that carries arguments but declares no `options` can't be enumerated
     // by legalMoves, so the headless harness can't fuzz it — it can only mash the DOM
@@ -203,12 +207,15 @@ export function validateBundle(dir, { strict = false } = {}) {
     // only be wrong: almost every real bug the harness ever found lived in it. A
     // built-in game must not carry any (check.mjs runs this with --strict).
     for (const [re, what] of [
-      [/Table\.onPlayerLeave\s*\(/, 'registers Table.onPlayerLeave'],
-      [/Table\.onPlayerJoin\s*\(/, 'registers Table.onPlayerJoin'],
-      [/Table\.send\(\s*\{\s*(?:t|type)\s*:\s*['"]hello['"]/, "sends a 'hello' resync"]
+      [/Table\.onPlayerLeave\s*\(/g, 'registers Table.onPlayerLeave'],
+      [/Table\.onPlayerJoin\s*\(/g, 'registers Table.onPlayerJoin'],
+      [/Table\.send\(\s*\{\s*(?:t|type)\s*:\s*['"]hello['"]/g, "sends a 'hello' resync"],
+      [/Table\.sendTo\((?:[^,]+),\s*\{\s*(?:t|type)\s*:\s*['"]hello['"]/g, "sends a 'hello' resync"]
     ]) {
-      const m = re.exec(src);
-      if (m) (strict ? err : warn)(`${f.rel}:${lineOf(m.index)} ${what} — the shell owns connections: a dropped phone pauses the table and is caught up when it returns (every message, in order, exactly once), and games never see anyone leave or come back. Delete it`);
+      // Every occurrence, not just the first: one handler is already one too many.
+      for (const m of src.matchAll(re)) {
+        (strict ? err : warn)(`${f.rel}:${lineOf(m.index)} ${what} — the shell owns connections: a dropped phone pauses the table and is caught up when it returns (every message, in order, exactly once), and games never see anyone leave or come back. Delete it`);
+      }
     }
     // The SDK is injected; a bundle shipping its own copy would shadow it.
     if (/window\.Table\s*=/.test(src)) {
@@ -238,7 +245,7 @@ export function validateBundle(dir, { strict = false } = {}) {
 }
 
 /** Unzip to a temp dir and validate that, finding the bundle root the way the app does. */
-export function validateZip(zipPath) {
+export function validateZip(zipPath, { strict = false } = {}) {
   const tmp = mkdtempSync(join(tmpdir(), 'fr-validate-'));
   try {
     execFileSync('unzip', ['-q', '-o', zipPath, '-d', tmp], { stdio: 'pipe' });
@@ -252,7 +259,7 @@ export function validateZip(zipPath) {
                                             && statSync(join(root, d)).isDirectory());
     if (dirs.length === 1 && existsSync(join(root, dirs[0], 'manifest.json'))) root = join(root, dirs[0]);
   }
-  return validateBundle(root);
+  return validateBundle(root, { strict });
 }
 
 /* --------------------------------------------- the Studio's sample index --- */
@@ -348,7 +355,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     try {
       // --strict: the built-in games are held to the rules a third-party zip is only
       // warned about.
-      out = extname(target) === '.zip' ? validateZip(target) : validateBundle(target, { strict: args.includes('--strict') });
+      out = extname(target) === '.zip' ? validateZip(target, { strict: args.includes('--strict') }) : validateBundle(target, { strict: args.includes('--strict') });
     } catch (e) {
       console.log(`  ✗ ${label} validator error: ${e.message}`);
       failed++;
