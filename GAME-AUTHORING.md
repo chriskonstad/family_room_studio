@@ -123,7 +123,8 @@ include your own copy of it.
 </html>
 ```
 
-**`game.js`** — the whole game. Note the `isHost` branch and the "hello" resync.
+**`game.js`** — the whole game. Note the `isHost` branch — and that there is no
+connection code at all: the shell keeps every phone caught up.
 ```js
 const root   = document.getElementById('scores');
 const GOAL   = 10;
@@ -139,7 +140,6 @@ function render() {
 Table.onStart(players => {
   roster = players;
   players.forEach(p => scores[p.id] = 0);
-  if (!Table.isHost) Table.send({ type: 'hello' });   // ask the host for current state
   render();
 });
 
@@ -208,8 +208,6 @@ build your own team picker:
 ```js
 Table.onStart((players) => { … })       // session begins (or restarts). Roster is final. Init here.
 Table.onMessage((fromId, payload) => {}) // a message arrived
-Table.onPlayerLeave((playerId) => { … }) // a player LEFT FOR GOOD (see pause, below)
-Table.onPlayerJoin((player) => { … })    // a player (re)joined mid-game
 Table.onPause(() => { … })               // optional: play frozen (someone dropped)
 Table.onResume(() => { … })              // optional: play resumed
 Table.isPaused                           // optional: current freeze state
@@ -218,13 +216,23 @@ Table.isPaused                           // optional: current freeze state
   reloads the bundle). Treat it as "initialize a brand-new game." Do all setup here.
 - Register your handlers synchronously at top level so they exist when `onStart` fires.
 
-### Disconnects, pause and reconnect (the shell handles this — don't reinvent it)
+### Disconnects, pause and reconnect — the shell's job, never the game's
 
-If anyone's phone backgrounds, sleeps, or drops off the network, the shell **pauses the
-whole table**: every device shows a "Paused — waiting for <player>" overlay that blocks
-input, the dropped player's seat is held, and their app reconnects and resumes that same
-seat automatically. `onPlayerLeave` fires only when they leave for good (they tapped Leave,
-or the host chose "Continue without them") — a brief disconnect never reaches your game.
+The shell gives your game a connection like TCP gives a program a pipe: **every
+message, in order, exactly once**, whatever the network does. If anyone's phone
+backgrounds, sleeps, or drops off the network, the shell **pauses the whole table** —
+every device shows "Paused — <player> stepped away / is reconnecting", input is blocked,
+every game clock freezes — and when they come back their phone is **caught up**: just
+the messages it missed if its page survived, or a fresh page rebuilt from the **whole
+history** of the game if iOS killed the app. A tap sent into a dying connection is
+resent and applied once. There is no "leaving" mid-game; if someone isn't coming back,
+the host ends the game for everyone.
+
+So your game has **nothing to handle**: no `onPlayerLeave`, no `onPlayerJoin`, no
+resync handshake. They are still in the SDK for old bundles and never fire during a
+game; the validator flags them (and fails a built-in game that uses them). Code that
+reacts to connectivity is code that can only be wrong — nearly every real bug the
+harness ever found lived there.
 
 **Your clocks freeze automatically.** `setTimeout` / `setInterval` are shimmed in the
 injected SDK, so a lit fuse or round timer stops while paused and resumes with the exact
@@ -234,10 +242,10 @@ time remaining — no game code required. The one rule this imposes:
 > `setTimeout`/`setInterval` (which freeze) rather than by comparing wall-clock stamps
 > (which don't) — otherwise a paused game "catches up" all at once on resume.
 
-On reconnect the host shell also **replays your last `broadcast` and that player's last
-`sendTo`**, so a returning player lands mid-game rather than on an empty board. Handling
-`{type:'hello'}` with a state publish (below) is still recommended — it makes the resync
-immediate and is the documented contract.
+**The one thing a rebuilt page can lose** is state that never crossed the wire — what
+the phone worked out for itself (a selected card, a local track timer). If the player
+must still see it after a rebuild, the host should send it (CAPTAIN SAYS publishes
+WHETHER each sailor has tapped; TEMPO streams its track position with its score).
 
 ### Messaging (your game → shell → wire)
 ```js
@@ -247,9 +255,10 @@ Table.sendTo(playerId, payload) // host → one client (e.g. a private hand). Ho
 ```
 - `payload` is **any JSON-serializable object** — plain data only (no functions, DOM nodes,
   class instances). It is structured-cloned across the boundary.
-- Delivery is **reliable and ordered** while connected (a TCP-like stream): messages arrive
-  in the order sent, without loss. But it is **asynchronous** — never assume a `send` has
-  been handled by the next line.
+- Delivery is **reliable and ordered** — across disconnects too (see above): messages
+  arrive once, in the order sent. But it is **asynchronous** — never assume a `send` has
+  been handled by the next line. A client's messages from the host arrive after its own
+  `onStart`, never before.
 - **Clients only `send`; the host `broadcast`/`sendTo`.** Clients never mutate authoritative
   state directly — they send an intent and wait for the host's next state broadcast.
 
@@ -272,20 +281,16 @@ Table.loadState()      // returns the last saved state, or null
 The reliable shape for almost every game:
 
 1. **`onStart`** — build initial state. On the **host**, create the authoritative state
-   (deck, scores, whose turn). On a **client**, `Table.send({type:'hello'})` and wait.
+   (deck, scores, whose turn) and publish it. On a **client**, render a waiting state; the
+   host's first broadcast is on its way (it is delivered after your `onStart`, always).
 2. **Host `onMessage`** — validate the intent (is it this player's turn? is the move
    legal?), mutate authoritative state, then `Table.broadcast({type:'state', …})` a public
-   snapshot. Ignore illegal intents. Handle `{type:'hello'}` by broadcasting current state
-   (this resyncs a client whose webview loaded late).
+   snapshot. Ignore illegal intents (better: build on `FR.host`, which refuses them).
 3. **Client `onMessage`** — on `{type:'state', …}`, replace local view and re-render. Clients
    are pure render functions of the host's state.
-4. **`onPlayerLeave`** (host) — a player dropped; fold them out so the game can continue
-   (e.g. auto-bank/skip them, advance the turn if it was theirs), then broadcast.
-5. **`Table.endGame(...)`** (host) — when the game is decided.
+4. **`Table.endGame(...)`** (host) — when the game is decided.
 
-Why the `hello` handshake matters: a client's webview may finish loading *after* the host's
-first `broadcast`, missing it. Having the client announce itself and the host reply with the
-current state closes that race. (The shell also refires `onStart` on reconnect.)
+There is no step for players leaving or reconnecting: the shell owns both (§4).
 
 **Randomness / secrets:** only the host should use `Math.random()` (shuffles, dice). Clients
 render host state, so they never diverge. Deal private info with `sendTo(playerId, …)` so a

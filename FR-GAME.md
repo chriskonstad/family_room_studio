@@ -103,16 +103,9 @@ if (seats.settled) finish();      // exactly one player left
 if (!seats.next()) endRound();
 ```
 
-`eliminate()` is idempotent, so calling it from both a game rule and your
-`Table.onPlayerLeave` handler is safe — and you should do exactly that:
-
-```js
-Table.onPlayerLeave(function (id) {
-  seats.eliminate(id);
-  if (seats.settled) finish();
-  publish();
-});
-```
+`eliminate()` is idempotent. It is for your game's own rules — a player busting
+out — and never for connections: a phone that drops pauses the table and is caught
+up when it returns, so no player ever vanishes from a game (no `onPlayerLeave`).
 
 ## `FR.standings` — one scoreboard, sorted one way
 
@@ -202,8 +195,8 @@ play: {
 | Option | Use it for |
 |---|---|
 | `options(ctx)` | the argument sets this intent accepts right now |
-| `when(ctx)` | any guard `turn`/`host`/`phase` can't express — checked by `handle` **and** `legalMoves`, so they can never disagree |
-| `hidden: true` | keep it out of the move space (`hello`, or free text nothing can enumerate) |
+| `when(ctx)` | any guard `turn`/`host`/`phase` can't express — checked by `handle` **and** `legalMoves` (against each concrete option, so `ctx.msg` is always the message), so they can never disagree. Validate argument values HERE, not inside `run`: a `run` that silently ignores a bad value is an accepted intent that does nothing |
+| `hidden: true` | keep it out of the move space (free text nothing can enumerate — pair it with a `bot.mjs`) |
 
 The UI becomes one view of this list rather than the only place it exists. You don't have to
 restructure your game to get it: SUMMIT kept its own deck and scoring and only moved its
@@ -295,7 +288,6 @@ function endRound() {
 
 function publish() { Table.broadcast({ view: G, deckLeft: deck.left, turn: seats.current }); }
 Table.onMessage(function (from, msg) { table.handle(from, msg); });
-Table.onPlayerLeave(function (id) { seats.eliminate(id); if (seats.settled) endRound(); publish(); });
 ```
 
 ---

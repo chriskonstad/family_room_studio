@@ -6,17 +6,57 @@ against one injected global, `Table`. The native shell (Swift) lives in the main
 Family Room app repo, which vendors this repo as its `tools/` submodule — nothing
 here needs Xcode, a simulator, or a Mac.
 
-## The one command
+## Definition of done
 
 ```sh
-node check.mjs
+npm ci && npx playwright-core install webkit   # once: the phone layout check needs WebKit
+node check.mjs                                  # before every commit; CI runs exactly this
+node check.mjs --quick                          # while iterating (skips phones + mutants)
 ```
 
-Run it before every commit; CI (`.github/workflows/check.yml`) runs it on every
-push and PR. It runs, in order: the Table SDK conformance suite, the FR library's
-own tests (including a fuzz soak), the fr-screen library's tests, bundle
-validation, a headless bot playtest of every sample, and a headless run of every
-shared screen at six screen shapes. All six must be green.
+A game change is done when `node check.mjs` is green. Everything below is ENFORCED
+by it — you do not have to remember these, but you do have to satisfy them:
+
+| Rule | Enforced by |
+|---|---|
+| Bump `manifest.json` version on any change to what ships | `harness/bumps.mjs` (vs. the base branch) |
+| No `Table.onPlayerLeave` / `onPlayerJoin` / `hello` resync in a game | `validate.mjs --strict` |
+| Never throws · always finishes · `endGame` once · no timers left armed | `harness/playtest.mjs` |
+| Same seed replays move for move; a pause changes nothing but timing | playtest (determinism + pause twin) |
+| A refused intent changes nothing | playtest `--hostile` |
+| Every control the phone offers sends something the host accepts; whenever the rules allow a move, the screen offers one | playtest `--ui` + every-turn control check |
+| A reconnect is invisible (warm) or rebuilds the same screen (cold) | playtest `--reconnect` |
+| No phone shows what was sent privately to someone else | playtest (client leak watch) + the game's `invariants.mjs` |
+| Every phone screen fits at six device sizes: nothing clipped, overlapping, under the home bar, smaller than 44pt to tap, or **needing a scroll** | `harness/phone.mjs` (real WebKit) |
+| The TV/iPad screen fits, reads, and never draws anything private | `harness/screen.mjs` (non-interference probe) |
+| The suite still catches the bugs it claims to | `harness/mutants.mjs` |
+
+What check.mjs CANNOT tell you — so a human still should: whether the game is fun,
+whether the pacing feels right, and whether it reads at a glance across a room.
+`node harness/phone.mjs <game> --shots out/` writes a screenshot of every phase at
+every device size (and every problem, outlined) to `out/<game>.html` — flip through it.
+
+## Connections are the shell's job — games never see them
+
+The shell gives a game a connection like TCP gives a program a pipe: every message,
+in order, exactly once. A phone that drops — backgrounded to answer a text, the app
+suspended, wifi blinking, iOS killing the app — **pauses the whole table** (every
+device's timers freeze; the overlay names who and why) and, when it comes back, is
+caught up: just what it missed if its page survived, or a fresh page rebuilt from
+the **whole history** of the game if it didn't. Its own taps sent into a dying
+socket are resent and applied once. There is no "leaving" mid-game: the host can
+end the game for everyone, and that is all.
+
+So a game has **no departure to handle and nothing to resync**: no
+`onPlayerLeave`, no `onPlayerJoin`, no `hello` handshake. A game that reacts to
+connectivity is doing the shell's job, and that code is where nearly every real bug
+the harness ever found lived. (The app's side is `GameEngine/Shared/TableLink.swift`,
+proven by `TableLinkTests` including a randomized network that fails at random.)
+
+The one thing a rebuilt page can lose is state that never crossed the wire — what
+the phone worked out for itself (a selected card, a local timer). Put anything the
+player must see after a rebuild into what the host sends (CAPTAIN publishes WHETHER
+each sailor has tapped; TEMPO streams its track position with its score).
 
 ## Layout
 
@@ -25,172 +65,123 @@ shared screen at six screen shapes. All six must be green.
 | `sdk/table-sdk.js` | The ONE `Table` implementation, shared verbatim with the iOS shell. Changing it changes every game on every device. |
 | `sdk/fr-game.js` | `FR` — seeded RNG, decks, seats, standings, timers, and the `FR.host` intent reducer. `sdk/fr-game.test.mjs` is its suite. |
 | `sdk/fr-feel.js` | Animations / haptics / sound. |
-| `sdk/fr-screen.js` | `FRScreen` — the SHARED SCREEN drawing vocabulary (see below). `sdk/fr-screen.test.mjs` is its suite. |
-| `harness/` | Headless runner + fuzzer. `runner.mjs` boots N virtual phones on a virtual clock (including `Date`); `playtest.mjs` plays bundles to completion under bots and asserts the invariants below. |
+| `sdk/fr-screen.js` | `FRScreen` — the SHARED SCREEN drawing vocabulary (see below). |
+| `harness/runner.mjs` | Boots N virtual phones on a virtual clock and models the shell exactly — including the connection layer (warm/cold reconnects with full history). |
+| `harness/playtest.mjs` | Plays bundles to completion under bots in every mode and asserts the rules above. |
+| `harness/phone.mjs` | Rebuilds each phone, event for event, in real WebKit and measures its layout. |
+| `harness/screen.mjs` | Plays a game and draws its shared screen at six TV/iPad shapes. |
+| `harness/mutants.mjs` | Puts known bugs back on purpose and requires the suite to catch each. |
+| `harness/bumps.mjs` | Version bumps, vs. the base branch. |
 | `playtest/` | The browser Playtest Studio, plus `samples/<key>/` — the game bundles. |
 | `validate.mjs` | Static bundle checks (manifest schema, offline-only, authoring lints). |
 | `conformance/` | The spec both harnesses are held to. |
 
 ## Rules for writing or changing a game
 
-1. **Bump `manifest.json` version on ANY game change.** The app replaces bundles
-   by version; an unbumped change never reaches phones that already have the game.
-2. **All randomness through `FR.rng(Table.seed)`.** Never `Math.random()`. The
-   game must be a pure function of `(seed, intents)` or no failure can ever be
-   reproduced. The harness asserts this (same seed → identical game).
-3. **Host logic never reads `Date.now()` for elapsed time.** The shell freezes
-   timers when the table pauses, but wall-clock time keeps passing — a
-   `Date.now()` delta leaps forward on resume. Drive time from `FR.timers`
-   ticks. Client-side display math is the only acceptable use.
+1. **Bump `manifest.json` version on ANY change** (enforced). The app replaces
+   bundles by version; an unbumped change never reaches phones that already have it.
+2. **All randomness through `FR.rng(Table.seed)`.** Never `Math.random()`.
+3. **Host logic never reads `Date.now()` for elapsed time.** Drive time from
+   `FR.timers`; a pause freezes those and must change nothing but timing.
 4. **Build the host on `FR.host` and declare `options` for every intent that
-   carries arguments** (or `hidden: true` for free text, with a `bot.mjs` to
-   supply it). This is what makes the game playable and fuzzable with no DOM.
-   Never teach the harness's DOM shim new tricks when declaring the move space
-   would do — see `harness/known-gaps.json`'s comment.
-5. **Name your timers (`FR.timers`) and `cancelAll()` when the game ends.** The
-   harness fails a bundle that keeps ticking under the results screen.
-6. **`Table.onPlayerLeave` must keep the game finishable** — eliminate the seat,
-   re-check for a winner, never leave the table waiting on a ghost.
-7. Games are plain ES5-ish scripts injected into WKWebView — no imports, no
-   fetch, no external hosts. `validate.mjs` enforces most of this.
+   carries arguments** (or `hidden: true` for free text, with a `bot.mjs`). Guards
+   go in `when(ctx)` — it is checked against each concrete option, so `ctx.msg` is
+   always there and legalMoves never offers a move `handle` would refuse. A guard
+   inside `run` that silently ignores a bad intent is a dead button no check can see.
+5. **Name your timers (`FR.timers`) and `cancelAll()` when the game ends.**
+6. **Don't handle connections** (enforced): see above.
+7. **Nothing on a phone scrolls** (enforced). Design for an iPhone SE (375×603 for
+   the game) with the biggest table the manifest allows and the longest names. Dense
+   layouts at high player counts (STREAK, TAPAS, LIAR'S DICE), fanned hands (SUMMIT)
+   and "+N earlier" folds (SCRAMBLE) are the patterns.
+8. Games are plain ES5-ish scripts injected into WKWebView — no imports, no fetch,
+   no external hosts.
 
 ## Testing a game
 
 ```sh
 node harness/playtest.mjs <key>                       # fuzz one bundle, all modes
 node harness/playtest.mjs <key> --games 200           # harder soak
-node harness/playtest.mjs <key> --seed N --players P [--hostile|--leave|--pause] --verbose
+node harness/playtest.mjs <key> --seed N --players P [--hostile|--pause|--ui|--reconnect|--screens N|--toggle-screen] --verbose
+node harness/phone.mjs <key> [--shape se,i17] [--shots out/]
+node harness/mutants.mjs <key> [--verbose]
 ```
 
 A failure prints a **reproduce command — run it verbatim**; it pins the seed,
-player count and mode, and replays the exact game. Batches automatically rotate
-through table sizes (2–8, clamped to the manifest), hostile input (intents no UI
-offered, ghost senders), a mid-game disconnect, and a mid-game 45s pause.
+player count and every mode.
 
-Invariants every bundle must hold: never throws · always terminates · `endGame`
-fires exactly once · winner is a seated player or team · no timers left armed ·
-a refused intent changes nothing · nothing moves while paused · same seed
-replays move for move.
-
-Some rules a property check cannot judge. Every outcome of a hand of HOLD'EM
-conserves chips perfectly, so "did the right hand win" is invisible to the
-fuzzer — that needs worked examples. A bundle may ship **`rules.test.mjs`**
-beside its `rules.js`, and `check.mjs` discovers and runs it:
-
-```sh
-node playtest/samples/holdem/rules.test.mjs
-```
+Batches rotate table sizes (2–8, clamped to the manifest) and modes: hostile input
+(intents no UI offered, ghost senders); a 44s pause (replayed without the pause —
+the game must say exactly the same things); one player driven entirely through
+their phone's real controls; a reconnect right after a player acts — warm (must be
+invisible: compared with the same game where the table only paused), cold-replace
+(the rebuilt page plays on, and what it SENDS is real) or cold-shadow (rebuilt
+beside a phone that never dropped; the screens must agree); and, for
+`"screen": "optional"` games, with and without a TV and with one switched on or off
+mid-game.
 
 Per-bundle hooks, dropped beside `game.js`:
 
-- **`bot.mjs`** — supplies input the generic bot can't invent (typed text).
-  See `playtest/samples/fishbowl/bot.mjs`. A bot that needs the game's own rules
-  to play (SCRAMBLE has to find real words on the grid) loads the bundle's own
-  files rather than reimplementing them — two implementations would agree with
-  each other right up until a player disagreed.
-- **`invariants.mjs`** — game-specific properties checked after every turn and
-  at game end ("exactly one bomb holder", "dice never come back", "60 cards are
-  always somewhere"). **Every sample ships one** — copy the closest game's.
-  `summit`'s card-conservation check is the pattern worth stealing for anything
-  with a deck; `streak`'s is the one for scores and per-player status.
+- **`invariants.mjs`** — game-specific properties checked after every turn and at
+  game end. Every sample ships one. Assert what is true at EVERY sample point —
+  conservation, monotonicity, bounds, cross-field consistency — and recompute what
+  you can from public state (HOLD'EM re-derives every pot from the revealed cards;
+  STREAK re-scores every line). Read the wire (`table.wire('broadcast')`) to check
+  every state, not only the latest. `export const reconnectIgnore = [/…/]` names
+  text a game knowingly recomputes after a rebuild (TEMPO's local HUD).
+- **`*.test.mjs`** — worked examples a property can't judge, discovered and run by
+  check.mjs: `rules.test.mjs` (HOLD'EM's evaluator), `hands.test.mjs` (whole hands
+  with a stacked deck via the runner's `beforeGame` hook), `rounds.test.mjs`
+  (STREAK). Resolve the runner via `process.env.FR_REPO` and run against the
+  test's own directory, so a mutated copy tests the copy.
+- **`bot.mjs`** — supplies input the generic bot can't invent (typed text), or
+  plays a game the way a person does (TEMPO plays its track instead of skipping it).
+- **`phone-states.mjs`** — phone screens a played game rarely reaches (eighteen
+  words found, a hand all in one route, eight seats at a showdown), drawn under the
+  same layout rules: `[{ name, as: 'p1', players, messages: [payload, …] }]`.
+- **`mutants.mjs`** — `[{ name, file, find, replace, checks?, games? }]`: real bug
+  classes put back on purpose; the suite must catch every one. When you fix a bug,
+  add its mutant. A survivor is a hole in the tests.
 
-  Assert only what is true at EVERY sample point: the hook runs once per turn
-  and arbitrary game time can pass in between (several rounds, several taps), so
-  "gained at most one point since last time" is a false positive waiting to
-  happen. Monotonicity, bounds, conservation and cross-field consistency are the
-  shapes that hold.
-
-The playtest also reports intents that were **never sent** across a batch —
-treat that as an untested code path, not noise: either the bots can't reach it
-(declare `options`) or the feature is dead.
+The playtest also reports intents never legal / never sent across a batch,
+measured against FR.host's own intent table — an untested path, not noise.
 
 ## The shared screen (Apple TV, an iPad, the Studio panel)
 
 A screen is an auxiliary DISPLAY, not a player. It is handed the host's public
-broadcasts and never a private `sendTo`, so a game's hands stay on the phones by
-routing rather than by the author remembering. Declare it in `manifest.json`:
+broadcasts and never a private `sendTo`. Declare it in `manifest.json`:
 
 ```json
 "screen": "none" | "optional" | "required"
 ```
 
-`required` means the shell will not start the game without a display attached.
-Use it when something the game cannot do without happens on the screen — in
-SCRAMBLE the round is SCORED there, word by word in front of everyone, and no
-phone can be the place a table watches a scoreboard move.
-`optional` or `required` means the bundle ships a `screen.js` beside `game.js`:
+`required`: the shell won't start without a display (SCRAMBLE scores its round on
+the TV). `optional`: the game works either way — **only the host knows whether a
+screen is attached** (`Table.screens`: a number on the host, `null` elsewhere or on
+an old shell; treat `null` as "no TV"), so the host publishes it in its state and
+the phones lay themselves out from that. `Table.onScreensChange(cb)` fires on the
+host when a TV comes or goes; republish. HOLD'EM is the example: with a TV the
+phone is your hand; without one every phone is the whole table.
 
-```js
-function createScreen(Table, screen) {
-  var view = null;
-  Table.onMessage(function (_from, msg) { if (msg.t === 'state') view = msg.s; });
-  screen.onDraw(function (ctx, env) { /* env: width, height, safe, t, dt */ });
-}
-```
+`screen.js` defines `createScreen(Table, screen)` and draws through a RECORDER with
+exactly the canvas-2d vocabulary in `FRScreen.PROPS`/`METHODS` — tvOS has no WebKit.
+Helpers: `FRScreen.box(env)`, `FRScreen.fitFont`, `FRScreen.motion()`
+(`follow`/`pulse`/`burst`/`particles`/`once`), `FRScreen.ease`. Fire a celebration
+with `motion().once(key)`, never `pulse`; bound confetti with `{bounds}`.
 
-**There is no DOM here, and no HTML.** tvOS has no WebKit at all — not a
-restricted one, none — so a screen cannot be a web page. `ctx` is a RECORDER
-with exactly the canvas-2d vocabulary in `FRScreen.PROPS`/`METHODS`; anything
-outside it throws on your laptop rather than drawing nothing on a TV. The
-recorded frame is replayed onto a real `<canvas>` in the Studio and on an iPad,
-and onto a SwiftUI Canvas on an Apple TV.
-
-Helpers worth knowing: `FRScreen.box(env)` for a safe-area-aware layout box with
-`u(fraction)`/`rows`/`cols`/`portrait`, `FRScreen.fitFont(text, maxWidth, max)`,
-`FRScreen.motion()` for `follow`/`pulse`/`burst`/`particles`, and
-`FRScreen.ease`. `ctx.measureText` is a consistent ESTIMATE, not a measurement —
-deliberately wrong by the same amount on every renderer. Position with
-`textAlign`/`textBaseline`, not arithmetic on it.
-
-```sh
-node harness/screen.mjs <key> --verbose      # one bundle, six screen shapes
-node harness/screen.mjs --all --games 20     # harder soak
-```
-
-A played game only reaches the phases it can reach in 160 ticks, which is not
-the last one: HOLDEM's tournament takes longer than that, so its game-over frame
-— the one with the confetti — was never drawn. A bundle may therefore ship
-**`screen-states.mjs`** with frames a real run won't reach:
-
-```js
-export default [{ name: 'game over', payload: { t:'state', s: { /* public state */ } } }];
-```
-
-Each is delivered and drawn for a stretch of frames at every shape, under the
-same layout rules. Use it for terminal frames, a full table, and the longest
-strings the game can produce. See `playtest/samples/holdem/screen-states.mjs`.
-
-**Fire a celebration with `FRScreen.motion().once(key)`, never `pulse`.** `pulse`
-is deliberately silent the first time it sees a key, so a pulse read inside the
-branch that only runs after somebody has won returns 0 on that frame and 0 on
-every frame after — the trigger never changes again. Every screen in this kit
-used `pulse` that way and no confetti had ever fired, in the one frame hardest
-to get a test to reach.
-
-It plays a real game (using the bundle's `bot.mjs`), drives the screen at TV
-1080p/4K/720p and iPad landscape/portrait/mini, and fails on: a throw, a blank
-frame, anything **clipped by the edge or under a TV's overscan**, two different
-labels **drawn on top of each other**, fewer than two game phases reached, and
-any private payload being drawn.
-
-That last one is probed, not hoped for: the screen is handed the host's private
-payloads — which the shell never does — once as sent and once with every string
-replaced by a sentinel. The sentinel is there because matching the real strings
-is not enough. SCRAMBLE draws its board in capitals, so a screen that rendered a
-player's private word list drew `CATS` while the wire said `cats`, and the leak
-check saw nothing. A sentinel on the glass has no innocent explanation.
-
-Celebrating? Pass the safe box to `motion.particles(ctx, dt, {bounds})`.
-Unbounded confetti leaves the screen, which is a layout failure like any other —
-and one that only shows up at the moment of winning, the hardest frame to reach.
-
-A host putting a secret INTO a broadcast is not a screen bug (it is already on
-every phone); assert that in the game's `invariants.mjs`, as `fishbowl` does.
+`screen.mjs` fails on a throw, a blank frame, anything clipped or under a TV's
+overscan, two labels drawn over each other, fewer than two phases reached — and any
+private payload changing the picture. That last one is a non-interference probe: a
+second copy of the screen sees only public state, the probed copy is ALSO handed
+every private payload (as sent, and with every string swapped for a sentinel), and
+the two must draw identical frames. Matching strings alone missed HOLD'EM's hole
+cards, which are numbers. `screen-states.mjs` adds frames a played game won't reach.
 
 ## When the harness and a game disagree
 
-The harness is deliberately dumb about rendering (regex-level DOM). If a healthy
-game looks broken headlessly, fix the GAME's declarations (`options`, `when`,
-`hidden`) before touching the shim, and only list a bundle in
-`harness/known-gaps.json` as a last resort — that file is currently empty and
-should stay that way.
+The harness models the shell; when they differ, the harness is wrong and gets
+fixed (the runner once delivered a client's first messages before its `onStart`,
+which is why every game grew a `hello`). The DOM shim in `runner.mjs` is regex-level
+and only has to be good enough for bots and text; real layout is `phone.mjs`'s job.
+Fix the GAME's declarations (`options`, `when`, `hidden`) before teaching the shim
+new tricks. `harness/known-gaps.json` is empty and should stay that way.

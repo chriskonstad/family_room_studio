@@ -139,6 +139,8 @@
    *   isHost    boolean
    *   saved     the persisted state to hand back from loadState() (already parsed)
    *   clock     the object returned by installTimerShim, or omitted for no pausing
+   *   screens   HOST ONLY: how many shared screens (an Apple TV, an iPad) are showing
+   *             the table right now. Omitted on a client, and by a shell too old to know.
    * @param {Object} io the transport. Every method is optional; a missing one is a no-op,
    *   which is what lets the conformance runner instantiate a Table with nothing behind it.
    *   send(payload) broadcast(payload) sendTo(id,payload) endGame(result)
@@ -162,6 +164,12 @@
     }
 
     var roster = cfg.players || [];
+    /* How many shared screens are attached — known only to the HOST, because only
+     * the host's shell has the connections. `null` means "not known here": every
+     * client, and a host on a shell too old to say. A game whose phones should
+     * look different with a TV in the room reads this on the host and publishes
+     * it in its own state, the same way it publishes everything else. */
+    var screens = (cfg.isHost && typeof cfg.screens === 'number') ? cfg.screens : null;
     var rawTeams = cfg.teams || [];
     var isHost = !!cfg.isHost;
 
@@ -209,6 +217,15 @@
       onResume: function (cb) { handlers.resume = cb; },
       get isPaused() { return clock ? clock.isPaused() : !!w.__tablePaused; },
 
+      /// HOST ONLY: how many shared screens are showing the table right now — a
+      /// number on the host, `null` on every client and on a shell too old to know.
+      /// Treat `null` as "assume no screen": a phone that shows the whole table is
+      /// redundant beside a TV, while a phone that assumes one shows nothing at all.
+      get screens() { return screens; },
+      /// HOST ONLY: a screen attached or went away (cb receives the new count). A
+      /// TV switched on mid-game is normal; republish so the phones can adapt.
+      onScreensChange: function (cb) { handlers.screens = cb; },
+
       /// Room feedback. Shell-owned because iOS WebKit has no vibrate API and gates web
       /// audio behind a per-device user gesture.
       /// haptic: light|medium|heavy|soft|rigid|selection|success|warning|error|thud|buzz|boom
@@ -224,6 +241,16 @@
 
     /** The harness fires game events in through this. */
     w.__tableFire = function (event, a, b) {
+      // The screen count is state the SDK owns, so it is updated before the game
+      // hears about it — and only a change is news. A shell fires it on every page
+      // load to sync a fresh page, which must not look like a TV coming and going.
+      if (event === 'screens') {
+        if (!isHost) return;
+        var n = Math.max(0, Number(a) || 0);
+        if (n === screens) return;
+        screens = n;
+        a = n;
+      }
       var cb = handlers[event];
       if (cb) { try { cb(a, b); } catch (e) { report(e); } }
     };

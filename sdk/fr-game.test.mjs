@@ -751,6 +751,53 @@ test('fuzz: input during a hold never lands, across many random timings', () => 
   }
 });
 
+test('legalMoves checks `when` against each concrete option, msg and all', () => {
+  const seats = FR.seats(['a', 'b']);
+  const table = FR.host({
+    state: { last: 3 }, seats, phase: () => 'bid', publish: () => {},
+    intents: {
+      // The shape that threw: a guard that reads the message, as handle() passes it.
+      bid: { phase: 'bid', turn: true,
+             options: () => [1, 2, 3, 4, 5].map(q => ({ qty: q })),
+             when: (ctx) => ctx.msg.qty > ctx.state.last,
+             run: () => {} },
+      pass: { phase: 'bid', turn: true, when: (ctx) => ctx.msg.t === 'pass', run: () => {} }
+    }
+  });
+  assert.deepEqual(table.legalMoves('a'), [{ t: 'bid', qty: 4 }, { t: 'bid', qty: 5 }, { t: 'pass' }]);
+  for (const m of table.legalMoves('a')) assert.equal(table.handle('a', m), true, JSON.stringify(m));
+});
+
+section('FR.host.describe — the vocabulary a coverage report is measured against');
+
+test('describe lists every intent with its guards, hidden ones included', () => {
+  const seats = FR.seats(['a', 'b']);
+  const table = FR.host({
+    state: {}, seats, hostId: 'a', phase: () => 'play', publish: () => {},
+    intents: {
+      bet:   { phase: 'play', turn: true, options: () => [{ to: 5 }], run: () => {} },
+      next:  { host: true, phase: ['over', 'play'], run: () => {} },
+      hello: { hidden: true, run: () => {} },
+      ping:  () => {}
+    }
+  });
+  const d = Object.fromEntries(table.describe().map(x => [x.name, x]));
+  assert.deepEqual(Object.keys(d).sort(), ['bet', 'hello', 'next', 'ping']);
+  assert.equal(d.bet.turn, true); assert.equal(d.bet.options, true);
+  assert.deepEqual(d.next.phase, ['over', 'play']); assert.equal(d.next.host, true);
+  assert.equal(d.hello.hidden, true);
+  assert.equal(d.ping.hidden, false); assert.equal(d.ping.phase, null);
+});
+
+test('refusedTotal counts every refusal, past the 50 that rejected keeps', () => {
+  const table = FR.host({ state: {}, publish: () => {}, intents: { go: () => {} } });
+  for (let i = 0; i < 60; i++) table.handle('p0', { t: 'nope' });
+  assert.equal(table.rejected.length, 50);
+  assert.equal(table.refusedTotal, 60);
+  table.handle('p0', { t: 'go' });
+  assert.equal(table.refusedTotal, 60, 'an accepted intent is not a refusal');
+});
+
 /* -------------------------------------------------------------------- */
 console.log(results.join('\n'));
 console.log(`\n${passed} passed, ${failed} failed`);

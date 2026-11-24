@@ -495,11 +495,13 @@
     function releaseFreeze(id) { delete freezeTokens[id]; }
 
     var rejected = [];        // names of intents refused, newest last — for tests
+    var refusedTotal = 0;     // every refusal ever, so a test can tell one happened
 
     function phaseNow() { return cfg.phase ? cfg.phase() : null; }
 
     function refuse(name, why) {
       rejected.push({ intent: name, why: why });
+      refusedTotal++;
       if (rejected.length > 50) rejected.shift();
     }
 
@@ -508,6 +510,26 @@
       get busy() { return isBusy(); },
       /** Why recent intents were refused. Diagnostics for tests and fuzzing. */
       get rejected() { return rejected.slice(); },
+      /** How many intents have ever been refused. `rejected` keeps only the newest 50,
+       *  so its length cannot tell a test whether the intent it just sent was turned away. */
+      get refusedTotal() { return refusedTotal; },
+
+      /**
+       * The intent table itself — every name and how it is guarded. This is the
+       * vocabulary a coverage report must be measured against: reading it out of the
+       * source with a regex found ONE intent (`hello`) in a game that sends through
+       * its own helper, so nothing could ever be reported as untested there.
+       * @returns {Array<{name, hidden, host, turn, phase, options, when}>}
+       */
+      describe: function () {
+        return Object.keys(intents).map(function (name) {
+          var spec = intents[name];
+          if (typeof spec === 'function') spec = { run: spec };
+          return { name: name, hidden: !!spec.hidden, host: !!spec.host, turn: !!spec.turn,
+                   phase: spec.phase ? [].concat(spec.phase) : null,
+                   options: typeof spec.options === 'function', when: typeof spec.when === 'function' };
+        });
+      },
       timers: timers,
 
       /**
@@ -594,12 +616,23 @@
           var known = cfg.seats ? cfg.seats.all : cfg.players;
           if (known && known.indexOf(playerId) === -1) return;
 
-          var ctx = { from: playerId, state: cfg.state, table: api };
-          if (spec.when && !spec.when(ctx)) return;
+          /* `when` sees exactly what handle() would show it: a concrete message. It used
+           * to be called here with NO msg, so a guard like `validBid(ctx.msg.qty, …)` —
+           * natural, since handle() always passes one — threw on every enumeration, and
+           * Liar's Dice's whole move space silently came back empty. With options, each
+           * candidate is checked on its own, so legalMoves never offers a move handle()
+           * would refuse. */
+          var ctx = { from: playerId, state: cfg.state, table: api, msg: { t: name } };
           var args = spec.options ? spec.options(ctx) : null;
-          if (!args) { out.push({ t: name }); return; }
+          if (!args) {
+            if (spec.when && !spec.when(ctx)) return;
+            out.push({ t: name });
+            return;
+          }
           args.forEach(function (a) {
-            out.push(Object.assign({ t: name }, a));
+            var msg = Object.assign({ t: name }, a);
+            if (spec.when && !spec.when({ from: playerId, state: cfg.state, table: api, msg: msg })) return;
+            out.push(msg);
           });
         });
         return out;

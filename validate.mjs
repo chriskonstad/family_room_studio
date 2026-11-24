@@ -39,7 +39,7 @@ const KNOWN = new Set([...REQUIRED, 'iconEmoji', 'minPlayers', 'maxPlayers',
 
 const MAX_BUNDLE_MB = 12;      // bundles transfer phone-to-phone when friends join
 
-export function validateBundle(dir) {
+export function validateBundle(dir, { strict = false } = {}) {
   const errors = [];
   const warnings = [];
   const err = (m) => errors.push(m);
@@ -197,6 +197,19 @@ export function validateBundle(dir) {
         }
       }
     }
+    // Connections are the shell's job, not the game's. A dropped phone pauses the table
+    // and comes back caught up — every message, in order, exactly once — so a game has
+    // no departure to handle and nothing to resync. Code that tries is code that can
+    // only be wrong: almost every real bug the harness ever found lived in it. A
+    // built-in game must not carry any (check.mjs runs this with --strict).
+    for (const [re, what] of [
+      [/Table\.onPlayerLeave\s*\(/, 'registers Table.onPlayerLeave'],
+      [/Table\.onPlayerJoin\s*\(/, 'registers Table.onPlayerJoin'],
+      [/Table\.send\(\s*\{\s*(?:t|type)\s*:\s*['"]hello['"]/, "sends a 'hello' resync"]
+    ]) {
+      const m = re.exec(src);
+      if (m) (strict ? err : warn)(`${f.rel}:${lineOf(m.index)} ${what} — the shell owns connections: a dropped phone pauses the table and is caught up when it returns (every message, in order, exactly once), and games never see anyone leave or come back. Delete it`);
+    }
     // The SDK is injected; a bundle shipping its own copy would shadow it.
     if (/window\.Table\s*=/.test(src)) {
       err(`${f.rel} assigns window.Table — the shell injects the SDK; a bundle must not define it`);
@@ -333,7 +346,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const label = basename(target).padEnd(12);
     let out;
     try {
-      out = extname(target) === '.zip' ? validateZip(target) : validateBundle(target);
+      // --strict: the built-in games are held to the rules a third-party zip is only
+      // warned about.
+      out = extname(target) === '.zip' ? validateZip(target) : validateBundle(target, { strict: args.includes('--strict') });
     } catch (e) {
       console.log(`  ✗ ${label} validator error: ${e.message}`);
       failed++;
