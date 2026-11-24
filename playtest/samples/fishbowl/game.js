@@ -18,7 +18,8 @@ function createGame(Table, root) {
   let myEntryDone = false;
   let myAdded = 0;            // phrases I've dropped in (local echo)
   let lastPhase = null;       // to patch (not rebuild) the entry screen on updates
-  let localDeadline = null;   // giver countdown (device-local clock)
+  // (no device-local deadline: the countdown reads the host's clock via FR.clock,
+  // so a rebuilt phone shows the same seconds as one that never dropped)
   let tick = null;
   let lastSpokenSecond = null;  // so the countdown beeps once per second, not per tick
   let seenScore = null;         // team scores last render, for the point/skip cues
@@ -178,10 +179,10 @@ function createGame(Table, root) {
     // the current phrase goes ONLY to the giver
     if (G.phase === 'turn' && G.current != null) {
       const phrase = G.phrases[G.current];
-      if (currentGiver() === MY) { view = {...s, phrase}; startLocalTimer(s.secondsLeft); render(); return; }
+      if (currentGiver() === MY) { view = {...s, phrase}; startLocalTimer(); render(); return; }
       Table.sendTo(currentGiver(), { t:'phrase', phrase, secondsLeft: s.secondsLeft, turnEnds: G.turnEnds });
     }
-    view = s; startLocalTimer(s.secondsLeft); render();
+    view = s; startLocalTimer(); render();
   }
 
   // ---------- wiring ----------
@@ -191,8 +192,8 @@ function createGame(Table, root) {
   } else {
     Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
-      if (msg.t === 'state') { view = msg.s; clock.see(msg.s); startLocalTimer(msg.s.secondsLeft); render(); }
-      else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase, turnEnds: msg.turnEnds ?? view?.turnEnds}; startLocalTimer(msg.secondsLeft); render(); }
+      if (msg.t === 'state') { view = msg.s; clock.see(msg.s); startLocalTimer(); render(); }
+      else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase, turnEnds: msg.turnEnds ?? view?.turnEnds}; startLocalTimer(); render(); }
     });
   }
 
@@ -215,14 +216,11 @@ function createGame(Table, root) {
       : 'everyone’s done!';
   }
 
-  function startLocalTimer(secondsLeft) {
-    clearInterval(tick); localDeadline = null;
-    if (secondsLeft == null) return;
-    localDeadline = Date.now() + secondsLeft*1000;
+  function startLocalTimer() {
+    clearInterval(tick);
     tick = setInterval(() => {
       if (!view || view.phase !== 'turn') { clearInterval(tick); return; }
       renderTimerOnly();
-      if (Date.now() >= localDeadline) clearInterval(tick);
     }, 200);
   }
 
@@ -234,7 +232,7 @@ function createGame(Table, root) {
 
   function secondsNow() {
     if (view.turnEnds != null) return Math.max(0, Math.ceil(clock.left(view.turnEnds)));
-    return localDeadline ? Math.max(0, Math.ceil((localDeadline-Date.now())/1000)) : (view.secondsLeft ?? 0);
+    return view.secondsLeft ?? 0;
   }
   function renderTimerOnly() {
     const bar = root.querySelector('.timer i'); const num = root.querySelector('.timenum');

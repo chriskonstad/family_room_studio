@@ -46,7 +46,7 @@
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runGame, REPO, loadBundle, defaultScreens } from './runner.mjs';
+import { runGame, REPO, loadBundle, defaultScreens, scrubClocks } from './runner.mjs';
 import { playOne } from './playtest.mjs';
 
 const SAMPLES = join(REPO, 'playtest/samples');
@@ -627,8 +627,11 @@ async function openPhone(context, dir, bundle, phone, shape, sdk) {
   return page;
 }
 
-/** What a phone said, as a comparable list. */
-const said = (out) => JSON.stringify(out.map(o => [o.kind, o.to || '', o.payload]));
+/** What a phone said, as a comparable list. Clock readings are scrubbed by name:
+ * a 250ms tick fires a different number of times under WebKit than headless, so
+ * FR.clock's `now`/`deadline`/`*Ends` fields legitimately differ while the game
+ * logic — and the layout being measured — is identical. */
+const said = (out) => JSON.stringify(out.map(o => [o.kind, o.to || '', scrubClocks(o.payload)]));
 
 /**
  * Check every phone of one bundle at every shape.

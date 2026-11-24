@@ -47,7 +47,7 @@
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import { runGame, REPO, loadBundle, defaultScreens } from './runner.mjs';
+import { runGame, REPO, loadBundle, defaultScreens, scrubClocks } from './runner.mjs';
 import { discoverIntents, candidateValues, buildMessage } from './intents.mjs';
 
 /* A tiny seeded RNG, same algorithm as FR.rng, so bot choices replay. */
@@ -593,23 +593,10 @@ export async function playOne(game, {
   // winner agree for two quite different games far more often than you'd hope.
   const said = table.wire().filter(e => e.kind === 'broadcast' || e.kind === 'sendTo' || e.kind === 'endGame');
   const fingerprint = hash(JSON.stringify(said.map(e => [e.t, e.kind, e.to || '', e.payload])));
-  // The same, without the clock: what was said, in order, regardless of when.
-  // Clock readings inside payloads are scrubbed by name — FR.clock's contract is
-  // that `now`, `deadline` and `*Ends` fields are readings of the host's clock,
-  // and a reading taken either side of a pause (or a rebuild) may legitimately
-  // differ by a tick while the game logic is identical. Everything else — lives,
-  // picks, scores, who holds what — must match exactly.
-  const CLOCK_KEYS = new Set(['now', 'deadline', 'pickEnds', 'turnEnds']);
-  const scrub = (v) => {
-    if (Array.isArray(v)) return v.map(scrub);
-    if (v && typeof v === 'object') {
-      const out = {};
-      for (const [k, x] of Object.entries(v)) out[k] = CLOCK_KEYS.has(k) ? 0 : scrub(x);
-      return out;
-    }
-    return v;
-  };
-  const story = hash(JSON.stringify(said.map(e => [e.kind, e.to || '', scrub(e.payload)])));
+  // The same, without the clock: what was said, in order, regardless of when
+  // (scrubClocks blanks FR.clock's named readings; everything else — lives,
+  // picks, scores, who holds what — must match exactly).
+  const story = hash(JSON.stringify(said.map(e => [e.kind, e.to || '', scrubClocks(e.payload)])));
   if (verbose) console.log(`    seed ${seed}: ${turns} turns, winner ${result.winnerId}`
     + (ui ? `, pressed ${clicked.presses} controls (${clicked.intents} intents)` : ''));
   return { ok: true, turns, result, sent, legal: legalSeen, vocab, fingerprint, story, declared: !!declared, reconnectMode,

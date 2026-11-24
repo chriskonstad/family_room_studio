@@ -1,6 +1,6 @@
 function createGame(Table, root){
   const MY = Table.me.id;
-  let view = null, G = null, myTap = null, tick = null, deadlineLocal = 0;
+  let view = null, G = null, myTap = null, tick = null;
   const COLORS = [
     {k:'red',    ic:'🔴', c:'#e0564b'},
     {k:'blue',   ic:'🔵', c:'#4a90e0'},
@@ -12,6 +12,10 @@ function createGame(Table, root){
   const pick = a=>rng.pick(a);
   const seats = FR.seats(Table.players.map(p=>p.id));
   const timer = FR.timers();
+  // The prompt countdown is anchored to the host's clock (FR.clock), so a phone
+  // rebuilt mid-prompt shows the same shrinking bar as everyone else — counting
+  // from when the message arrived restarted it at the full limit.
+  const clock = FR.clock(Table.isHost ? timer : null);
   const esc = s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const colIc = k=>{ const c=COLORS.find(x=>x.k===k); return c?c.ic:''; };
 
@@ -28,6 +32,7 @@ function createGame(Table, root){
 
   // ---------- host ----------
   function initGame(players){
+    clock.start();
     G = {order:players.map(p=>p.id), names:{}, emojis:{},
          phase:'ready', round:0, banner:'Get ready!', reveal:false};
     players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji;});
@@ -41,6 +46,7 @@ function createGame(Table, root){
     const col = pick(COLORS).k, real = rng() < 0.68;
     const win = Math.max(1300, 3200 - G.round*160);
     G.prompt = {color:col, real, win};
+    G.promptEnds = clock.deadlineIn(win/1000);
     G.taps = {}; G.reveal = false; G.phase = 'prompt';
     G.banner = real ? ('CAPTAIN SAYS tap ' + colIc(col)) : ('tap ' + colIc(col));
     timer.after('round', win, resolve);
@@ -99,8 +105,8 @@ function createGame(Table, root){
       Object.assign({}, row, {score: i===0 ? 'winner' : 'out'}))});
   }
   function publicState(){
-    return {phase:G.phase, banner:G.banner, round:G.round,
-      prompt:G.prompt?{color:G.prompt.color, real:G.prompt.real, win:G.prompt.win}:null,
+    return {phase:G.phase, banner:G.banner, round:G.round, now:clock.now(),
+      prompt:G.prompt?{color:G.prompt.color, real:G.prompt.real, win:G.prompt.win, promptEnds:G.promptEnds}:null,
       alive:aliveMap(), names:G.names, emojis:G.emojis, order:G.order,
       taps:G.reveal?{...G.taps}:null,
       // WHETHER each sailor has tapped this order — never which colour, that waits for
@@ -111,7 +117,7 @@ function createGame(Table, root){
   }
   function syncAll(){ const s=publicState(); Table.broadcast({t:'state',s}); onState(s); }
   function onState(s){
-    const prev = view; view = s;
+    const prev = view; view = s; clock.see(s);
     if(s.phase==='prompt' && (!prev || prev.phase!=='prompt' || prev.round!==s.round)){
       myTap = null; startLocalTimer();
     }
@@ -131,12 +137,13 @@ function createGame(Table, root){
   function startLocalTimer(){
     clearInterval(tick);
     if(!view.prompt) return;
-    deadlineLocal = Date.now() + view.prompt.win;
     beeps = [1000, 640, 300];              // one beep each, re-armed per round
     tick = setInterval(()=>{
       const bar = root.querySelector('.tbar i');
       if(!bar || !view || view.phase!=='prompt'){ clearInterval(tick); return; }
-      const remain = Math.max(0, deadlineLocal-Date.now());
+      const remain = view.prompt.promptEnds != null
+        ? Math.max(0, clock.left(view.prompt.promptEnds)*1000)
+        : 0;
       const left = remain/view.prompt.win;
       bar.style.width = (left*100) + '%';
       // Final second: three beeps, the last one heavy. Shifting the threshold off

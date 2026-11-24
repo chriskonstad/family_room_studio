@@ -44,6 +44,27 @@ export const REPO = join(here, '..');
  * Time you control. Same shape as the browser's timer functions, so the SDK's pausable
  * shim installs over it without knowing the difference.
  */
+/**
+ * Clock readings out of a payload, for comparisons that must ignore WHEN
+ * something was said but not WHAT. FR.clock's contract names its readings
+ * `now`, `deadline`, or `*Ends`/`*Deadline`-suffixed — a reading taken either
+ * side of a pause, a rebuild, or a timer firing in another engine may differ
+ * by a tick while the game logic is identical. Everything else must match
+ * exactly. Used by the playtest's pause/reconnect stories and by phone.mjs's
+ * headless-vs-WebKit comparison.
+ */
+export function scrubClocks(v) {
+  if (Array.isArray(v)) return v.map(scrubClocks);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      out[k] = (k === 'now' || k === 'deadline' || /Ends$/.test(k) || /[Dd]eadline$/.test(k)) ? 0 : scrubClocks(x);
+    }
+    return out;
+  }
+  return v;
+}
+
 export function virtualClock() {
   let now = 0, seq = 0;
   const jobs = new Map();

@@ -455,10 +455,11 @@
    *          onState: clock.see(state);
    *          clock.left(due)                          // seconds, >= 0
    *
-   * Naming is part of the contract: fields called `now`, `deadline` or
-   * `*Ends` are clock readings, and the harness's pause/reconnect comparisons
-   * treat them as readings (they may differ by a tick across a pause) while
-   * requiring everything else in the state to match exactly.
+   * Naming is part of the contract: fields called `now`, `deadline`, or
+   * ending in `Ends`/`Deadline` are clock readings, and the harness's
+   * pause/reconnect/browser comparisons treat them as readings (they may
+   * differ by a tick across a pause or between engines) while requiring
+   * everything else in the state to match exactly.
    * ------------------------------------------------------------------ */
 
   /**
