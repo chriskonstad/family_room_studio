@@ -107,14 +107,26 @@ function strings(value, out = []) {
   return out;
 }
 
-/** Boot a bundle's screen.js in its own context, with a Table that only listens. */
+/** Boot a bundle's screen.js in its own context, with a Table that only listens.
+ *
+ *  Its Math.random is seeded and its clock is the frame clock, so two screens fed
+ *  the same things draw the same frames, op for op. That is what lets the leak probe
+ *  below compare a screen that was handed secrets with one that wasn't. */
 function bootScreen(dir) {
   const frScreen = readFileSync(join(REPO, 'sdk/fr-screen.js'), 'utf8');
   const src = readFileSync(join(dir, 'screen.js'), 'utf8');
 
+  const seeded = rng(0x5C4EE7);
+  const SMath = Object.create(Math);
+  SMath.random = () => seeded();
+  let frameT = 0;
+  const RealDate = Date;
+  function SDate(...args) { return args.length ? new RealDate(...args) : new RealDate(1755000000000 + frameT); }
+  SDate.now = () => 1755000000000 + frameT;
+  SDate.prototype = RealDate.prototype;
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
-    JSON, Math, Date, Object, Array, String, Number, Boolean, Error, isNaN,
+    JSON, Math: SMath, Date: SDate, Object, Array, String, Number, Boolean, Error, isNaN,
     parseInt, parseFloat, Infinity, NaN
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
@@ -146,6 +158,7 @@ function bootScreen(dir) {
     deliver(payload) { if (handlers.message) handlers.message('p0', payload); },
     /** Draw one frame and hand back what it would put on a display. */
     frame(env) {
+      frameT = env.t || 0;
       ctx.reset();
       drawFn(ctx, env);
       return { ops: ctx.ops(), texts: ctx.texts() };
@@ -253,7 +266,7 @@ function layoutProblems(ops, shape) {
 }
 
 export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = false } = {}) {
-  const dir = join(SAMPLES, gameKey);
+  const dir = gameKey.includes('/') ? gameKey : join(SAMPLES, gameKey);
   if (!existsSync(join(dir, 'screen.js'))) return { skipped: 'no screen.js' };
 
   // Some bundles need their own bot to get past a phase the generic one can't drive
@@ -275,9 +288,11 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
 
   for (let g = 0; g < games; g++) {
     const s = seed + g;
-    const table = await runGame({ game: gameKey, seed: s });
+    const table = await runGame({ game: dir, seed: s, screens: 1 });
     const r = rng(s);
     const screen = bootScreen(dir);
+    // The control: an identical screen that only ever sees public broadcasts.
+    const clean = bootScreen(dir);
     const secrets = new Set();
     const told = new Set();
     let t = 0;
@@ -309,15 +324,19 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
       // uppercases, truncates or reformats what it renders would slip past it. A
       // sentinel on the glass is proof the screen drew what it was handed,
       // whatever it did to the characters on the way.
-      const priv = table.wire('sendTo').slice(-1)[0];
-      if (priv) { screen.deliver(priv.payload); screen.deliver(marked(priv.payload)); }
-
       const last = table.wire('broadcast').slice(-1)[0];
       if (last) {
         screen.deliver(last.payload);
+        clean.deliver(last.payload);
         const ph = last.payload && last.payload.s && last.payload.s.phase;
         if (ph) phases.add(ph);
       }
+      // AFTER the public state, not before. Delivered first, the next broadcast wiped
+      // out whatever a leaky screen had stashed from it before a frame was drawn — so a
+      // screen that copied a hole card into its own state passed. A real leak lives in
+      // the gap between broadcasts; this puts the probe in that gap.
+      const priv = table.wire('sendTo').slice(-1)[0];
+      if (priv) { screen.deliver(priv.payload); screen.deliver(marked(priv.payload)); }
 
       for (const shape of SHAPES) {
         t += 16;
@@ -331,6 +350,24 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
         frames++;
         if (out.ops.length > 0) drew++;
         else failures.push({ seed: s, why: `drew nothing on ${shape.name} — a blank screen reads as broken` });
+
+        // NON-INTERFERENCE. The probed screen and the clean one were handed the same
+        // public state; the probed one ALSO got every private payload. If they draw
+        // different frames, something private changed the picture — whatever its type.
+        // Matching strings alone could not see this: HOLD'EM's hole cards are numbers,
+        // `{r:14, s:0}`, and a screen that drew every one it was handed passed as
+        // "no leaks".
+        let control;
+        try { control = clean.frame({ width: shape.width, height: shape.height, safe: shape.safe, t, dt: 16 }); }
+        catch (e) { control = null; }
+        if (control && JSON.stringify(control.ops) !== JSON.stringify(out.ops)) {
+          const extra = out.texts.filter(x => !control.texts.includes(x));
+          failures.push({ seed: s, why: `LEAK: on ${shape.name} the screen drew a different frame after it was `
+            + `handed a private ${priv && priv.payload && priv.payload.t ? `"${priv.payload.t}" ` : ''}payload`
+            + (extra.length ? ` — it drew ${extra.slice(0, 3).map(x => `"${x}"`).join(', ')}` : '')
+            + `. A screen must draw the public state and nothing else` });
+          return false;
+        }
 
         // Clipping and overflow, at every shape, every frame.
         for (const problem of layoutProblems(out.ops, shape)) {
@@ -429,7 +466,7 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   const flag = (n, d) => { const i = args.indexOf('--' + n); return i === -1 ? d : (args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : true); };
-  let list = args.filter(a => !a.startsWith('--') && !/^\d+$/.test(a));
+  let list = args.filter((a, i) => !a.startsWith('--') && !(i > 0 && ['--games', '--seed'].includes(args[i - 1])));
   if (flag('all', false) || !list.length) {
     list = readdirSync(SAMPLES).filter(d => existsSync(join(SAMPLES, d, 'screen.js')));
   }
@@ -437,7 +474,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   let bad = 0;
   for (const key of list) {
-    const out = await checkScreen(key, { games: Number(flag('games', 6)), verbose: !!flag('verbose', false) });
+    // --seed used to be printed in every reproduce command and then ignored here, so
+    // "reproduce" replayed seed 1 whatever had failed.
+    const out = await checkScreen(key, { games: Number(flag('games', 6)), seed: Number(flag('seed', 1)),
+                                         verbose: !!flag('verbose', false) });
     if (out.skipped) { console.log(`  ~ ${key.padEnd(12)} ${out.skipped}`); continue; }
     if (out.failures.length) {
       bad++;

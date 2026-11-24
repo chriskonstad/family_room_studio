@@ -1,3 +1,3 @@
 {
-  "_comment": "Bundles the headless harness cannot drive, and why. Currently EMPTY: all eleven play. The three that used to be here (summit, tapas, fishbowl) came off not by improving the DOM shim but by declaring their move space through FR.host `options` \u2014 a game built on FR.host needs no DOM to be played or fuzzed at all. If you add an entry here, prefer that route before teaching the shim another trick."
+  "_comment": "Bundles the headless harness cannot drive, and why. Currently EMPTY: all fourteen play. The three that used to be here (summit, tapas, fishbowl) came off not by improving the DOM shim but by declaring their move space through FR.host `options` \u2014 a game built on FR.host needs no DOM to be played or fuzzed at all. If you add an entry here, prefer that route before teaching the shim another trick."
 }
