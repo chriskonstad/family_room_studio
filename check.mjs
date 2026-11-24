@@ -13,16 +13,17 @@
  *   1. conformance   the shared Table SDK still matches the spec both harnesses are held to
  *   2. fr-game       the game-structure library's own suite, including its fuzz soak
  *   3. fr-screen     the shared-screen drawing vocabulary both renderers honour
- *   4. validate      every bundle would import cleanly into the app
- *   5. versions      every game that changed bumped its manifest version
- *   6. playtest      every bundle plays to a finish under bots: hostile input, leaves,
+ *   4. timer shim    the pausable clock: freezes on pause, stale clears kill nothing
+ *   5. validate      every bundle would import cleanly into the app
+ *   6. versions      every game that changed bumped its manifest version
+ *   7. playtest      every bundle plays to a finish under bots: hostile input, leaves,
  *                    pauses, reconnects, real button presses, a TV coming and going
- *   7. screens       every shared screen draws at six shapes, fits, and leaks nothing
- *   8. phones        every phone screen, laid out by WebKit at six device sizes: nothing
+ *   8. screens       every shared screen draws at six shapes, fits, and leaks nothing
+ *   9. phones        every phone screen, laid out by WebKit at six device sizes: nothing
  *                    clipped, overlapping, under the home bar, too small to tap, or
  *                    needing a scroll                           (needs: npm ci + webkit)
- *   9. bundle tests  each bundle's own *.test.mjs — worked examples a fuzzer can't judge
- *  10. mutants       each bundle's mutants.mjs: known bugs put back on purpose, every one
+ *  10. bundle tests  each bundle's own *.test.mjs — worked examples a fuzzer can't judge
+ *  11. mutants       each bundle's mutants.mjs: known bugs put back on purpose, every one
  *                    of which the suite above must catch
  *
  * Exit code 0 clean, 1 something failed.
@@ -50,6 +51,7 @@ const steps = [
   ['Table SDK conformance', 'conformance/run-studio.mjs', []],
   ['fr-game library',       'sdk/fr-game.test.mjs',       []],
   ['fr-screen library',     'sdk/fr-screen.test.mjs',     []],
+  ['timer shim',            'sdk/table-sdk.test.mjs',      []],
   ['bundle validation',     'validate.mjs',               ['--all', '--strict']],
   ['version bumps',         'harness/bumps.mjs',          []],
   ['headless playtest',     'harness/playtest.mjs',       ['--all', '--games', quick ? '10' : '24']],

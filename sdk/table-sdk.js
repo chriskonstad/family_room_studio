@@ -49,6 +49,14 @@
     var nSetInterval = w.setInterval.bind(w);
     var nClearInterval = w.clearInterval.bind(w);
     var timers = new Map();
+    // Every id this shim ever handed out. Clearing one that is already gone must be
+    // a no-op — it must NEVER fall through to the native clear below. Shim ids and
+    // native ids are independent counters sharing one small-number namespace, so a
+    // stale shim id can numerically equal a LIVE native timer: forwarding it murders
+    // an unrelated timer. That is exactly what killed FR.clock's 250ms tick in
+    // LOOK AWAY (a stale bar id of 6 cleared native job 6) while one-shots carried
+    // on, freezing every countdown mid-game with the game otherwise healthy.
+    var issued = {};
     var nextTimerId = 1, paused = false;
     var onPauseChange = null;
 
@@ -78,6 +86,7 @@
       if (typeof fn !== 'function') return nSetTimeout(fn, delay);
       var args = Array.prototype.slice.call(arguments, 2);
       var id = nextTimerId++, d = Math.max(0, delay || 0);
+      issued[id] = 1;
       var rec = { id: id, cb: function () { fn.apply(null, args); }, delay: d,
                   due: Date.now() + d, repeat: false, native: null };
       timers.set(id, rec);
@@ -88,6 +97,7 @@
       if (typeof fn !== 'function') return nSetInterval(fn, delay);
       var args = Array.prototype.slice.call(arguments, 2);
       var id = nextTimerId++, d = Math.max(1, delay || 1);
+      issued[id] = 1;
       var rec = { id: id, cb: function () { fn.apply(null, args); }, delay: d,
                   due: Date.now() + d, repeat: true, native: null };
       timers.set(id, rec);
@@ -96,11 +106,13 @@
     };
     w.clearTimeout = function (id) {
       var rec = timers.get(id);
-      if (rec) { disarm(rec); timers.delete(id); } else { nClearTimeout(id); }
+      if (rec) { disarm(rec); timers.delete(id); }
+      else if (!issued[id]) { nClearTimeout(id); }   // a pre-shim native id, not ours
     };
     w.clearInterval = function (id) {
       var rec = timers.get(id);
-      if (rec) { disarm(rec); timers.delete(id); } else { nClearInterval(id); }
+      if (rec) { disarm(rec); timers.delete(id); }
+      else if (!issued[id]) { nClearInterval(id); }  // a pre-shim native id, not ours
     };
 
     return {
