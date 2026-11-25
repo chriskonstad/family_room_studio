@@ -266,6 +266,7 @@ function createGame(Table, root) {
     if (id === MY) classes.push('me');
     if (id === view.current && view.phase === 'bidding') classes.push('turn');
     if (out) classes.push('out');
+    if (view.order.length > 6 && view.phase === 'bidding' && id !== MY) classes.push('compact');
     return '<div class="' + classes.join(' ') + '">' +
       '<div class="who"><span>' + esc(view.emojis[id] || '') + '</span><span class="name">' + esc(view.names[id] || id) +
       '</span><span class="dice-left">' + (view.diceCount[id] || 0) + ' dice</span></div>' +

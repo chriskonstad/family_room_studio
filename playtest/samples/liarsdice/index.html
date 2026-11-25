@@ -27,7 +27,10 @@
   .count b{display:block; color:var(--panel); font-size:20px}
   .banner{min-height:44px; display:flex; align-items:center; padding:10px 12px; border:1px solid rgba(247,241,230,.16);
     background:rgba(10,29,25,.42); color:#ffe0a3; border-radius:8px; font-size:15px; font-weight:800}
-  .table{display:grid; grid-template-columns:1fr 1fr; gap:8px; flex:1 1 auto; min-height:0;
+  /* minmax(0,1fr), not 1fr: a plain 1fr column won't shrink below its widest name plus
+     "5 dice", so on wider fonts (CI's Linux WebKit) the right column ran past the edge and
+     the seats scrolled sideways. At zero minimum the names ellipsize instead. */
+  .table{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; flex:1 1 auto; min-height:0;
     overflow-y:auto; align-content:start; -webkit-overflow-scrolling:touch}
   .top,.banner,.bidbox,.controls{flex:none}
   /* A full table: smaller dice, tighter seats, so most phones need no scrolling at all. */
@@ -35,7 +38,10 @@
   .table.many .seat{min-height:0; padding:6px 8px}
   .table.many .pips{margin-top:5px; min-height:22px; gap:4px}
   .table.many .die{width:22px; height:22px; font-size:13px; border-radius:5px}
-  .seat{min-height:82px; border:1px solid rgba(247,241,230,.15); border-radius:8px; padding:9px; background:rgba(7,23,19,.38)}
+  /* While bidding, everyone else's dice are face down: a row of "?" says no more than
+     "5 dice" already does, so a full table drops it and keeps the room for the controls. */
+  .table.many .seat.compact .pips{display:none}
+  .seat{min-width:0; min-height:82px; border:1px solid rgba(247,241,230,.15); border-radius:8px; padding:9px; background:rgba(7,23,19,.38)}
   .seat.me{background:rgba(220,168,63,.14); border-color:rgba(220,168,63,.55)}
   .seat.turn{box-shadow:0 0 0 2px rgba(220,168,63,.75) inset}
   .seat.out{opacity:.5}
