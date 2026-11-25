@@ -157,6 +157,44 @@ await test('a split pot gives the odd chip to the first winner left of the butto
   eq('paid', s.reveal.won, { p2: 13, p0: 12 });
 });
 
+await test('after a bust the button moves on one live seat a hand — nobody deals twice', async () => {
+  // Hand 1: p3 shoves, the small blind p1 calls all in with nothing and busts. FR.seats
+  // steps its dealer INDEX by one a hand, which landed on p2 for hands 2 AND 3 — p2 dealt
+  // twice and p3 and p0 paid the blinds twice running.
+  const t = await table({ players: 4 }, 'Kc Qd 7c 2d 9h 8h Ah Ad 3s 4h 5c Js 6d 9c Ts Jd');
+  eq('hand 1 button', t.s().dealer, 'p0');
+  t.act('p3', { t: 'raise', to: 500 }).act('p0', 'fold').act('p1', 'call').act('p2', 'fold');
+  t.settle();
+  eq('p1 is out', t.s().status.p1, 'out');
+  const seen = [];
+  for (let h = 0; h < 4; h++) {
+    t.act('p0', 'next');
+    const s = t.s();
+    seen.push([s.dealer, s.blinds.sb, s.blinds.bb]);
+    while (t.s().phase === 'betting' && t.s().toAct !== t.s().blinds.bb) t.act(t.s().toAct, 'fold');
+    t.settle();
+  }
+  eq('button, small blind, big blind for hands 2-5', seen,
+     [['p2', 'p3', 'p0'], ['p3', 'p0', 'p2'], ['p0', 'p2', 'p3'], ['p2', 'p3', 'p0']]);
+});
+
+await test('two players busting in one hand: the one who started it shorter finishes lower', async () => {
+  // Hand 1 leaves p0 515, p1 495, p2 490. Hand 2: p1 shoves, p2 calls all in for less,
+  // p0 calls and wins it all with aces. p2 sat down to that hand with less than p1, so
+  // p2 is third. It used to be decided by seat order (the sort read chips already swept).
+  const t = await table(TABLE,
+    'Ah Kd 2c 7d 9s 9h 3s 4h 5c 8d Jh 6s Qc',
+    'Ah Ad Kh Qd 7c 2d 5s 9s 4h 3c 8s 6d Tc Js');
+  t.act('p0', { t: 'raise', to: 20 }).act('p1', 'fold').act('p2', 'fold');
+  t.settle();
+  eq('after hand 1', stacks(t), { p0: 515, p1: 495, p2: 490 });
+  t.act('p0', 'next');
+  t.act('p1', { t: 'raise', to: 495 }).act('p2', 'call').act('p0', 'call');
+  t.advance(9000);
+  ok('the game is over', t.over);
+  eq('finishing order', t.result.standings.map(r => r.playerId), ['p0', 'p1', 'p2']);
+});
+
 await test('a phone that drops mid-hand comes back to exactly where it was', async () => {
   const t = await table(TABLE, 'Ah Ad Kh Kd 2c 7d 3s 9c 9s 4h 5d 6c 8h Jd');
   t.act('p0', 'call');
@@ -190,6 +228,46 @@ await test('no TV: every phone is the table; a TV switched on mid-game hands it 
   ok('TV on: no seats on the phone', !/class="seats/.test(t.html('p1')));
   t.setScreens(0);
   ok('TV off again: seats are back', /class="seats/.test(t.html('p1')));
+});
+
+await test('a TV switched on mid-hand: the felt moves to it, your cards and buttons stay, the hand plays on', async () => {
+  const t = await table(TABLE, 'Ah Ad Kh Kd 2c 7d 3s 9c 9s 4h 5d 6c 8h Jd');
+  t.act('p0', 'call').act('p1', 'call').act('p2', 'check');
+  t.advance(900);
+  eq('the flop, p1 to act', [t.s().street, t.s().toAct], ['flop', 'p1']);
+  const said = t.wire('broadcast').length;
+  t.setScreens(1);
+  eq('the host told the room at once (and the TV, which only hears broadcasts)', t.wire('broadcast').length, said + 1);
+  eq('the state says a TV is on', t.s().screen, 1);
+  eq('nothing else about the hand moved', { ...t.s(), screen: 0 }, { ...t.wire('broadcast')[said - 1].payload.s, screen: 0 });
+  ok('p1: no seats now — they are on the TV', !/class="seats/.test(t.html('p1')));
+  ok('p1 still holds its kings', /K ♥/.test(t.text('p1')) && /K ♦/.test(t.text('p1')));
+  ok('p1 still has its buttons', t.actions('p1').some(a => a.act === 'check'));
+  t.act('p1', 'check').act('p2', 'check').act('p0', 'check');
+  t.advance(900);
+  eq('on to the turn', t.s().street, 'turn');
+});
+
+await test('a TV switched off mid-hand, while the table is frozen: every phone is the felt again, nothing stalls', async () => {
+  const t = await table({ ...TABLE, screens: 1 }, 'Ah Ad Kh Kd 2c 7d 3s 9c 9s 4h 5d 6c 8h Jd');
+  eq('with a TV from the start', t.s().screen, 1);
+  ok('the phone is only your hand', !/class="seats/.test(t.html('p1')));
+  t.act('p0', 'call').act('p1', 'call').act('p2', 'check');   // the flop lands on a held beat
+  ok('the table is frozen for the flop', t.busy());
+  t.setScreens(0);
+  ok('every phone has the seats back at once', ['p0', 'p1', 'p2'].every(id => /class="seats/.test(t.html(id))));
+  t.advance(900);
+  eq('the held beat still ended: the flop, p1 to act', [t.s().street, t.s().phase, t.s().toAct], ['flop', 'betting', 'p1']);
+  for (let i = 0; i < 3; i++) {                              // check it down, then the showdown
+    const id = t.s().toAct;
+    t.act(id, 'check').act(t.s().toAct, 'check').act(t.s().toAct, 'check');
+    t.advance(900);
+  }
+  eq('a showdown', t.s().phase, 'showdown');
+  t.setScreens(1);                                            // and back on, mid-showdown hold
+  t.settle();
+  eq('the hand ended normally', t.s().phase, 'handEnd');
+  ok('the host can deal', t.actions('p0').some(a => a.act === 'next'));
 });
 
 await test('a host who folded is still offered the Deal button', async () => {

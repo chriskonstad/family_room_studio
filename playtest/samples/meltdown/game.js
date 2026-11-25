@@ -64,12 +64,9 @@ function createGame(Table, root) {
   function orderTimeLimit(){ return Math.max(4, 12 - G.level); }   // seconds
 
   function newOrderFor(pid) {
-    // Never issue to a player who has left, and never after the reactor is cold: a
-    // ghost's order can't be satisfied, so it expired for damage and re-armed itself
-    // forever. Found once the harness started dropping players mid-game.
-    if (G.phase === 'over' || (G.dead && G.dead[pid])) return;
+    if (G.phase === 'over') return;     // the reactor is cold: no more orders
     // usually target ANOTHER player's control (that's the game)
-    const others = G.order.filter(id => id !== pid && !G.dead?.[id]);
+    const others = G.order.filter(id => id !== pid);
     const targetPlayer = (others.length && rng() < 0.8) ? pick(others) : pid;
     const ctl = pick(G.panels[targetPlayer]);
     let text, want;
@@ -86,6 +83,11 @@ function createGame(Table, root) {
     timer.after('order:'+pid, orderTimeLimit()*1000, () => orderExpired(pid));
     Table.isHost && sendOrder(pid, order);
   }
+  // The panel lives on the host; a phone shows the copy it was last sent. Send it
+  // again whenever a switch or dial moves: a phone rebuilt from the history otherwise
+  // shows the positions it was dealt, and its next flip of a switch it believes is
+  // OFF sends ON — a wrong flip, and a hit to the reactor, for a correct tap.
+  function sendPanel(pid) { if (pid !== MY) Table.sendTo(pid, { t:'panel', panel:G.panels[pid] }); }
   function sendOrder(pid, order) {
     const payload = { t:'order', text:order.text, deadline:order.deadline };
     if (pid === MY) { myOrder = { text:order.text, deadline:order.deadline }; render(); }
@@ -103,8 +105,7 @@ function createGame(Table, root) {
     // apply the physical action to the control
     const ctl = G.panels[from]?.find(c => c.id === msg.control);
     if (!ctl) return;
-    if (ctl.type === 'switch') ctl.value = msg.value;
-    if (ctl.type === 'dial') ctl.value = msg.value;
+    if (ctl.type === 'switch' || ctl.type === 'dial') { ctl.value = msg.value; sendPanel(from); }
 
     // does it satisfy ANY outstanding order?
     for (const pid of Object.keys(G.orders)) {
@@ -138,13 +139,18 @@ function createGame(Table, root) {
   function levelUp() {
     G.level++; G.progress = 0;
     G.banner = '⬆️ LEVEL '+G.level+' — faster!';
-    G.order.forEach(pid => { if (!(G.dead && G.dead[pid])) newOrderFor(pid); });
+    G.order.forEach(pid => newOrderFor(pid));
   }
   function beginGame() {
     clock.start();
+    // Stream the clock while the reactor runs. A phone extrapolates from the last state
+    // it was handed, and one rebuilt from the history was last handed whatever the host
+    // said before the drop — seconds stale when nobody had flipped anything, so its order
+    // showed seconds it didn't have. Twice a second bounds that to half a second.
+    timer.every('clock', 500, syncAll);
     G.phase = 'running';
     G.banner = 'Keep it together!';
-    G.order.forEach(pid => { if (!(G.dead && G.dead[pid])) newOrderFor(pid); });
+    G.order.forEach(pid => newOrderFor(pid));
   }
   function gameOver() {
     G.phase = 'over';
@@ -166,7 +172,15 @@ function createGame(Table, root) {
   function syncAll() {
     const s = publicState();
     Table.broadcast({ t:'state', s });
-    view = s; clock.see(s); render();
+    show(s);
+  }
+  // A clock tick moves nothing but `now`. The order clock reads FR.clock by itself, and a
+  // redraw would swap the panel out from under a thumb.
+  const sameButNow = (a, b) => JSON.stringify({ ...a, now:0 }) === JSON.stringify({ ...b, now:0 });
+  function show(s) {
+    const tick = view && sameButNow(view, s);
+    view = s; clock.see(s);
+    if (!tick) render();
   }
 
   // ---------- wiring ----------
@@ -183,7 +197,7 @@ function createGame(Table, root) {
       intents: {
         begin: { phase: 'briefing', when: (ctx) => ctx.from === MY0(), run: () => beginGame() },
         act:   { phase: 'running',
-                 when: (ctx) => !!G.panels[ctx.from] && !(G.dead && G.dead[ctx.from]),
+                 when: (ctx) => !!G.panels[ctx.from],
                  options: (ctx) => (G.panels[ctx.from] || []).flatMap(c =>
                    c.type === 'switch' ? [{ control:c.id, value:true }, { control:c.id, value:false }]
                                        : [1,2,3].map(v => ({ control:c.id, value:v }))),
@@ -196,7 +210,7 @@ function createGame(Table, root) {
     Table.onStart(players => {
       initGame(players);
       myPanel = G.panels[MY];
-      G.order.forEach(pid => { if (pid !== MY) Table.sendTo(pid, { t:'panel', panel:G.panels[pid] }); });
+      G.order.forEach(sendPanel);
       table = buildTable();
       syncAll();
     });
@@ -204,12 +218,9 @@ function createGame(Table, root) {
   } else {
     Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
-      if (msg.t === 'state') { view = msg.s; clock.see(msg.s); render(); }
+      if (msg.t === 'state') show(msg.s);
       else if (msg.t === 'panel') { myPanel = msg.panel; render(); }
-      else if (msg.t === 'order') {
-        myOrder = { text:msg.text, deadline: msg.deadline != null ? msg.deadline : clock.now() + (msg.seconds || 0) * 1000 };
-        render();
-      }
+      else if (msg.t === 'order') { myOrder = { text:msg.text, deadline:msg.deadline }; render(); }
     });
   }
   function MY0(){ return G.order[0]; }

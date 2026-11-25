@@ -56,6 +56,46 @@ export default [
     "replace": "if (a === 'raise') send({ t: 'raise', to: Number(b.dataset.to) * 100 });"
   },
   {
+    // Shipped until 1.1.2: FR.seats steps its dealer INDEX, so after a bust the same
+    // live player dealt twice and the two after them paid the blinds twice running.
+    "name": "after a bust the button stays put for a hand (FR.seats' index rotation)",
+    "file": "game.js",
+    "find": "    seats.startRound(false);\n    if (G.hand > 1) G.button = stepFrom(G.button, (id) => st(id) !== 'out');",
+    "replace": "    seats.startRound(G.hand > 1);\n    G.button = seats.dealer;",
+    "checks": [
+      "tests"
+    ]
+  },
+  {
+    "name": "after a bust the button stays put — caught by the fuzzer alone",
+    "file": "game.js",
+    "find": "    seats.startRound(false);\n    if (G.hand > 1) G.button = stepFrom(G.button, (id) => st(id) !== 'out');",
+    "replace": "    seats.startRound(G.hand > 1);\n    G.button = seats.dealer;",
+    "checks": [
+      "playtest"
+    ]
+  },
+  {
+    // Shipped until 1.1.2: the sort read `committed`, already zeroed by settle(), so two
+    // players busting in one hand were ranked by seat instead of by stack.
+    "name": "two players busting in one hand are ranked by seat, not by the stack they started with",
+    "file": "game.js",
+    "find": "busted.sort((a, b) => (G.handStart[a] || 0) - (G.handStart[b] || 0));",
+    "replace": "busted.sort((a, b) => (G.committed[a] || 0) - (G.committed[b] || 0));",
+    "checks": [
+      "tests"
+    ]
+  },
+  {
+    "name": "a TV switched on or off mid-hand is never told to the phones (or to the TV)",
+    "file": "game.js",
+    "find": "if (Table.onScreensChange) Table.onScreensChange(() => { if (G) publish(); });",
+    "replace": "",
+    "checks": [
+      "tests"
+    ]
+  },
+  {
     "name": "with no TV, the phone still shows only your hand (the table is nowhere)",
     "file": "game.js",
     "find": "    if (!tv) h += seatsHTML(v);",

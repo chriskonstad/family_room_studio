@@ -17,8 +17,7 @@ export default function lookawayInvariants({ table, players, done, result }) {
         return `${pid} has ${n} lives, outside 0..${START_LIVES}`;
       }
       // Lives only run down. The size of a drop isn't asserted: this runs once per
-      // turn, several rounds can resolve in between, and a player who leaves is sent
-      // straight to zero — all legitimate.
+      // turn, and several rounds can resolve in between.
       if (mine[pid] !== undefined && n > mine[pid]) {
         return `${pid} gained a life, going from ${mine[pid]} to ${n}`;
       }
@@ -32,6 +31,17 @@ export default function lookawayInvariants({ table, players, done, result }) {
         return `${s.looker} is looking with no lives left`;
       }
     }
+    // The pick bar is drawn from `pickEnds` on the host's clock. Without it the bar
+    // sat empty all round (1.1.1). A tick of slack: the host's clock moves in steps.
+    if (s.phase === 'pick') {
+      const left = s.pickEnds - s.now;
+      if (typeof s.pickEnds !== 'number' || !(left >= -250 && left <= s.win)) {
+        return `round ${s.round}: the pick window ends at ${s.pickEnds} with the clock at ${s.now} — no countdown to draw`;
+      }
+    }
+    // Which way anyone looked waits for the reveal — the looker's direction on every
+    // phone mid-round hands every dodger the answer.
+    if (s.phase === 'pick' && s.picks) return `round ${s.round}: the picks are on every phone before the reveal`;
     if (s.picks) {
       for (const [pid, d] of Object.entries(s.picks)) {
         if (d != null && !DIRS.includes(d)) return `${pid} is shown looking "${d}"`;

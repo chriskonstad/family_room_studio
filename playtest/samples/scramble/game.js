@@ -123,21 +123,11 @@ function createGame(Table, root) {
       grid: [], possible: 0, themeOnGrid: 0, secondsLeft: READY_SECONDS,
       rows: null, points: null, revealed: 0, totalRows: 0
     };
-    players.forEach(p => seatPlayer(p));
-    rollGrid();
-  }
-
-  /* G.seats is the roster, and FR.host holds the SAME ARRAY — it is what refuses
-   * intents from an id that is not at the table. The shell keeps everyone seated for
-   * the whole game (a dropped phone pauses the table; it never leaves it), so this is
-   * set once, at the start. */
-  function seatPlayer(p) {
-    if (G.seats.indexOf(p.id) === -1) G.seats.push(p.id);
-    G.names[p.id] = p.name;
-    G.emojis[p.id] = p.emoji;
-    if (G.totals[p.id] == null) G.totals[p.id] = 0;
-    G.counts[p.id] = (found[p.id] || []).length;
-    if (G.done[p.id] == null) G.done[p.id] = false;
+    // G.seats is the roster FR.host refuses strangers against. It is set once: the
+    // shell keeps everyone seated for the whole game (a dropped phone pauses the
+    // table; it never leaves it).
+    players.forEach(p => { G.names[p.id] = p.name; G.emojis[p.id] = p.emoji; G.totals[p.id] = 0; });
+    rollGrid();                       // and every seat's word count and "done" with it
   }
 
   /**
@@ -292,7 +282,6 @@ function createGame(Table, root) {
     if (G.revealed >= pending.length) { timer.cancel('reveal'); return false; }
     const row = pending[G.revealed++];
     for (const id of row.by) {
-      if (G.points[id] == null) continue;           // somebody who has since left
       G.points[id] += row.value;
       G.totals[id] = (G.totals[id] || 0) + row.value;
     }

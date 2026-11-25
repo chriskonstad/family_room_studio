@@ -175,10 +175,18 @@ function createGame(Table, root) {
     const s = publicState();
     Table.broadcast({ t:'state', s });
     G.order.forEach(id => {
-      if (id === MY) { myHand = G.hands[id].slice(); picked = G.picks[id] != null; }
+      if (id === MY) takeHand(G.hands[id].slice(), G.picks[id] != null);
       else Table.sendTo(id, { t:'hand', hand:G.hands[id], picked:G.picks[id] != null });
     });
-    view = s; sel = null; render();
+    view = s; render();
+  }
+
+  /* The card you have your thumb on stays chosen until your HAND changes. Everyone
+   * drafts at once, so somebody else's pick lands while you are deciding — and it used
+   * to clear your choice, leaving "Take it" greyed out under your finger. */
+  function takeHand(hand, isPicked) {
+    if (hand.join(',') !== myHand.join(',')) sel = null;
+    myHand = hand; picked = isPicked;
   }
 
   // ---------- wiring ----------
@@ -188,8 +196,8 @@ function createGame(Table, root) {
   } else {
     Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
-      if (msg.t === 'state') { view = msg.s; sel = null; render(); }
-      else if (msg.t === 'hand') { myHand = msg.hand; picked = msg.picked; render(); }
+      if (msg.t === 'state') { view = msg.s; render(); }
+      else if (msg.t === 'hand') { takeHand(msg.hand || [], !!msg.picked); render(); }
     });
   }
 

@@ -50,6 +50,11 @@ function createGame(Table, root){
     G.taps = {}; G.reveal = false; G.phase = 'prompt';
     G.banner = real ? ('CAPTAIN SAYS tap ' + colIc(col)) : ('tap ' + colIc(col));
     timer.after('round', win, resolve);
+    // Stream the clock while the order is up. A phone extrapolates from the last
+    // state it was handed, and one rebuilt from the history was last handed the
+    // order's FIRST state: its bar showed the whole window with a fraction of it
+    // left, and a sailor who trusted it tapped too late.
+    timer.every('clock', 250, syncAll);
     syncAll();
   }
   // The move space. A round is a simultaneous reaction test, so there is no turn —
@@ -70,12 +75,17 @@ function createGame(Table, root){
                 run:(ctx)=>{
                   if(!COLORS.some(c=>c.k===ctx.msg.color)) return;   // never trust the wire
                   G.taps[ctx.from] = ctx.msg.color;                  // first tap only
+                  // Tell the sailor (only them) what the host has them down for. A phone
+                  // rebuilt from the history has lost its own memory of the tap; this is
+                  // how it comes back locked in on the same colour, not offering the four
+                  // again for presses the host would refuse.
+                  if(ctx.from!==MY) Table.sendTo(ctx.from, {t:'tapped', color:ctx.msg.color});
                 } }
       }
     });
   }
   function resolve(){
-    timer.cancel('round');
+    timer.cancel('round'); timer.cancel('clock');
     const p = G.prompt, outs = [];
     aliveIds().forEach(id=>{
       const t = G.taps[id];
@@ -108,16 +118,15 @@ function createGame(Table, root){
     return {phase:G.phase, banner:G.banner, round:G.round, now:clock.now(),
       prompt:G.prompt?{color:G.prompt.color, real:G.prompt.real, win:G.prompt.win, promptEnds:G.promptEnds}:null,
       alive:aliveMap(), names:G.names, emojis:G.emojis, order:G.order,
-      taps:G.reveal?{...G.taps}:null,
-      // WHETHER each sailor has tapped this order — never which colour, that waits for
-      // the reveal. A phone that reloads mid-order (back from the lock screen) has lost
-      // its own memory of tapping; without this it offered the colours again and every
-      // press was refused.
-      tapped:G.phase==='prompt' ? Object.fromEntries(G.order.map(id=>[id, G.taps[id]!=null])) : null};
+      taps:G.reveal?{...G.taps}:null};
   }
   function syncAll(){ const s=publicState(); Table.broadcast({t:'state',s}); onState(s); }
+  const sameButNow = (a,b)=> JSON.stringify({...a, now:0}) === JSON.stringify({...b, now:0});
   function onState(s){
     const prev = view; view = s; clock.see(s);
+    // A clock tick moves nothing but `now`. The bar reads the clock by itself, and a
+    // redraw would swap the colour buttons out from under a thumb mid-order.
+    if(prev && sameButNow(prev, s)) return;
     if(s.phase==='prompt' && (!prev || prev.phase!=='prompt' || prev.round!==s.round)){
       myTap = null; startLocalTimer();
     }
@@ -131,6 +140,7 @@ function createGame(Table, root){
     Table.onStart(()=>{ view=null; render(); });
     Table.onMessage((_f,m)=>{
       if(m.t==='state') onState(m.s);
+      else if(m.t==='tapped'){ myTap = m.color; render(); }
     });
   }
 
@@ -141,9 +151,7 @@ function createGame(Table, root){
     tick = setInterval(()=>{
       const bar = root.querySelector('.tbar i');
       if(!bar || !view || view.phase!=='prompt'){ clearInterval(tick); return; }
-      const remain = view.prompt.promptEnds != null
-        ? Math.max(0, clock.left(view.prompt.promptEnds)*1000)
-        : 0;
+      const remain = clock.left(view.prompt.promptEnds)*1000;
       const left = remain/view.prompt.win;
       bar.style.width = (left*100) + '%';
       // Final second: three beeps, the last one heavy. Shifting the threshold off
@@ -176,12 +184,11 @@ function createGame(Table, root){
       h += `</div>`;
     } else if(v.phase==='prompt'){
       const meAlive = v.alive[MY];
-      const lockedIn = myTap || (v.tapped && v.tapped[MY]);
       h += `<div class="tbar"><i></i></div>`;
       h += `<div class="colors">` + COLORS.map(c=>
         `<button class="col ${myTap===c.k?'picked':''}" data-c="${c.k}" ${meAlive?'':'disabled'} style="--c:${c.c}">${c.ic}</button>`).join('') + `</div>`;
       h += meAlive
-        ? (lockedIn ? `<div class="wait">Locked in ${myTap ? colIc(myTap) : '✓'}</div>`
+        ? (myTap ? `<div class="wait">Locked in ${colIc(myTap)}</div>`
                  : `<div class="hint">${v.prompt.real ? 'obey! tap '+colIc(v.prompt.color) : '⚠️ trap — tap nothing'}</div>`)
         : `<div class="wait">💥 you're out — watch the rest</div>`;
     } else if(v.phase==='reveal'){
@@ -224,7 +231,7 @@ function createGame(Table, root){
 
     const g = root.querySelector('#go'); if(g) g.onclick=()=>Table.send({t:'go'});
     root.querySelectorAll('[data-c]').forEach(b=>{ if(!b.disabled) b.onclick=()=>{
-      if(myTap || (view && view.tapped && view.tapped[MY])) return;
+      if(myTap) return;
       myTap = b.dataset.c; Table.send({t:'tap',color:b.dataset.c});
       feel('tick', {mine:true});                           // guarded by the myTap latch
       render();

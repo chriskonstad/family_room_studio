@@ -207,6 +207,8 @@ function createGame(Table, root) {
     if (mine) mine.textContent = 'You’ve added ' + (v.counts[MY] ?? myAdded);
     const wait = root.querySelector('#writingline');
     if (wait) wait.innerHTML = writingLine();
+    const done = root.querySelector('#doneEntry');
+    if (done && myAdded > 0) done.disabled = false;
   }
   function writingLine() {
     const v = view;
@@ -255,6 +257,12 @@ function createGame(Table, root) {
   function render() {
     if (!view) { root.innerHTML = '<div class="big"><span class="wait">Filling the bowl…</span></div>'; return; }
     const v = view;
+
+    // What the host says about me wins over what this page remembers: a page rebuilt
+    // from the history never saw its own taps, so it came back to the writing form
+    // after "I'm done" (every button on it refused) with "I'm done" greyed out.
+    if (v.dones && v.dones[MY] && !myEntryDone) { myEntryDone = true; lastPhase = null; }
+    if (v.counts && (v.counts[MY] || 0) > myAdded) myAdded = v.counts[MY];
 
     // in-place patch while typing (see patchEntryCounters)
     if (v.phase === 'entry' && lastPhase === 'entry') { patchEntryCounters(); return; }
@@ -350,7 +358,8 @@ function createGame(Table, root) {
         input.focus();
         const mine = root.querySelector('#minecount');
         if (mine) mine.textContent = 'You’ve added ' + myAdded;   // instant local echo
-        root.querySelector('#doneEntry')?.removeAttribute('disabled');
+        const done = root.querySelector('#doneEntry');
+        if (done) done.disabled = false;
       };
       addBtn.onclick = add;
       input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });

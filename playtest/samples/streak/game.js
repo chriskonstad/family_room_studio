@@ -34,7 +34,6 @@ function createGame(Table, root) {
     startRound();
   }
   function startRound() {
-    G.finalized = false;                 // per-round guard; see finalizeRound()
     G.deck = shuffle(buildDeck()); G.discard = [];
     G.order.forEach(id => { G.lines[id] = { nums:[], mods:[], hasSave:false }; G.status[id]='active'; });
     G.pending = null; G.work = []; G.roundOver = false; G.winner = null;
@@ -189,11 +188,7 @@ function createGame(Table, root) {
   }
 
   function finalizeRound() {
-    // Guarded because a leave arriving after the round already resolved used to re-enter
-    // here, re-add every line to the totals and fire a SECOND endGame with a different
-    // winner. `ending` is cleared by this function, so it can't be the guard.
-    if (G.phase === 'gameOver' || G.finalized) return;
-    G.finalized = true;
+    // Reached only from the one 'endRound' timer, which endRound() arms once (G.ending).
     G.ending = false;
     G.pending = null; G.work = []; G.lastRound = {};
     G.order.forEach(id => {

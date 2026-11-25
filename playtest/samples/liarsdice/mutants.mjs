@@ -14,5 +14,15 @@ export default [
   {
     name: 'a bid that does not beat the last one is accepted',
     file: 'game.js', find: 'return qty > G.lastBid.qty || (qty === G.lastBid.qty && face > G.lastBid.face);', replace: 'return true;'
+  },
+  {
+    name: 'ones stop being wild when a challenge is counted',
+    file: 'game.js', find: 'if (face === 1 ? d === 1 : (d === face || d === 1)) n++;', replace: 'if (d === face) n++;',
+    checks: ['playtest']
+  },
+  {
+    name: 'whoever calls the bluff loses the die, right or wrong',
+    file: 'game.js', find: 'const loser = bidWasTrue ? from : G.lastBidder;', replace: 'const loser = from;',
+    checks: ['playtest']
   }
 ];

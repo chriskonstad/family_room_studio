@@ -45,10 +45,9 @@ function cards(value, skip, out = []) {
 }
 
 function blindsAndAction(s, mem) {
-  /* The turn passes only when the player it was on acts or leaves. Anything else is
-   * the table skipping somebody — exactly what happened when a player left out of
-   * turn and the action moved on from THEIR seat. A player has acted when their last
-   * action, their bet, or their status changed. */
+  /* The turn passes only when the player it was on acts. Anything else is the table
+   * skipping somebody. A player has acted when their last action, their bet, or their
+   * status changed. */
   const p = mem.prevB;
   mem.prevB = s;
   if (p && p.hand === s.hand && p.phase === 'betting' && s.phase === 'betting' && p.street === s.street
@@ -57,8 +56,27 @@ function blindsAndAction(s, mem) {
     const acted = (s.lastAction || {})[id] !== (p.lastAction || {})[id]
       || (s.bet || {})[id] !== (p.bet || {})[id] || s.status[id] !== p.status[id];
     if (!acted) {
-      return `hand ${s.hand}, ${s.street}: the turn moved from ${id} to ${s.toAct}, but ${id} neither acted nor left`;
+      return `hand ${s.hand}, ${s.street}: the turn moved from ${id} to ${s.toAct}, but ${id} never acted`;
     }
+  }
+  /* The button moves one seat a hand, to the next player still in the game — whoever
+   * busted. A button that stays put after a bust makes the same two players pay the
+   * blinds twice running, and every chip still adds up. */
+  if (s.hand !== mem.buttonHand) {
+    if (mem.buttonHand && s.hand === mem.buttonHand + 1 && s.dealer) {
+      const order = s.order, at = order.indexOf(mem.button);
+      let want = null;
+      for (let k = 1; k <= order.length && at >= 0; k++) {
+        const c = order[(at + k) % order.length];
+        if (s.status[c] !== 'out') { want = c; break; }
+      }
+      if (want && s.dealer !== want) {
+        return `hand ${s.hand}: the button is on ${s.dealer}, but it was on ${mem.button} last hand `
+             + `and the next player still in is ${want}`;
+      }
+    }
+    mem.buttonHand = s.hand;
+    mem.button = s.dealer;
   }
   if (s.phase === 'betting' && s.street === 'preflop' && s.blinds && s.hand !== mem.blindHand) {
     mem.blindHand = s.hand;
@@ -235,10 +253,9 @@ export default function holdemInvariants({ table, players, done, result }) {
   // more, the blinds sit to the button's left. Get this wrong and every chip still
   // adds up — which is why nothing checked it.
   //
-  // Judged on EVERY broadcast since the last look, not just the latest: the blinds are
-  // right or wrong at the moment they are posted, and a dealer who walks out a moment
-  // later moves the button — judging the old blinds against the new button reported a
-  // correct game as broken.
+  // Judged on EVERY broadcast since the last look, not just the latest: the blinds and
+  // the button are right or wrong at the moment a hand is dealt, and a check that only
+  // saw the newest state would miss a hand that came and went between looks.
   const all = broadcasts;
   for (let i = mem.scanned || 0; i < all.length; i++) {
     const b = all[i].payload && all[i].payload.s;

@@ -110,7 +110,7 @@ function createGame(Table, root) {
   }
   /** Betting order from the dealer's left — who gets an odd chip in a split. */
   function orderFromDealer() {
-    const d = seats.dealer;
+    const d = G.button;
     const at = Math.max(0, G.order.indexOf(d));
     const out = [];
     for (let k = 1; k <= G.order.length; k++) out.push(G.order[(at + k) % G.order.length]);
@@ -127,7 +127,13 @@ function createGame(Table, root) {
       hand: 0, level: 0, sb: LEVELS[0][0], bb: LEVELS[0][1],
       betToMatch: 0, minRaise: 0, toAct: null,
       phase: 'handEnd', street: 'preflop', banner: '', reveal: null,
-      startChips: 0, lastPot: 0
+      startChips: 0, lastPot: 0,
+      /* Who has the button. Kept here rather than read from FR.seats, whose dealer is
+       * an index stepped by one each hand: after a bust that index can land on the
+       * same live player twice, who then deals twice while the two seats after them
+       * pay the blinds twice running. */
+      button: players[0].id,
+      handStart: {}           // stacks as each hand began — who busts first when two go at once
     };
     players.forEach(p => {
       G.names[p.id] = p.name; G.emojis[p.id] = p.emoji;
@@ -151,9 +157,12 @@ function createGame(Table, root) {
     G.sb = LEVELS[G.level][0];
     G.bb = LEVELS[G.level][1];
 
-    // Everyone not busted is live again; the button moves from the second hand on.
-    seats.startRound(G.hand > 1);
+    // Everyone not busted is live again; the button moves to the next player still in
+    // the game from the second hand on.
+    seats.startRound(false);
+    if (G.hand > 1) G.button = stepFrom(G.button, (id) => st(id) !== 'out');
     const live = seats.remaining;
+    G.handStart = Object.assign({}, G.stacks);
 
     G.board = []; G.reveal = null; G.hole = {};
     G.acted = {}; G.lastAction = {};
@@ -165,7 +174,7 @@ function createGame(Table, root) {
      * before the flop, then last after it. Special-casing only who POSTS lets the
      * general "first to act is after the big blind / after the button" rules below
      * produce the right answer for two players without a second code path. */
-    const dealerId = seats.dealer;
+    const dealerId = G.button;
     let sbId, bbId;
     if (live.length === 2) {
       sbId = dealerId;
@@ -331,7 +340,7 @@ function createGame(Table, root) {
     if (canAct().length < 2) return runItOut();
     // A held beat so the room sees the card land before anyone can act on it.
     table.hold(STREET_MS, function () {
-      const first = stepFrom(seats.dealer, (id) => st(id) === 'active');
+      const first = stepFrom(G.button, (id) => st(id) === 'active');
       if (!first) return nextStreet();
       G.phase = 'betting';
       setToAct(first);
@@ -434,8 +443,10 @@ function createGame(Table, root) {
     // Busting out is permanent, and the order of it is the finishing order. The
     // shorter stack busts first when two go down together, which is the rule a
     // real table uses and the only way a tie in elimination ranks consistently.
+    // Judged on the stacks the hand STARTED with: this used to sort on `committed`,
+    // which settle() has already zeroed by now, so every tie went by seat order.
     const busted = G.order.filter(id => st(id) !== 'out' && (G.stacks[id] || 0) <= 0);
-    busted.sort((a, b) => (G.committed[a] || 0) - (G.committed[b] || 0));
+    busted.sort((a, b) => (G.handStart[a] || 0) - (G.handStart[b] || 0));
     busted.forEach(id => {
       G.lastAction[id] = 'out';
       seats.eliminate(id);
@@ -496,7 +507,7 @@ function createGame(Table, root) {
        * sitting in front of people without counting the same chip twice. */
       collected: potTotal() - sum(bets),
       betToMatch: G.betToMatch, minRaise: G.minRaise,
-      toAct: G.toAct, dealer: seats.dealer, blinds: G.blindIds || null,
+      toAct: G.toAct, dealer: G.button, blinds: G.blindIds || null,
       lastAction: Object.assign({}, G.lastAction),
       banner: G.banner, reveal: G.reveal,
       startChips: G.startChips,

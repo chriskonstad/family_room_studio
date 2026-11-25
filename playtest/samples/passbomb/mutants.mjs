@@ -12,5 +12,11 @@ export default [
     name: 'a fresh bomb can be handed to a player who is already out',
     file: 'game.js', find: 'G.holder = rng.pick(aliveIds());', replace: 'G.holder = rng.pick(G.order);',
     games: 48
+  },
+  {
+    // The guard moved from inside run() (where a refused throw was silently accepted)
+    // into `when`. Without it a bystander's tap steals the bomb out of the holder's hands.
+    name: 'anyone can throw the bomb, not just whoever holds it',
+    file: 'game.js', find: 'when:(ctx)=> ctx.from === G.holder && ', replace: 'when:(ctx)=> '
   }
 ];
