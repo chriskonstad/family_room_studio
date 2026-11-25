@@ -57,21 +57,26 @@ three-phone table, dropping and being killed at random over thousands of seeds.)
 
 The one thing a rebuilt page can lose is state that never crossed the wire — what
 the phone worked out for itself (a selected card, a local timer). Put anything the
-player must see after a rebuild into what the host sends (CAPTAIN publishes WHETHER
-each sailor has tapped; TEMPO streams its track position with its score). Countdowns
+player must see after a rebuild into what the host sends (CAPTAIN echoes each tap
+privately to the sailor who made it, so a rebuilt phone comes back locked in on the
+colour the host has; TEMPO streams its track position with its score). Countdowns
 are the recurring case: anchor them to the host's clock with `FR.clock`, never to
 when a message arrived — a rebuilt phone gets old messages late, and an
-arrival-anchored countdown restarts at the full limit (MELTDOWN, as shipped).
+arrival-anchored countdown restarts at the full limit (MELTDOWN, as shipped). And
+while a countdown runs, the host re-sends its state on a timer (CAPTAIN and LOOKAWAY
+every 250ms, MELTDOWN every 500ms): a rebuilt phone counts on from the last `now` in
+its history, which can be seconds old. Phones skip the redraw when only `now`
+changed. See `FR-GAME.md`.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `sdk/table-sdk.js` | The ONE `Table` implementation, shared verbatim with the iOS shell. Changing it changes every game on every device. |
-| `sdk/fr-game.js` | `FR` — seeded RNG, decks, seats, standings, timers, and the `FR.host` intent reducer. `sdk/fr-game.test.mjs` is its suite. |
+| `sdk/fr-game.js` | `FR` — seeded RNG, decks, seats, standings, timers, the `FR.clock` game-time clock, and the `FR.host` intent reducer. `sdk/fr-game.test.mjs` is its suite. |
 | `sdk/fr-feel.js` | Animations / haptics / sound. |
 | `sdk/fr-screen.js` | `FRScreen` — the SHARED SCREEN drawing vocabulary (see below). |
-| `harness/runner.mjs` | Boots N virtual phones on a virtual clock and models the shell exactly — including the connection layer (warm/cold reconnects with full history). |
+| `harness/runner.mjs` | Boots N virtual phones on a virtual clock and models the shell: star routing, asynchronous in-order delivery, the table-wide pause (held until every absent phone is back), warm/cold reconnects with full history and muted replay. What it deliberately does not model is listed at the top of the file. |
 | `harness/playtest.mjs` | Plays bundles to completion under bots in every mode and asserts the rules above. |
 | `harness/phone.mjs` | Rebuilds each phone, event for event, in real WebKit and measures its layout. |
 | `harness/screen.mjs` | Plays a game and draws its shared screen at six TV/iPad shapes. |
@@ -146,10 +151,14 @@ Per-bundle hooks, dropped beside `game.js`:
   same layout rules: `[{ name, as: 'p1', players, messages: [payload, …] }]`.
 - **`mutants.mjs`** — `[{ name, file, find, replace, checks?, games? }]`: real bug
   classes put back on purpose; the suite must catch every one. When you fix a bug,
-  add its mutant. A survivor is a hole in the tests.
+  add its mutant. A survivor is a hole in the tests. A mutant "caught" only because
+  the bundle no longer boots is INVALID, not caught — break the behaviour, not the
+  syntax.
 
 The playtest also reports intents never legal / never sent across a batch,
-measured against FR.host's own intent table — an untested path, not noise.
+measured against FR.host's own intent table — an untested path, not noise. And
+every mode a batch rotates through (pause, reconnect, TV toggle) must actually
+happen in it: a short game that always ends before its pause lands fails the batch.
 
 ## The shared screen (Apple TV, an iPad, the Studio panel)
 

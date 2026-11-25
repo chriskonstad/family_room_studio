@@ -20,6 +20,10 @@ the workflow.
    `ctx.msg`). Seed from `FR.rng(Table.seed)`. Time from `FR.timers`. Countdowns
    from `FR.clock` — never from `Date.now()` at message arrival: a rebuilt phone
    receives old messages late and would restart its countdown at the full limit.
+   While a countdown runs, re-send the host's state on a timer (CAPTAIN/LOOKAWAY
+   250ms, MELTDOWN 500ms) — a rebuilt phone counts on from the last `now` in its
+   history, which can be seconds old — and skip the phone's redraw when only `now`
+   changed.
 3. **Do not write any connection code.** No `onPlayerLeave`, no `onPlayerJoin`, no
    `hello`. The shell pauses the table when anyone drops and catches them up when they
    return — every message, in order, exactly once. The validator rejects it.
@@ -80,7 +84,8 @@ node tools/validate.mjs ./mygame                            # or mygame.zip
 - A shared screen (`"screen": "optional" | "required"`) gets broadcasts only. Only the
   host knows if one is attached (`Table.screens`; `null` = assume none) — publish it.
 - State a rebuilt page must show has to come from the host: a page rebuilt from the
-  history loses only what the phone worked out for itself.
+  history loses only what the phone worked out for itself (CAPTAIN echoes each tap
+  privately to the tapper so a rebuilt phone stays locked in).
 - Offline only: no `fetch()`, no external hosts, no CDNs.
 
 ## Game feel — `Table.feel()`

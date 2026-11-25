@@ -14,12 +14,14 @@ on any web server or GitHub Pages) and easy to zip for deployment.
 ## Run it
 
 Folder-picking (`showDirectoryPicker`) needs a secure context, so serve over localhost or
-https:
+https. Serve the dev-kit ROOT, not this folder: the Studio loads the shared runtimes
+(`sdk/table-sdk.js`, `fr-game.js`, `fr-feel.js`, `fr-screen.js`) from `../sdk/`, and served
+from inside `playtest/` they are out of reach and the Studio runs without them.
 
 ```sh
-cd tools/playtest
+cd tools
 python3 -m http.server 8777
-# open http://localhost:8777
+# open http://localhost:8777/playtest/
 ```
 
 (Opening via `file://` also works but only through the folder-**input** fallback, not the
@@ -29,10 +31,13 @@ directory picker or hot-reload.)
 
 1. **Load a game** — click **Open game folder…** and pick a folder containing
    `manifest.json` + `index.html` + `game.js` (+ any assets), **drag that folder** onto the
-   page, or pick a built-in **Sample** — STREAK 🔥 (push-your-luck), BLITZ ⚡️ (tap race),
-   SUMMIT 🏔 (2-player expeditions), FISHBOWL 🐟 (team party game — shows off team
-   support), MELTDOWN ☢️ (co-op shouting), TAPAS 🫒 (simultaneous drafting), and
-   TEMPO 🎵 (rhythm, solo-friendly).
+   page, or pick one of the fourteen built-in **Samples** (listed in `samples/index.json`):
+   BLITZ ⚡️ (tap race), Captain Says 🫡 (obey only the Captain), The Detonator 🧨 (one
+   live plunger), FISHBOWL 🐟 (teams), HOLD'EM 🂡 (poker, with or without a TV), Liar's
+   Dice 🎲 (bluffing), Look Away 👀 (one looks, everyone else hides), MELTDOWN ☢️ (co-op
+   shouting), Pass the Bomb 💣 (hidden fuse), SCRAMBLE 🔡 (word grid on the TV), STREAK 🔥
+   (push-your-luck), SUMMIT 🏔 (two-player expeditions), TAPAS 🫒 (simultaneous drafting)
+   and TEMPO 🎵 (rhythm).
 2. **Set up players** — add/remove seats (bounded by the manifest's `minPlayers`/
    `maxPlayers`), rename, cycle emoji, reorder (seat order = turn order), and choose which
    seat is the authoritative **host**.
@@ -60,28 +65,36 @@ directory picker or hot-reload.)
 
 ## The Table SDK it injects
 
-Identical surface to the native shell, so a game that runs here runs on device unchanged:
+The same file the native shell injects (`sdk/table-sdk.js`), so a game that runs here
+runs on device unchanged:
 
 ```js
-Table.me            // { id, name, emoji, isHost }
+Table.me            // { id, name, emoji, teamId?, isHost }
 Table.isHost
 Table.players       // finalized roster (seat order)
+Table.teams         // [{ id, name, color, playerIds }] for a "teams":"required" game, else null
+Table.seed          // one seed the whole table shares: FR.rng(Table.seed)
 Table.onStart(players => …)
-Table.onMessage((fromId, payload) => …)
-Table.onPause(waiting => …)     // the table paused: every timer freezes until onResume
+Table.onMessage((fromId, payload) => …)   // delivered asynchronously, never inside your call
+Table.onPause(() => …)          // the table paused: every timer freezes until onResume
 Table.onResume(() => …)         // carry on; a returning phone is caught up by the shell
+Table.isPaused
 Table.send(payload)             // client → host (host's own send loops back to it)
 Table.broadcast(payload)        // host → all clients
 Table.sendTo(playerId, payload) // host → one client
 Table.endGame({ winnerId, title, standings:[{playerId,score,detail}] })
                                 // host → shell renders a native results screen on every
                                 // device (winner + ranked standings) with Play Again
-Table.saveState(obj) / Table.loadState()
+Table.saveState(obj) / Table.loadState()   // persisted on THIS device, per game
+Table.screens                   // HOST: shared screens attached (number); null elsewhere
+Table.onScreensChange(n => …)   // HOST: a TV came or went — republish
+Table.haptic(style) / Table.sound(name)    // shell-owned room feedback
+Table.feel(event, opts)         // semantic feedback + shared animations (sdk/fr-feel.js)
 ```
 
 `endGame` is rendered by the studio itself (mirroring the native shell): a results overlay
 appears on every phone — host sees **Play Again** (reboots all phones → fresh `onStart`),
-clients wait. Both samples call it (STREAK at 200 pts, BLITZ at 10 taps).
+clients wait. Every sample calls it.
 
 ## Known limits
 

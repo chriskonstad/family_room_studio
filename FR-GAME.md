@@ -42,7 +42,8 @@ timers.cancel('boom'); timers.cancelAll(); timers.pending
 
 // One game-time clock every phone counts down from (NOT Date.now()).
 var clock = FR.clock(timers); clock.start();          // host
-clock.now(); clock.deadlineIn(11);                    // put now in state
+clock.now(); clock.deadlineIn(11);                    // put now in state; re-send it
+                                                      // on a timer while a countdown runs
 var phoneClock = FR.clock();                          // phone
 phoneClock.see(state); phoneClock.left(deadline);     // seconds left
 
@@ -164,10 +165,39 @@ onState: clock.see(state);
 clock.left(due);                             // seconds left — same on every phone
 ```
 
+A phone counts on between states on GAME time — the shell's timer shim keeps it, and
+it stops while the table is paused — so a countdown holds still through a pause, as
+the host's does, instead of reading 0 the moment play resumes.
+
+**While a countdown runs, the host re-sends its state on a timer.** `see(state)`
+takes the state's `now` as the host's time *at the moment the phone sees it*, and the
+phone counts on from there. A phone rebuilt from the history replays every old state
+in one burst, so the reading it keeps is the last one in its history — sent whenever
+the host last had something to say, which can be seconds before the drop. Counting on
+from that, it shows seconds the table no longer has. Republishing on a timer bounds
+how old that last reading can be, and the next tick corrects it:
+
+```js
+// host: when the countdown starts — cancel it when the countdown ends
+timers.every('clock', 250, publish);
+// phone: a tick moves nothing but `now`, so don't redraw for one
+function sameButNow(a, b) {
+  return JSON.stringify(Object.assign({}, a, { now: 0 })) ===
+         JSON.stringify(Object.assign({}, b, { now: 0 }));
+}
+onState: var tick = view && sameButNow(view, state);
+         view = state; clock.see(state); if (!tick) render();
+```
+
+CAPTAIN and LOOKAWAY re-send every 250ms while an order or pick window is open,
+MELTDOWN every 500ms while the reactor runs. Their phones skip the redraw when only
+`now` changed: the bar reads the clock by itself, and a redraw would swap the buttons
+out from under a thumb.
+
 Name clock fields `now`, `deadline` or `*Ends`: the harness's pause/reconnect
 comparisons treat those as clock readings (they may differ by a tick across a pause)
-and require everything else in the state to match exactly. MELTDOWN, LOOKAWAY and
-FISHBOWL run on this; TEMPO and PASSBOMB stream the same idea by hand.
+and require everything else in the state to match exactly. CAPTAIN, LOOKAWAY,
+MELTDOWN and FISHBOWL run on this; TEMPO and PASSBOMB stream the same idea by hand.
 
 ## `FR.host` — the four checks games kept forgetting
 

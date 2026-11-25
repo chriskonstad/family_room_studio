@@ -14,11 +14,11 @@ game. A **game** is just a bundle of HTML + JS + assets written against one inje
 | | |
 |---|---|
 | **[GAME-AUTHORING.md](GAME-AUTHORING.md)** | The complete author's guide — bundle/archive format, the full `Table` SDK, assets, a copy-paste starter game, and the rules every game must follow. Start here (and hand this to an LLM writing a game). |
-| **[skills/game-dev/](skills/game-dev/SKILL.md)** | A Claude Code **skill** for game development — drop it into a project's `.claude/skills/` and Claude follows the canonical dev/test/version/ship workflow and UX standards automatically. |
+| **[skills/game-dev/](skills/game-dev/SKILL.md)** | A Claude Code **skill** for game development — Claude follows the canonical dev/test/version/ship workflow and UX standards automatically. Its commands use `tools/…` paths, so it works as-is in a project that keeps this kit at `tools/` (the Family Room app links it into its `.claude/skills/`); anywhere else, adjust the paths. |
 | **[FR-GAME.md](FR-GAME.md)** | The `FR` game-structure library — seeded RNG, decks, seats and elimination, standings, timers, and a host reducer that refuses illegal intents. Written for a small model: cheat sheet, per-primitive rules, and a complete 40-line game to copy. |
 | **[sdk/](sdk/)** | The runtimes both harnesses inject: `table-sdk.js` (the ONE `Table` implementation, shared with the iOS shell), `fr-feel.js` (animations/haptics/sound), `fr-game.js` (structure). |
 | **shared screen** | A game may put its public board on an **Apple TV or an iPad** (`sdk/fr-screen.js`, a `screen.js` per bundle) while private hands stay on phones — the screen is fed the host's broadcasts and never a `sendTo`, so the split is routing rather than discipline. `harness/screen.mjs` draws every screen at six shapes and fails on anything clipped, overlapping or leaked. HOLD'EM is the showcase: the felt on the television, your two cards in your hand. |
-| **[harness/](harness/)** | Run real bundles **headless** — N virtual phones, a virtual clock (including `Date`), bots, and an exact model of the shell (including its connection layer). `playtest.mjs` fuzzes each game across seeds, table sizes, hostile input, pauses, warm and cold reconnects, real button presses and a TV coming and going. `phone.mjs` rebuilds every phone in **real WebKit** at six device sizes and fails anything clipped, overlapping, under the home bar, too small to tap, or needing a scroll — `--shots` writes a contact sheet of every screen for a human. `mutants.mjs` puts known bugs back on purpose and requires the suite to catch each one. |
+| **[harness/](harness/)** | Run real bundles **headless** — N virtual phones, a virtual clock (including `Date`), bots, and a model of the shell — routing, asynchronous delivery, pauses and its connection layer (what it leaves out is listed in `runner.mjs`). `playtest.mjs` fuzzes each game across seeds, table sizes, hostile input, pauses, warm and cold reconnects, real button presses and a TV coming and going. `phone.mjs` rebuilds every phone in **real WebKit** at six device sizes and fails anything clipped, overlapping, under the home bar, too small to tap, or needing a scroll — `--shots` writes a contact sheet of every screen for a human. `mutants.mjs` puts known bugs back on purpose and requires the suite to catch each one. |
 | **[validate.mjs](validate.mjs)** | Check a bundle (folder or `.zip`) before it goes near a phone: manifest schema, offline-only, no external hosts, viewport, size. |
 | **[playtest/](playtest/)** | The **Playtest Studio** — a zero-dependency web tool that runs your game across multiple simulated players in iPhone-sized frames, with a wire-message log, disconnect testing, hot reload, and one-click **Export .zip**. |
 
@@ -44,14 +44,14 @@ thing left that a Mac can tell you is how the game *feels*.
 ## Quick start
 
 ```sh
-# serve the dev-kit ROOT, not playtest/ — the studio loads sdk/fr-feel.js
+# serve the dev-kit ROOT, not playtest/ — the studio loads its runtimes from sdk/
 python3 -m http.server 8777
 # open http://localhost:8777/playtest/   (localhost is required for the folder picker)
 ```
 
-Serving `playtest/` directly still works, but the studio can't reach `sdk/fr-feel.js`
-from there, so games lose `Table.feel()` and the shared `fr-*` animations. The console
-says so if it happens.
+Served from `playtest/` the studio can't reach `sdk/` — `table-sdk.js`, `fr-game.js`,
+`fr-feel.js`, `fr-screen.js` — and without `table-sdk.js` no game gets a `Table`. The
+console says so if it happens.
 
 Then: pick a built-in **Sample** to see a game run, read
 [GAME-AUTHORING.md](GAME-AUTHORING.md), write your own game folder
@@ -60,10 +60,11 @@ across players, and **Export .zip** when it's ready.
 
 ## Publishing / hosting
 
-The whole kit is static files. Host `playtest/` on GitHub Pages, Cloudflare Pages, Netlify,
-Vercel, or any static server (it needs `https`/`localhost` for the folder picker). To ship a
-finished game to players, export its `.zip` and load it into the Family Room app via **Add
-Game from Zip**; joiners who don't have it pull it from the host over the air.
+The whole kit is static files. Host it — `playtest/` with `sdk/` reachable beside it — on
+GitHub Pages, Cloudflare Pages, Netlify, Vercel, or any static server (it needs
+`https`/`localhost` for the folder picker). To ship a finished game to players, export its
+`.zip` and load it into the Family Room app with **Add** (above the game list on the home
+screen); joiners who don't have it pull it from the host over the air.
 
 The native shell that runs these bundles on-device (Swift/SwiftUI, Network.framework
 peer-to-peer) lives in the main Family Room app repository; you don't need it to author or
