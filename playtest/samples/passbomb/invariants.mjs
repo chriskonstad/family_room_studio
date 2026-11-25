@@ -13,7 +13,35 @@
  * Per-run scratch state goes on `table` (it's fresh for every game) — see how
  * bot.mjs uses table._added.
  */
-export default function passbombInvariants({ table, players, done, result }) {
+/* Only whoever holds the bomb can throw it. A holder change mid-fuse must be the
+ * broadcast that answers the holder's own `pass` to exactly that player — the sends
+ * and broadcasts are read off the wire in order, so a bomb that changes hands any
+ * other way (a bystander's tap, a guard gone missing) is caught the moment it moves. */
+function onlyTheHolderThrows({ table }) {
+  const m = table._pbWire || (table._pbWire = { i: 0, phase: null, holder: null, last: null });
+  const wire = table.wire();
+  for (; m.i < wire.length; m.i++) {
+    const e = wire[m.i];
+    if (e.kind === 'send') { m.last = e; continue; }
+    if (e.kind !== 'broadcast' || !e.payload || !e.payload.s) continue;
+    const s = e.payload.s;
+    if (s.phase === 'live' && m.phase === 'live' && s.holder !== m.holder) {
+      const p = m.last && m.last.payload;
+      if (!p || p.t !== 'pass' || m.last.from !== m.holder || p.to !== s.holder) {
+        return `the bomb went from ${m.holder} to ${s.holder} without ${m.holder} throwing it`
+          + (p ? ` (last intent: ${m.last.from} ${JSON.stringify(p)})` : '');
+      }
+    }
+    m.phase = s.phase; m.holder = s.holder;
+  }
+  return null;
+}
+
+export default function passbombInvariants(args) {
+  return onlyTheHolderThrows(args) || basics(args);
+}
+
+function basics({ table, players, done, result }) {
   for (const id of players) {
     const s = table.view(id)?.s;
     if (!s) continue;                       // nothing received yet

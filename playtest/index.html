@@ -163,6 +163,10 @@
       <select id="deviceSel"></select>
       <label class="field">Zoom · <span id="scaleVal">70%</span></label>
       <input type="range" id="scale" min="35" max="110" value="70">
+      <label class="field" id="tvRow" style="display:none;margin-top:10px;gap:8px;align-items:center">
+        <input type="checkbox" id="tvToggle" checked> 📺 Shared screen attached
+      </label>
+      <div class="muted" id="tvNote" style="display:none;font-size:11.5px">This game works with or without a TV. Switch it mid-game: only the host's game hears it (<code>Table.onScreensChange</code>), exactly as on a real table.</div>
       <div class="muted" style="font-size:11.5px;margin-top:6px">Sizes are <b>logical points</b> (CSS px) — the unit layouts use, not physical pixels (which are 3× larger: 402×874 pt = 1206×2622 px @3×). iPhone 16 Pro and 17 Pro share the 6.3″ / 402×874 pt geometry, so they render identically. Each phone can override its device below its label.</div>
     </section>
 
@@ -358,6 +362,7 @@ async function ingest(vfs){
   const entry = manifest.entry || 'index.html';
   if(!vfs[entry]) throw new Error(`entry "${entry}" not found in the bundle.`);
   state.manifest = manifest;
+  syncTvControls();
 
   state.entryHtmlBase = buildEntryBase(entry);
   state.started = false;
@@ -449,6 +454,7 @@ function sdkScript(player, roster){
       teams:${JSON.stringify(teams)},
       isHost:${player.isHost?'true':'false'},
       seed:${state.seed || 1},
+      screens:${player.isHost ? (tvOn() ? 1 : 0) : 'undefined'},
       saved:(window.parent.HarnessBus.loadState(${JSON.stringify(player.id)})),
       clock:clock
     }, {
@@ -588,13 +594,25 @@ const HarnessBus = {
   broadcast(from, payload){               // host → all clients
     if(from!==this.hostId()){ log('error', from, '*', 'broadcast ignored (not host)'); return; }
     log('broadcast', from, '*', payload);
-    state.players.forEach(p=>{ if(p.id!==from && !p.dropped) this._deliver(p.id, from, payload); });
+    state.players.forEach(p=>{ if(p.id!==from) this._post(p.id, from, payload); });
     // A screen is public-only: it sees broadcasts and is never passed a sendTo.
+    this.lastBroadcast = structuredClone(payload);
     Screens.deliver(structuredClone(payload));
   },
   sendTo(from, to, payload){              // host → one player
     if(from!==this.hostId()){ log('error', from, to, 'sendTo ignored (not host)'); return; }
     log('sendTo', from, to, payload);
+    if(to===from) this._deliver(to, from, payload); else this._post(to, from, payload);
+  },
+  /* The shell's connection layer (TableLink): every message to a player is kept for the
+   * whole game, so a dropped phone is caught up with exactly what it missed — or, if
+   * its page had to be rebuilt, with all of it. Games never see any of it. */
+  history:{}, seen:{}, lastBroadcast:null,
+  _post(to, from, payload){
+    const h = this.history[to] || (this.history[to] = []);
+    h.push({ from, payload: structuredClone(payload) });
+    if(!this.alive(to)) return;
+    this.seen[to] = h.length;
     this._deliver(to, from, payload);
   },
   /// Haptics and sound are real hardware on device. Here we just log them, so you
@@ -721,6 +739,25 @@ function startSession(){
   renderStage();
 }
 
+/* One phone's document: the bundle, with the SAME table-sdk.js, fr-feel.js and
+ * fr-game.js the iOS shell bundles — one copy, so the harnesses can't drift. */
+function phoneHtml(p, roster){
+  return state.entryHtmlBase.replace('<!--__TABLE_SDK__-->',
+    (state.tableSDK ? '<script>'+state.tableSDK+'<\/script>' : '') +
+    '<script>'+sdkScript(p, roster)+'<\/script>' +
+    (state.feelRuntime ? '<script>'+state.feelRuntime+'\nwindow.__frFeel.install(window.Table, document);<\/script>' : '') +
+    (state.gameRuntime ? '<script>'+state.gameRuntime+'<\/script>' : ''));
+}
+function mountScreen(){
+  const z = Math.min(0.42, (+$('#scale').value)/100 * 0.6);
+  const panel = Screens.mount({ name:'Apple TV', w:1920, h:1080, zoom:z,
+                                safe:{top:54,right:96,bottom:54,left:96} });
+  if(panel){
+    stage.appendChild(panel);
+    if(HarnessBus.lastBroadcast) Screens.deliver(structuredClone(HarnessBus.lastBroadcast));
+  }
+}
+
 function renderStage(){
   empty.style.display='none';
   Screens.clear();                 // stop the old panel's frame loop before it is detached
@@ -748,7 +785,8 @@ function renderStage(){
       </div>
       <div class="ctl">
         <select class="devsel">${devOpts}</select>
-        <button class="dropbtn">${p.dropped?'Reconnect':'Drop'}</button>
+        <button class="dropbtn" title="the connection drops: the table pauses">${p.dropped?'Reconnect':'Drop'}</button>
+        <button class="reloadbtn" title="the app was killed: rebuild this phone from the whole game so far">Reload</button>
       </div>
       <div class="notch"></div>
       <div class="screen" style="width:${dev.w}px;height:${dev.h}px">
@@ -759,28 +797,20 @@ function renderStage(){
       </div>`;
     wrap.querySelector('.devsel').onchange = e=>{ p.device=e.target.value; renderStage(); };
     wrap.querySelector('.dropbtn').onclick = ()=> p.dropped ? reconnect(p) : drop(p);
+    wrap.querySelector('.reloadbtn').onclick = ()=> reload(p);
 
     stage.appendChild(wrap);
 
     const iframe = wrap.querySelector('iframe');
-    // Same fr-feel.js the iOS shell bundles — one copy, so the two harnesses
-    // can't drift on animations or Table.feel.
-    const html = state.entryHtmlBase.replace('<!--__TABLE_SDK__-->',
-      (state.tableSDK ? '<script>'+state.tableSDK+'<\/script>' : '') +
-      '<script>'+sdkScript(p, roster)+'<\/script>' +
-      (state.feelRuntime ? '<script>'+state.feelRuntime+'\nwindow.__frFeel.install(window.Table, document);<\/script>' : '') +
-      (state.gameRuntime ? '<script>'+state.gameRuntime+'<\/script>' : ''));
+    const html = phoneHtml(p, roster);
     loads.push(new Promise(res=>{ iframe.onload = ()=>res(p); iframe.srcdoc = html; }));
   });
 
-  // A shared screen, if this bundle declares one. It sits beside the phones at a real
-  // TV shape so a layout built for 16:9 with overscan is visible as such, not guessed at.
-  if(Screens.supported()){
-    const z = Math.min(0.42, (+$('#scale').value)/100 * 0.6);
-    const panel = Screens.mount({ name:'Apple TV', w:1920, h:1080, zoom:z,
-                                  safe:{top:54,right:96,bottom:54,left:96} });
-    if(panel) stage.appendChild(panel);
-  }
+  // A shared screen, if this bundle declares one (and, for an optional one, the switch
+  // says it's on). It sits beside the phones at a real TV shape so a layout built for
+  // 16:9 with overscan is visible as such, not guessed at.
+  HarnessBus.history = {}; HarnessBus.seen = {}; HarnessBus.lastBroadcast = null;
+  if(Screens.supported() && tvOn()) mountScreen();
 
   // Fire onStart on every phone once all documents (and their game scripts) have run.
   Promise.all(loads).then(()=>{
@@ -834,20 +864,77 @@ function restartGame(){
   renderStage();          // rebuild every phone → fresh Table.onStart → new game
 }
 
+/* A phone dropping is what the shell does with it: the whole table PAUSES (every game's
+ * clocks freeze) and nobody's game hears a thing. Reconnect catches that phone up with
+ * exactly the messages it missed — its page never went anywhere. Reload is the app
+ * having been killed: a fresh page, start, then the whole game so far. */
+function setAllPaused(on){
+  state.players.forEach(o=>{ const w=HarnessBus.winOf(o.id); try{ if(w&&w.__tableSetPaused) w.__tableSetPaused(on); }catch(e){} });
+}
+function anyDropped(){ return state.players.some(o=>o.dropped); }
+function markPhone(p){
+  const ph = document.querySelector(`iframe[data-pid="${p.id}"]`)?.closest('.phone');
+  if(!ph) return;
+  ph.classList.toggle('dropped', !!p.dropped);
+  const b = ph.querySelector('.dropbtn'); if(b) b.textContent = p.dropped ? 'Reconnect' : 'Drop';
+}
 function drop(p){
+  setAllPaused(true);
   p.dropped = true;
-  document.querySelector(`iframe[data-pid="${p.id}"]`)?.closest('.phone')?.classList.add('dropped');
-  log('leave', p.id, 'all', {left:p.name});
-  state.players.forEach(o=>{ if(o.id!==p.id && !o.dropped){ const w=HarnessBus.winOf(o.id); if(w&&w.__tableDispatch) w.__tableDispatch('leave', p.id); } });
+  markPhone(p);
+  log('pause', p.id, 'all', {waitingFor:p.name});
 }
 function reconnect(p){
-  // Rebuild just this phone, re-fire start on it, and notify others via onPlayerJoin.
   p.dropped = false;
-  renderStage();
-  setTimeout(()=>{
-    state.players.forEach(o=>{ if(o.id!==p.id && !o.dropped){ const w=HarnessBus.winOf(o.id); if(w&&w.__tableDispatch) w.__tableDispatch('join', {id:p.id,name:p.name,emoji:p.emoji}); } });
-    log('join', p.id, 'all', {rejoined:p.name});
-  }, 60);
+  markPhone(p);
+  const w = HarnessBus.winOf(p.id), h = HarnessBus.history[p.id] || [];
+  const missed = h.slice(HarnessBus.seen[p.id] || 0);
+  HarnessBus.seen[p.id] = h.length;
+  missed.forEach(m=>{ if(w && w.__tableDispatch) w.__tableDispatch('message', m.from, structuredClone(m.payload)); });
+  log('resume', p.id, 'all', {caughtUp:missed.length});
+  if(!anyDropped()) setAllPaused(false);
+}
+function reload(p){
+  setAllPaused(true);
+  p.dropped = true;
+  const iframe = document.querySelector(`iframe[data-pid="${p.id}"]`);
+  if(!iframe) return;
+  const roster = state.players.map(x=>({id:x.id,name:x.name,emoji:x.emoji,teamId:x.teamId||undefined}));
+  iframe.onload = ()=>{
+    p.dropped = false;
+    markPhone(p);
+    const w = iframe.contentWindow, h = HarnessBus.history[p.id] || [];
+    if(w && w.__tableDispatch){
+      w.__tableDispatch('start', roster);
+      h.forEach(m=> w.__tableDispatch('message', m.from, structuredClone(m.payload)));
+    }
+    HarnessBus.seen[p.id] = h.length;
+    log('resume', p.id, 'all', {rebuiltFrom:h.length});
+    if(!anyDropped()) setAllPaused(false);
+  };
+  iframe.srcdoc = phoneHtml(p, roster);
+}
+
+/* The TV: on for a "required" game, a switch for an "optional" one. Only the host's
+ * game hears it change, exactly as on a real table. */
+function tvOn(){
+  if(!state.manifest || !state.manifest.screen || state.manifest.screen === 'none') return false;
+  if(state.manifest.screen === 'required') return true;
+  const t = $('#tvToggle'); return t ? t.checked : true;
+}
+function syncTvControls(){
+  const optional = state.manifest && state.manifest.screen === 'optional';
+  $('#tvRow').style.display = optional ? 'flex' : 'none';
+  $('#tvNote').style.display = optional ? 'block' : 'none';
+}
+function setTv(){
+  if(!state.started) return;
+  Screens.clear();
+  document.querySelectorAll('.screenpanel').forEach(e=>e.remove());
+  if(Screens.supported() && tvOn()) mountScreen();
+  const w = HarnessBus.winOf(HarnessBus.hostId());
+  if(w && w.__tableDispatch) w.__tableDispatch('screens', tvOn() ? 1 : 0);
+  log('screens', '—', 'host', {attached: tvOn() ? 1 : 0});
 }
 
 /* ============================ Log ============================ */
@@ -952,6 +1039,7 @@ $('#minus').onclick = removePlayer;
 $('#tplus').onclick = ()=>setTeamCount(state.teamCount+1);
 $('#tminus').onclick = ()=>setTeamCount(state.teamCount-1);
 $('#scale').oninput = e=>{ $('#scaleVal').textContent=e.target.value+'%'; if(state.started) renderStage(); };
+$('#tvToggle').onchange = ()=> setTv();
 $('#deviceSel').onchange = e=>{ state.players.forEach(p=>p.device=e.target.value); if(state.started) renderStage(); };
 $('#logbar').onclick = ()=>{ const w=$('#logwrap'); w.classList.toggle('collapsed'); $('#toggleLog').textContent = w.classList.contains('collapsed')?'Expand':'Collapse'; };
 $('#clearLog').onclick = e=>{ e.stopPropagation(); clearLog(); };

@@ -18,10 +18,11 @@ function createGame(Table, root) {
   const haptic = (s) => { if (Table.haptic) Table.haptic(s); };
 
   // ---------- deterministic track from a shared seed ----------
-  function rng(seed){ let s = seed >>> 0; return () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296; }
+  // FR.rng, not a hand-rolled LCG: one seeded RNG for the whole dev kit, so a
+  // replayed seed means the same thing in every game.
   function buildBeats(seed) {
     // accelerating beat: 92 -> 168 BPM over 60s, with occasional double-taps
-    const rand = rng(seed);
+    const rand = FR.rng(seed);
     const beats = [];
     let t = 2.0;                       // lead-in
     while (t < TRACK_SECONDS) {
@@ -38,7 +39,7 @@ function createGame(Table, root) {
   // ---------- host ----------
   function initGame(players) {
     G = { order:players.map(p=>p.id), names:{}, emojis:{}, scores:{}, finished:{}, phase:'ready',
-          seed: Table.seed };
+          seed: Table.seed, at:{} };
     players.forEach(p => { G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.scores[p.id]=0; G.finished[p.id]=false; });
   }
   // The move space. TEMPO is unusual: the real play is TAPPING TO A BEAT on your own
@@ -53,16 +54,24 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: () => {} },
         go:    { host: true, phase: 'ready', run: () => { G.phase = 'playing'; } },
         // A running score is a stream, not a choice — playable, but nothing to enumerate.
+        // A TEMPO score only ever goes up, so the host keeps the best it has heard.
+        // Taking the latest instead let a phone that reloaded mid-track — back from the
+        // lock screen, its run restarted at zero — wipe out everything it had scored.
+        // `at` is where in the track that score was made, so a reloaded phone can pick
+        // the same track up at the same beat rather than start a fresh 60 seconds.
         score: { hidden: true, phase: 'playing',
-                 run: (ctx) => { G.scores[ctx.from] = Number(ctx.msg.score) || 0; } },
+                 run: (ctx) => {
+                   G.scores[ctx.from] = Math.max(G.scores[ctx.from] || 0, Number(ctx.msg.score) || 0);
+                   const at = Number(ctx.msg.at);
+                   if (isFinite(at)) G.at[ctx.from] = Math.max(G.at[ctx.from] || 0, Math.min(TRACK_SECONDS, at));
+                 } },
         done:  { phase: 'playing',
                  when: (ctx) => !G.finished[ctx.from],
                  options: () => [{ score: 0 }],   // a bot finishes; a human finishes better
                  run: (ctx) => {
-                   G.scores[ctx.from] = Number(ctx.msg.score) || 0;
+                   G.scores[ctx.from] = Math.max(G.scores[ctx.from] || 0, Number(ctx.msg.score) || 0);
                    G.finished[ctx.from] = true;
                    if (G.order.every(id => G.finished[id])) {
                      G.phase = 'over';
@@ -75,7 +84,7 @@ function createGame(Table, root) {
   }
   function publicState() {
     return { phase:G.phase, seed:G.seed, names:G.names, emojis:G.emojis, order:G.order,
-             scores:{...G.scores}, finished:{...G.finished} };
+             scores:{...G.scores}, finished:{...G.finished}, at:{...G.at} };
   }
   function syncAll(){ const s = publicState(); Table.broadcast({ t:'state', s }); onState(s); }
 
@@ -83,32 +92,42 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    // Someone leaving counts as finishing — otherwise the game waits forever for a
-    // score that is never coming. (This called the old handleIntent, which no longer
-    // exists; a leave would have thrown.)
-    Table.onPlayerLeave(id => {
-      if (!G || G.finished[id]) return;
-      G.finished[id] = true;
-      if (G.phase === 'playing' && G.order.every(x => G.finished[x])) {
-        G.phase = 'over';
-        const r = FR.standings.byScore(G.scores);
-        Table.endGame({ winnerId: r.winnerId, standings: r.standings });
-      }
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view=null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => { if (msg.t === 'state') onState(msg.s); });
   }
   function onState(s) {
-    const wasReady = !view || view.phase === 'ready';
     const wasPlaying = view && view.phase === 'playing';
     view = s;
-    if (s.phase === 'playing' && wasReady && !run) { startRun(s.seed); render(); return; }
-    // during play, DON'T rebuild the DOM (it would kill the ring + tap zone):
-    // just refresh the live score strip.
-    if (s.phase === 'playing' && wasPlaying) { updateScoreStrip(); return; }
+    if (s.phase === 'playing') {
+      // during play, DON'T rebuild the DOM (it would kill the ring + tap zone):
+      // just refresh the live score strip — unless the local run just changed.
+      if (followHost(s) || !wasPlaying) render(); else updateScoreStrip();
+      return;
+    }
     render();
+  }
+  /// Start the local run — or catch it up. A phone rebuilt from the history (iOS
+  /// killed the app) is handed every state in one burst, so the FIRST playing state
+  /// it sees is the one from when the track started. Each later one may know more:
+  /// how far into the track this phone had got and what it had scored (`at`/`scores`,
+  /// streamed by the phone that died), or that it had already finished. Starting only
+  /// on that first state restarted the track at zero, and a finished player was
+  /// handed a second track. Returns true when the run changed.
+  function followHost(s) {
+    const at = (s.at && s.at[MY]) || 0, score = (s.scores && s.scores[MY]) || 0;
+    if (s.finished && s.finished[MY]) {
+      if (run && run.over) return false;
+      if (run) cancelAnimationFrame(run.raf);
+      run = { over:true, score, combo:0 };
+      return true;
+    }
+    // A live phone is always at or past the position it reported itself.
+    if (!run || (!run.over && at > trackTime() + 0.5)) {
+      startRun(s.seed, at, score);
+      return true;
+    }
+    return false;
   }
   function updateScoreStrip() {
     const el = root.querySelector('.scores');
@@ -131,10 +150,20 @@ function createGame(Table, root) {
     return sharedAudio;
   }
 
-  function startRun(seed) {
+  /// Seconds into the local track. `start` is kept in milliseconds, as performance.now()
+  /// reads: kept in seconds, adding a pause's length to it moved where `at` rounded, and
+  /// a paused table streamed 4.03 where the same game unpaused said 4.02.
+  function trackTime() { return (performance.now() - run.start) / 1000; }
+  function startRun(seed, resumeAt, resumeScore) {
+    if (run) cancelAnimationFrame(run.raf);
     const audio = unlockAudio();          // already unlocked by the tap that got us here
-    run = { beats: buildBeats(seed), idx:0, score:0, combo:0, best:0, hits:0,
-            start: performance.now()/1000 + 0.15, audio, lastSent:0, over:false,
+    const at = resumeAt || 0;
+    const beats = buildBeats(seed);
+    // Resuming: skip every beat already behind us, so they don't all expire as misses.
+    let idx = 0;
+    while (at > 0 && idx < beats.length && beats[idx] <= at + 0.25) idx++;
+    run = { beats, idx, score:resumeScore || 0, combo:0, best:0, hits:0,
+            start: performance.now() + 150 - Math.round(at*1000), audio, lastSent:at, over:false,
             lastFeel:0, lastCount:null };
     scheduleLoop();
   }
@@ -147,7 +176,7 @@ function createGame(Table, root) {
   let pausedAt = null;
   Table.onPause(() => { pausedAt = performance.now(); });
   Table.onResume(() => {
-    if (run && pausedAt != null) run.start += (performance.now() - pausedAt)/1000;
+    if (run && pausedAt != null) run.start += performance.now() - pausedAt;
     pausedAt = null;
   });
   function beep(when, freq, dur=0.07, gain=0.25) {
@@ -162,7 +191,7 @@ function createGame(Table, root) {
     if (!run || run.over) return;
     // Paused: keep the frame loop alive but judge nothing and send nothing.
     if (Table.isPaused) { run.raf = requestAnimationFrame(scheduleLoop); return; }
-    const nowS = performance.now()/1000 - run.start;
+    const nowS = trackTime();
     // schedule metronome beeps just ahead
     if (run.audio) {
       const ctxNow = run.audio.currentTime;
@@ -188,7 +217,7 @@ function createGame(Table, root) {
       }
     }
     // stream score to host once per second
-    if (nowS - run.lastSent > 1) { run.lastSent = nowS; Table.send({ t:'score', score:run.score }); }
+    if (nowS - run.lastSent > 1) { run.lastSent = nowS; Table.send({ t:'score', score:run.score, at:Math.round(nowS*100)/100 }); }
     // last three seconds of the track — keyed on the whole second, so it can't
     // fire per frame the way anything else in this loop would
     const left = TRACK_SECONDS - nowS;
@@ -201,7 +230,7 @@ function createGame(Table, root) {
   }
   function tap() {
     if (!run || run.over || Table.isPaused) return;
-    const nowS = performance.now()/1000 - run.start;
+    const nowS = trackTime();
     const next = run.beats[run.idx];
     if (next == null) return;
     const err = Math.abs(nowS - next);

@@ -18,7 +18,8 @@ function createGame(Table, root) {
   let myEntryDone = false;
   let myAdded = 0;            // phrases I've dropped in (local echo)
   let lastPhase = null;       // to patch (not rebuild) the entry screen on updates
-  let localDeadline = null;   // giver countdown (device-local clock)
+  // (no device-local deadline: the countdown reads the host's clock via FR.clock,
+  // so a rebuilt phone shows the same seconds as one that never dropped)
   let tick = null;
   let lastSpokenSecond = null;  // so the countdown beeps once per second, not per tick
   let seenScore = null;         // team scores last render, for the point/skip cues
@@ -42,6 +43,7 @@ function createGame(Table, root) {
 
   // ---------- host ----------
   function initGame(players) {
+    clock.start();
     const teams = Table.teams.filter(t => t.playerIds.length > 0);
     G = {
       phase:'entry', names:{}, emojis:{},
@@ -69,6 +71,7 @@ function createGame(Table, root) {
     // freeze while the table is paused, so a wall-clock deadline would silently eat
     // the guesser's remaining seconds the moment somebody's phone drops.
     G.secondsLeft = TURN_SECONDS;
+    G.turnEnds = clock.deadlineIn(TURN_SECONDS);
     timer.after('turn', TURN_SECONDS*1000, () => { endTurn(); syncAll(); });
     timer.every('turnTick', 1000, () => { G.secondsLeft = Math.max(0, G.secondsLeft - 1); });
   }
@@ -115,6 +118,10 @@ function createGame(Table, root) {
   // that is a choice is declared here, and the one thing that is authorship (the phrase
   // itself) is supplied by the bundle's bot.mjs when the harness plays it.
   const timer = FR.timers();
+  // The turn countdown is anchored to the host's clock (FR.clock): the state
+  // carries `now` and the turn's end in that time, so a phone rebuilt from
+  // its history shows the same seconds as one that never dropped.
+  const clock = FR.clock(Table.isHost ? timer : null);
   const isGiver = (ctx) => ctx.from === currentGiver();
   let table = null;
   function buildTable() {
@@ -124,7 +131,6 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: () => {} },
         // Free text: playable, but not enumerable. Hidden from legalMoves on purpose.
         addPhrase: { hidden: true, phase: 'entry',
           when: (ctx) => !G.done[ctx.from] && G.counts[ctx.from] < MAX_PHRASES_PER_PLAYER,
@@ -160,38 +166,34 @@ function createGame(Table, root) {
       activeTeamId: (G.phase==='turnReady'||G.phase==='turn') ? currentTeam().id : null,
       giver: (G.phase==='turnReady'||G.phase==='turn') ? currentGiver() : null,
       bowlLeft: G.bowl.length,
+      now: clock.now(),
+      turnEnds: G.phase==='turn' ? G.turnEnds : null,
       secondsLeft: G.phase==='turn' ? G.secondsLeft : null,
       canSkip: G.bowl.length >= 2,
     };
   }
   function syncAll() {
     const s = publicState();
+    clock.see(s);
     Table.broadcast({ t:'state', s });
     // the current phrase goes ONLY to the giver
     if (G.phase === 'turn' && G.current != null) {
       const phrase = G.phrases[G.current];
-      if (currentGiver() === MY) { view = {...s, phrase}; startLocalTimer(s.secondsLeft); render(); return; }
-      Table.sendTo(currentGiver(), { t:'phrase', phrase, secondsLeft: s.secondsLeft });
+      if (currentGiver() === MY) { view = {...s, phrase}; startLocalTimer(); render(); return; }
+      Table.sendTo(currentGiver(), { t:'phrase', phrase, secondsLeft: s.secondsLeft, turnEnds: G.turnEnds });
     }
-    view = s; startLocalTimer(s.secondsLeft); render();
+    view = s; startLocalTimer(); render();
   }
 
   // ---------- wiring ----------
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G) return;
-      G.teams.forEach(t => { t.playerIds = t.playerIds.filter(p => p !== id); });
-      G.teams = G.teams.filter(t => t.playerIds.length);
-      if (G.phase === 'entry') { delete G.done[id]; if (everyoneDone() && G.phrases.length) { G.phrases = shuffle(G.phrases); startRound(); } }
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view=null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
-      if (msg.t === 'state') { view = msg.s; startLocalTimer(msg.s.secondsLeft); render(); }
-      else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase}; startLocalTimer(msg.secondsLeft); render(); }
+      if (msg.t === 'state') { view = msg.s; clock.see(msg.s); startLocalTimer(); render(); }
+      else if (msg.t === 'phrase') { view = {...view, phrase: msg.phrase, turnEnds: msg.turnEnds ?? view?.turnEnds}; startLocalTimer(); render(); }
     });
   }
 
@@ -205,6 +207,8 @@ function createGame(Table, root) {
     if (mine) mine.textContent = 'You’ve added ' + (v.counts[MY] ?? myAdded);
     const wait = root.querySelector('#writingline');
     if (wait) wait.innerHTML = writingLine();
+    const done = root.querySelector('#doneEntry');
+    if (done && myAdded > 0) done.disabled = false;
   }
   function writingLine() {
     const v = view;
@@ -214,14 +218,11 @@ function createGame(Table, root) {
       : 'everyone’s done!';
   }
 
-  function startLocalTimer(secondsLeft) {
-    clearInterval(tick); localDeadline = null;
-    if (secondsLeft == null) return;
-    localDeadline = Date.now() + secondsLeft*1000;
+  function startLocalTimer() {
+    clearInterval(tick);
     tick = setInterval(() => {
       if (!view || view.phase !== 'turn') { clearInterval(tick); return; }
       renderTimerOnly();
-      if (Date.now() >= localDeadline) clearInterval(tick);
     }, 200);
   }
 
@@ -232,7 +233,8 @@ function createGame(Table, root) {
       <span class="n">${esc(t.name.replace(' Team',''))}</span><span class="s">${t.score}</span></div>`).join('') + `</div>`;
 
   function secondsNow() {
-    return localDeadline ? Math.max(0, Math.ceil((localDeadline-Date.now())/1000)) : (view.secondsLeft ?? 0);
+    if (view.turnEnds != null) return Math.max(0, Math.ceil(clock.left(view.turnEnds)));
+    return view.secondsLeft ?? 0;
   }
   function renderTimerOnly() {
     const bar = root.querySelector('.timer i'); const num = root.querySelector('.timenum');
@@ -255,6 +257,12 @@ function createGame(Table, root) {
   function render() {
     if (!view) { root.innerHTML = '<div class="big"><span class="wait">Filling the bowl…</span></div>'; return; }
     const v = view;
+
+    // What the host says about me wins over what this page remembers: a page rebuilt
+    // from the history never saw its own taps, so it came back to the writing form
+    // after "I'm done" (every button on it refused) with "I'm done" greyed out.
+    if (v.dones && v.dones[MY] && !myEntryDone) { myEntryDone = true; lastPhase = null; }
+    if (v.counts && (v.counts[MY] || 0) > myAdded) myAdded = v.counts[MY];
 
     // in-place patch while typing (see patchEntryCounters)
     if (v.phase === 'entry' && lastPhase === 'entry') { patchEntryCounters(); return; }
@@ -350,7 +358,8 @@ function createGame(Table, root) {
         input.focus();
         const mine = root.querySelector('#minecount');
         if (mine) mine.textContent = 'You’ve added ' + myAdded;   // instant local echo
-        root.querySelector('#doneEntry')?.removeAttribute('disabled');
+        const done = root.querySelector('#doneEntry');
+        if (done) done.disabled = false;
       };
       addBtn.onclick = add;
       input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });

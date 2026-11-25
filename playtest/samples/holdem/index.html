@@ -52,6 +52,40 @@
   .actions{display:flex; flex-direction:column; gap:7px}
   .btnrow{display:flex; gap:7px}
   .btnrow.raises{gap:6px}
+  /* NO TV: the phone is the table. The board gets a little more room, your own cards
+     a little less, and every seat goes in between — two columns, two lines a seat, so
+     eight of them fit on an iPhone SE without anybody scrolling. */
+  .pc.md{width:44px; height:62px; font-size:19px}
+  .pc.md .s{font-size:16px; margin-top:2px}
+  .pc.mid{width:62px; height:88px; font-size:28px; border-radius:9px}
+  .pc.mid .s{font-size:22px; margin-top:3px}
+  #app.notv .board{margin-top:6px}
+  #app.notv .banner{padding-top:4px}
+  #app.notv .mine{gap:6px}
+  .seats{display:grid; grid-template-columns:1fr 1fr; gap:5px; margin:2px 0 4px}
+  .seat{background:rgba(0,0,0,.2); border:1px solid rgba(255,255,255,.07); border-radius:9px;
+    padding:4px 7px; min-width:0}
+  .seat.me{background:rgba(232,193,90,.08)}
+  .seat.turn{border-color:var(--gold); box-shadow:inset 0 0 0 1px var(--gold)}
+  .seat.folded{opacity:.5}
+  .seat.out{opacity:.32}
+  .sl{display:flex; align-items:center; gap:4px; font-size:13px; font-weight:700; line-height:17px; min-width:0}
+  .sn{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .ss{font-variant-numeric:tabular-nums}
+  .tag{font-size:9.5px; font-weight:800; padding:0 4px; border-radius:6px; line-height:14px;
+    background:rgba(255,255,255,.14); color:var(--muted)}
+  .tag.d{background:var(--gold); color:#17241c}
+  .sl2{display:flex; align-items:center; gap:4px; font-size:12px; line-height:17px; color:var(--muted);
+    min-width:0; white-space:nowrap}
+  .sl2 .hand{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--text)}
+  .sl2 .bet{margin-left:auto; color:var(--gold); font-weight:700}
+  .sl2 .plus{margin-left:auto; color:var(--good); font-weight:800}
+  .sl2 .hand + .plus{margin-left:0}
+  .act.allin{color:var(--bad); font-weight:800}
+  .mc{background:#f6f8f4; color:#17241c; border-radius:4px; padding:0 3px; font-weight:800;
+    font-size:11.5px; line-height:15px; flex:none}
+  .mc.red{color:#c8322c}
+
   button{flex:1; min-height:52px; border-radius:12px; border:1px solid var(--line);
     background:var(--panel); color:var(--text); font-size:15px; font-weight:700;
     font-family:inherit; padding:8px 6px}

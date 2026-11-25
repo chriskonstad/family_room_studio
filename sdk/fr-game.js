@@ -430,6 +430,81 @@
   };
 
   /* ------------------------------------------------------------------ *
+   * FR.clock — one game-time clock every phone can count down from
+   *
+   * Every timed game invented this alone, and the version three of them
+   * invented — "seconds left = the limit, counted from when the message
+   * ARRIVED" — is wrong in exactly the situation the shell creates on
+   * purpose: a phone rebuilt from its history receives an old order
+   * today and restarts it at the full limit while the table is seconds
+   * from expiry. (MELTDOWN shipped it; the harness's rebuilt-phone
+   * comparison caught it.) TEMPO and PASSBOMB avoided it by hand —
+   * the host streams where its clock has got to, phones anchor there.
+   *
+   * So, the block: the host runs one clock on FR.timers (it freezes
+   * while the table is paused, like every host timer), stamps `now`
+   * into its published state, and expresses deadlines in that time.
+   * A phone calls see(state) on each state and asks left(deadline):
+   * the answer is the same on a phone that never dropped and on one
+   * rebuilt a second ago, because neither counts from its own arrivals.
+   *
+   *   host:  var clock = FR.clock(timer); clock.start();
+   *          state = { ..., now: clock.now() };
+   *          var due = clock.deadlineIn(11);          // an order's expiry
+   *   phone: var clock = FR.clock();
+   *          onState: clock.see(state);
+   *          clock.left(due)                          // seconds, >= 0
+   *
+   * Naming is part of the contract: fields called `now`, `deadline`, or
+   * ending in `Ends`/`Deadline` are clock readings, and the harness's
+   * pause/reconnect/browser comparisons treat them as readings (they may
+   * differ by a tick across a pause or between engines) while requiring
+   * everything else in the state to match exactly.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * @param {Object} [timers] an FR.timers instance (host only). Omit on a phone.
+   * @param {Function} [wallNow] wall clock in ms; tests inject a fake.
+   *
+   * A phone extrapolates on GAME time, not wall time: the pausable timer shim keeps
+   * it (`__frGameNow`, wall time minus every paused stretch). On wall time a phone's
+   * countdown kept running through a pause the host's clock sat out — 44 seconds of
+   * pause and every phone read 0 on resume, its order still 6s from expiring.
+   */
+  FR.clock = function (timers, wallNow) {
+    var wall = wallNow || function () {
+      return typeof global.__frGameNow === 'function' ? global.__frGameNow() : Date.now();
+    };
+    var nowMs = 0;                 // host: ticked. phone: last seen host time
+    var seenAt = wall();           // wall moment nowMs was true
+    var TICK = 250;
+
+    var api = {
+      /** Arm the tick (host). Safe to call again; the name replaces itself. */
+      start: function () {
+        if (timers) timers.every('fr.clock', TICK, function () { nowMs += TICK; });
+        return api;
+      },
+      /** Game time now. On the host ONLY the tick moves it — a paused table's
+       *  clock must not creep forward on wall time between ticks. On a phone
+       *  it extrapolates from the last state it saw. */
+      now: function () { return timers ? nowMs : nowMs + (wall() - seenAt); },
+      /** A deadline `seconds` from now, in game time. */
+      deadlineIn: function (seconds) { return api.now() + seconds * 1000; },
+      /** Note where the host's clock was when this state arrived. */
+      see: function (state) {
+        if (state && typeof state.now === 'number') { nowMs = state.now; seenAt = wall(); }
+        return api;
+      },
+      /** Seconds until a game-time deadline, never negative. */
+      left: function (deadline) {
+        return Math.max(0, (deadline - api.now()) / 1000);
+      }
+    };
+    return api;
+  };
+
+  /* ------------------------------------------------------------------ *
    * FR.host — the host-authoritative intent reducer
    *
    * Clients send intents; the host decides. Every game wrote that switch by
@@ -495,11 +570,13 @@
     function releaseFreeze(id) { delete freezeTokens[id]; }
 
     var rejected = [];        // names of intents refused, newest last — for tests
+    var refusedTotal = 0;     // every refusal ever, so a test can tell one happened
 
     function phaseNow() { return cfg.phase ? cfg.phase() : null; }
 
     function refuse(name, why) {
       rejected.push({ intent: name, why: why });
+      refusedTotal++;
       if (rejected.length > 50) rejected.shift();
     }
 
@@ -508,6 +585,26 @@
       get busy() { return isBusy(); },
       /** Why recent intents were refused. Diagnostics for tests and fuzzing. */
       get rejected() { return rejected.slice(); },
+      /** How many intents have ever been refused. `rejected` keeps only the newest 50,
+       *  so its length cannot tell a test whether the intent it just sent was turned away. */
+      get refusedTotal() { return refusedTotal; },
+
+      /**
+       * The intent table itself — every name and how it is guarded. This is the
+       * vocabulary a coverage report must be measured against: reading it out of the
+       * source with a regex found ONE intent (`hello`) in a game that sends through
+       * its own helper, so nothing could ever be reported as untested there.
+       * @returns {Array<{name, hidden, host, turn, phase, options, when}>}
+       */
+      describe: function () {
+        return Object.keys(intents).map(function (name) {
+          var spec = intents[name];
+          if (typeof spec === 'function') spec = { run: spec };
+          return { name: name, hidden: !!spec.hidden, host: !!spec.host, turn: !!spec.turn,
+                   phase: spec.phase ? [].concat(spec.phase) : null,
+                   options: typeof spec.options === 'function', when: typeof spec.when === 'function' };
+        });
+      },
       timers: timers,
 
       /**
@@ -594,12 +691,23 @@
           var known = cfg.seats ? cfg.seats.all : cfg.players;
           if (known && known.indexOf(playerId) === -1) return;
 
-          var ctx = { from: playerId, state: cfg.state, table: api };
-          if (spec.when && !spec.when(ctx)) return;
+          /* `when` sees exactly what handle() would show it: a concrete message. It used
+           * to be called here with NO msg, so a guard like `validBid(ctx.msg.qty, …)` —
+           * natural, since handle() always passes one — threw on every enumeration, and
+           * Liar's Dice's whole move space silently came back empty. With options, each
+           * candidate is checked on its own, so legalMoves never offers a move handle()
+           * would refuse. */
+          var ctx = { from: playerId, state: cfg.state, table: api, msg: { t: name } };
           var args = spec.options ? spec.options(ctx) : null;
-          if (!args) { out.push({ t: name }); return; }
+          if (!args) {
+            if (spec.when && !spec.when(ctx)) return;
+            out.push({ t: name });
+            return;
+          }
           args.forEach(function (a) {
-            out.push(Object.assign({ t: name }, a));
+            var msg = Object.assign({ t: name }, a);
+            if (spec.when && !spec.when({ from: playerId, state: cfg.state, table: api, msg: msg })) return;
+            out.push(msg);
           });
         });
         return out;

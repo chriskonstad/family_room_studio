@@ -5,7 +5,7 @@
  */
 const COLORS = ['red', 'blue', 'green', 'yellow'];
 
-export default function captainInvariants({ table, players, done, result }) {
+function captainInvariantsBase({ table, players, done, result }) {
   const seen = table._captainAlive || (table._captainAlive = {});
   for (const id of players) {
     const s = table.view(id)?.s;
@@ -41,4 +41,37 @@ export default function captainInvariants({ table, players, done, result }) {
     }
   }
   return null;
+}
+
+/* The tap that counts is your FIRST. "First tap only" is the whole fairness of a
+ * reaction round, and a second tap quietly replacing the first changes who goes out
+ * without a single chip — or anything else a generic check could see — moving. So:
+ * read the taps off the wire, in order, and at every reveal require that what the
+ * game recorded for each sailor is the first colour they sent that round. */
+function extra({ table }) {
+  const m = table._captainTaps || (table._captainTaps = { i: 0, phase: null, round: null, first: {} });
+  const wire = table.wire();
+  for (; m.i < wire.length; m.i++) {
+    const e = wire[m.i];
+    if (e.kind === 'broadcast' && e.payload && e.payload.s) {
+      const s = e.payload.s;
+      if (s.round !== m.round) { m.round = s.round; m.first = {}; }
+      m.phase = s.phase;
+      if (s.phase === 'reveal' && s.taps) {
+        for (const [id, colour] of Object.entries(s.taps)) {
+          if (colour != null && m.first[id] && colour !== m.first[id]) {
+            return `round ${s.round}: ${id} first tapped ${m.first[id]}, but the reveal counts ${colour}`;
+          }
+        }
+      }
+    } else if (e.kind === 'send' && e.payload && e.payload.t === 'tap' && m.phase === 'prompt'
+               && COLORS.includes(e.payload.color) && !m.first[e.from]) {
+      m.first[e.from] = e.payload.color;
+    }
+  }
+  return null;
+}
+
+export default function captainInvariants(args) {
+  return extra(args) || captainInvariantsBase(args);
 }

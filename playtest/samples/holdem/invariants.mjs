@@ -5,8 +5,7 @@
  * player winning, the wrong one winning, a side pot paid to somebody who never
  * matched it — looks identical to a fuzzer that only asks whether the game
  * crashed. What it cannot fake is the total: the table starts with a fixed number
- * of chips and every one of them is always in a stack, in the pot, or in the
- * pocket of somebody who walked out. This found a real bug on its first run — a
+ * of chips and every one of them is always in a stack or in the pot. This found a real bug on its first run — a
  * pot credited to a stack while the same chips were still counted in `committed`,
  * so for the length of every showdown the room owned more money than it had sat
  * down with, and nothing visible went wrong.
@@ -22,7 +21,10 @@
  * player's own.
  */
 
+import R from './rules.js';
+
 const STATUSES = ['active', 'allin', 'folded', 'out'];
+const SUIT = ['♠', '♥', '♦', '♣'];
 const BOARD_FOR = { preflop: 0, flop: 3, turn: 4, river: 5 };
 const key = (c) => c.r + ':' + c.s;
 const sum = (o) => Object.keys(o || {}).reduce((n, k) => n + (o[k] || 0), 0);
@@ -42,6 +44,67 @@ function cards(value, skip, out = []) {
   return out;
 }
 
+function blindsAndAction(s, mem) {
+  /* The turn passes only when the player it was on acts. Anything else is the table
+   * skipping somebody. A player has acted when their last action, their bet, or their
+   * status changed. */
+  const p = mem.prevB;
+  mem.prevB = s;
+  if (p && p.hand === s.hand && p.phase === 'betting' && s.phase === 'betting' && p.street === s.street
+      && p.toAct && s.toAct && p.toAct !== s.toAct) {
+    const id = p.toAct;
+    const acted = (s.lastAction || {})[id] !== (p.lastAction || {})[id]
+      || (s.bet || {})[id] !== (p.bet || {})[id] || s.status[id] !== p.status[id];
+    if (!acted) {
+      return `hand ${s.hand}, ${s.street}: the turn moved from ${id} to ${s.toAct}, but ${id} never acted`;
+    }
+  }
+  /* The button moves one seat a hand, to the next player still in the game — whoever
+   * busted. A button that stays put after a bust makes the same two players pay the
+   * blinds twice running, and every chip still adds up. */
+  if (s.hand !== mem.buttonHand) {
+    if (mem.buttonHand && s.hand === mem.buttonHand + 1 && s.dealer) {
+      const order = s.order, at = order.indexOf(mem.button);
+      let want = null;
+      for (let k = 1; k <= order.length && at >= 0; k++) {
+        const c = order[(at + k) % order.length];
+        if (s.status[c] !== 'out') { want = c; break; }
+      }
+      if (want && s.dealer !== want) {
+        return `hand ${s.hand}: the button is on ${s.dealer}, but it was on ${mem.button} last hand `
+             + `and the next player still in is ${want}`;
+      }
+    }
+    mem.buttonHand = s.hand;
+    mem.button = s.dealer;
+  }
+  if (s.phase === 'betting' && s.street === 'preflop' && s.blinds && s.hand !== mem.blindHand) {
+    mem.blindHand = s.hand;
+    const live = s.order.filter(id => s.status[id] !== 'out');
+    const next = (from) => { const i = live.indexOf(from); return live[(i + 1) % live.length]; };
+    if (live.includes(s.blinds.sb) && live.includes(s.blinds.bb) && live.includes(s.dealer)) {
+      const sb = live.length === 2 ? s.dealer : next(s.dealer);
+      const bb = next(sb);
+      if (s.blinds.sb !== sb || s.blinds.bb !== bb) {
+        return `hand ${s.hand}: blinds are ${s.blinds.sb}/${s.blinds.bb} with ${s.dealer} on the button `
+             + `and ${live.length} players — they should be ${sb}/${bb}`;
+      }
+    }
+  }
+  // Before anybody has acted on a street, the action is where the rules put it.
+  if (s.phase === 'betting' && s.toAct && Object.keys(s.lastAction || {}).length === 0) {
+    const order = s.order, n = order.length;
+    const after = (from, ok) => { const i = order.indexOf(from); for (let k = 1; k <= n; k++) { const c = order[(i + k) % n]; if (ok(c)) return c; } return null; };
+    const canAct = (id) => s.status[id] === 'active';
+    const want = s.street === 'preflop' ? after(s.blinds && s.blinds.bb, canAct) : after(s.dealer, canAct);
+    if (want && s.toAct !== want) {
+      return `${s.street} of hand ${s.hand}: ${s.toAct} is first to act but the rules say ${want} `
+           + `(button ${s.dealer}, blinds ${s.blinds && s.blinds.sb}/${s.blinds && s.blinds.bb})`;
+    }
+  }
+  return null;
+}
+
 export default function holdemInvariants({ table, players, done, result }) {
   const broadcasts = table.wire('broadcast');
   const last = broadcasts[broadcasts.length - 1];
@@ -53,10 +116,10 @@ export default function holdemInvariants({ table, players, done, result }) {
 
   const stacks = sum(s.stacks);
   const committed = sum(s.committed);
-  const accounted = stacks + committed + (s.removed || 0);
+  const accounted = stacks + committed;
   if (accounted !== s.startChips) {
     return `the table has ${accounted} chips but sat down with ${s.startChips} `
-         + `(${stacks} in stacks, ${committed} in the pot, ${s.removed} walked out) in phase ${s.phase}`;
+         + `(${stacks} in stacks, ${committed} in the pot) in phase ${s.phase}`;
   }
   if (s.startChips !== mem.startChips) {
     return `the table's starting chips changed from ${mem.startChips} to ${s.startChips}`;
@@ -161,6 +224,78 @@ export default function holdemInvariants({ table, players, done, result }) {
     return `a hand won uncontested still showed cards`;
   }
 
+  /* --------------------------------------------------- whose phone shows --- */
+
+  // Every phone — the host's too, which holds every hole card in memory and so is
+  // the one place a render bug could put somebody else's hand — shows only its own
+  // cards, the board, and what a showdown has turned over. Cards render as their
+  // rank and suit ("K ♠" in your hand, "K♠" in a seat row), so that is what to look
+  // for; a card is unique, so seeing one is seeing THAT card.
+  for (const viewer of players) {
+    const text = table.text(viewer);
+    if (!text) continue;
+    for (const [owner, cs] of Object.entries(holes)) {
+      if (owner === viewer || revealed[owner]) continue;
+      for (const c of cs) {
+        const face = R.RANK_SHORT[c.r] + SUIT[c.s];
+        const spaced = R.RANK_SHORT[c.r] + ' ' + SUIT[c.s];
+        if (boardKeys.includes(key(c))) continue;
+        if (new RegExp('(^|[^0-9A-Z])(' + face + '|' + spaced + ')').test(text)) {
+          return `${viewer}'s phone shows ${face}, which is ${owner}'s hole card (phase ${s.phase})`;
+        }
+      }
+    }
+  }
+
+  /* ------------------------------------------- the blinds and who acts first --- */
+
+  // Heads-up the button IS the small blind and acts first before the flop; three or
+  // more, the blinds sit to the button's left. Get this wrong and every chip still
+  // adds up — which is why nothing checked it.
+  //
+  // Judged on EVERY broadcast since the last look, not just the latest: the blinds and
+  // the button are right or wrong at the moment a hand is dealt, and a check that only
+  // saw the newest state would miss a hand that came and went between looks.
+  const all = broadcasts;
+  for (let i = mem.scanned || 0; i < all.length; i++) {
+    const b = all[i].payload && all[i].payload.s;
+    if (!b) continue;
+    const bad = blindsAndAction(b, mem);
+    if (bad) { mem.scanned = all.length; return bad; }
+  }
+  mem.scanned = all.length;
+
+  /* ------------------------------------------------------------- payouts --- */
+
+  // Every pot went to the best hand among the players who could win it — worked out
+  // here from the cards the showdown turned over, not by asking the game. The
+  // evaluator itself is proven in rules.test.mjs; this proves the game fed it the
+  // right cards, the right players and the right pots, every showdown of every run.
+  if (s.phase === 'showdown' && s.reveal && !s.reveal.uncontested && s.reveal.pots && s.reveal.pots.length
+      && (s.board || []).length === 5 && s.reveal.hand !== s.hand) {
+    const scores = {};
+    for (const [id, cs] of Object.entries(revealed)) scores[id] = R.evaluate(cs.concat(s.board));
+    const order = s.order, d = order.indexOf(s.dealer);
+    const fromDealer = order.slice(d + 1).concat(order.slice(0, d + 1));
+    const want = {};
+    for (const pot of s.reveal.pots) {
+      const live = pot.eligible.filter(id => scores[id]);
+      if (!live.length) continue;
+      const best = live.reduce((b, id) => (R.compare(scores[id], scores[b]) > 0 ? id : b), live[0]);
+      const winners = live.filter(id => R.compare(scores[id], scores[best]) === 0)
+        .sort((a, b) => fromDealer.indexOf(a) - fromDealer.indexOf(b));
+      const share = Math.floor(pot.amount / winners.length);
+      winners.forEach((id, i) => { want[id] = (want[id] || 0) + share + (i < pot.amount - share * winners.length ? 1 : 0); });
+    }
+    const got = s.reveal.won || {};
+    for (const id of new Set(Object.keys(want).concat(Object.keys(got)))) {
+      if ((want[id] || 0) !== (got[id] || 0)) {
+        return `hand ${s.hand}: ${id} was paid ${got[id] || 0} but the cards say ${want[id] || 0} `
+             + `(${Object.entries(scores).map(([k, v]) => k + ': ' + v.name).join(', ')})`;
+      }
+    }
+  }
+
   /* ------------------------------------------------------------- payouts --- */
 
   if (s.reveal && Array.isArray(s.reveal.pots)) {
@@ -186,9 +321,8 @@ export default function holdemInvariants({ table, players, done, result }) {
       return `the game ended with ${left.length} players still holding chips`;
     }
     if (result.winnerId) {
-      const inPlay = s.startChips - (s.removed || 0);
-      if ((s.stacks[result.winnerId] || 0) !== inPlay) {
-        return `the winner finished with ${s.stacks[result.winnerId]} of the ${inPlay} chips still on the table`;
+      if ((s.stacks[result.winnerId] || 0) !== s.startChips) {
+        return `the winner finished with ${s.stacks[result.winnerId]} of the ${s.startChips} chips on the table`;
       }
     }
   }

@@ -40,7 +40,12 @@
 
   /* hand grouped into 5 color columns (aligned under the routes above), each
      sorted low→high so you can skim what you hold at a glance */
-  .hand{flex:1; display:flex; gap:6px; padding:5px 0 2px; min-height:0; overflow-y:auto; align-items:flex-start}
+  .hand{flex:1; display:flex; gap:6px; padding:5px 0 2px; min-height:0; overflow:hidden; align-items:flex-start}
+  /* Fanned (see fanHand): overlapped like a held hand, each number on the edge that shows. */
+  .hand.fanned .card + .card{margin-top:var(--fan, 0px)}
+  .hand.fanned .card{align-items:flex-start; padding-top:2px; font-size:20px; line-height:20px; position:relative}
+  .hand.fanned .card.wager{font-size:18px}
+  .hand.fanned .card.sel{z-index:2}
   .handcol{flex:1; display:flex; flex-direction:column; gap:6px; min-width:0}
   .colhead{font-size:19px; text-align:center; height:24px; line-height:22px; opacity:.55;
     border-bottom:2px solid transparent; padding-bottom:2px; margin-bottom:1px}

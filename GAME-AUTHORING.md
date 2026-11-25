@@ -2,7 +2,7 @@
 
 This is the complete guide to authoring a game bundle that runs on the Family Room shell
 (iOS app) and in the [Playtest Studio](playtest/). If you're an LLM generating a game,
-**read this whole file first** — the rules in [§9](#9-rules--limits-read-before-you-write)
+**read this whole file first** — the rules in [§10](#10-rules--limits-read-before-you-write)
 are load-bearing: code that ignores them compiles and looks right but behaves wrong.
 
 Companion doc: [playtest/README.md](playtest/README.md) — how to test what you write. (The
@@ -44,6 +44,7 @@ mygame/
   manifest.json     # required — identity + metadata
   index.html        # required — the entry point loaded into the webview
   game.js           # your game (any name; referenced from index.html)
+  screen.js         # optional — the shared-screen view, for a "screen" game (see §4)
   assets/…          # optional — images, sounds, css, fonts
 ```
 
@@ -72,6 +73,7 @@ Easiest way to produce a valid archive: open the folder in the Playtest Studio a
   "minPlayers": 2,            // roster lower bound (the shell won't start below this)
   "maxPlayers": 8,            // roster upper bound
   "teams": "required",        // OPTIONAL — declare a team game (see "Teams" below)
+  "screen": "optional",       // OPTIONAL — "none" | "optional" | "required": a shared TV/iPad view (screen.js; see "Shared screens")
   "author": "You",
   "description": "One or two sentences on how it plays."  // shown on press-and-hold
 }
@@ -123,7 +125,8 @@ include your own copy of it.
 </html>
 ```
 
-**`game.js`** — the whole game. Note the `isHost` branch and the "hello" resync.
+**`game.js`** — the whole game. Note the `isHost` branch — and that there is no
+connection code at all: the shell keeps every phone caught up.
 ```js
 const root   = document.getElementById('scores');
 const GOAL   = 10;
@@ -139,7 +142,6 @@ function render() {
 Table.onStart(players => {
   roster = players;
   players.forEach(p => scores[p.id] = 0);
-  if (!Table.isHost) Table.send({ type: 'hello' });   // ask the host for current state
   render();
 });
 
@@ -173,8 +175,8 @@ screen, and Play-Again (free — see [§6](#6-ending-a-game)).
 ## 4. The `Table` SDK — full reference
 
 `Table` is a global, injected **before your scripts run**. It is the **only** interface to
-the platform (see [§9](#9-rules--limits-read-before-you-write) — there is no filesystem,
-no sockets, no device APIs).
+the platform — there is no filesystem, no sockets, no device APIs; everything you need is
+here. (The load-bearing rules live in [§10](#10-rules--limits-read-before-you-write).)
 
 ### Identity & roster
 ```js
@@ -208,8 +210,6 @@ build your own team picker:
 ```js
 Table.onStart((players) => { … })       // session begins (or restarts). Roster is final. Init here.
 Table.onMessage((fromId, payload) => {}) // a message arrived
-Table.onPlayerLeave((playerId) => { … }) // a player LEFT FOR GOOD (see pause, below)
-Table.onPlayerJoin((player) => { … })    // a player (re)joined mid-game
 Table.onPause(() => { … })               // optional: play frozen (someone dropped)
 Table.onResume(() => { … })              // optional: play resumed
 Table.isPaused                           // optional: current freeze state
@@ -218,26 +218,51 @@ Table.isPaused                           // optional: current freeze state
   reloads the bundle). Treat it as "initialize a brand-new game." Do all setup here.
 - Register your handlers synchronously at top level so they exist when `onStart` fires.
 
-### Disconnects, pause and reconnect (the shell handles this — don't reinvent it)
+### Disconnects, pause and reconnect — the shell's job, never the game's
 
-If anyone's phone backgrounds, sleeps, or drops off the network, the shell **pauses the
-whole table**: every device shows a "Paused — waiting for <player>" overlay that blocks
-input, the dropped player's seat is held, and their app reconnects and resumes that same
-seat automatically. `onPlayerLeave` fires only when they leave for good (they tapped Leave,
-or the host chose "Continue without them") — a brief disconnect never reaches your game.
+The shell gives your game a connection like TCP gives a program a pipe: **every
+message, in order, exactly once**, whatever the network does. If anyone's phone
+backgrounds, sleeps, or drops off the network, the shell **pauses the whole table** —
+every device shows "Paused — <player> stepped away / is reconnecting", input is blocked,
+every game clock freezes — and when they come back their phone is **caught up**: just
+the messages it missed if its page survived, or a fresh page rebuilt from the **whole
+history** of the game if iOS killed the app. A tap sent into a dying connection is
+resent and applied once. There is no "leaving" mid-game; if someone isn't coming back,
+the host ends the game for everyone.
+
+So your game has **nothing to handle**: no `onPlayerLeave`, no `onPlayerJoin`, no
+resync handshake. They are still in the SDK for old bundles and never fire during a
+game; the validator flags them (and fails a built-in game that uses them). Code that
+reacts to connectivity is code that can only be wrong — nearly every real bug the
+harness ever found lived there.
 
 **Your clocks freeze automatically.** `setTimeout` / `setInterval` are shimmed in the
 injected SDK, so a lit fuse or round timer stops while paused and resumes with the exact
-time remaining — no game code required. The one rule this imposes:
+time remaining — no game code required. Prefer `FR.timers()` (named timers you can
+`cancelAll()`) and `FR.clock()` (the table's one game-time clock) over raw calls.
 
-> Never derive game timing from raw `Date.now()` deltas across a pause. Drive time with
-> `setTimeout`/`setInterval` (which freeze) rather than by comparing wall-clock stamps
+Two rules this imposes:
+
+> Never derive game timing from raw `Date.now()` deltas. Drive time with
+> `FR.timers` (which freeze) rather than by comparing wall-clock stamps
 > (which don't) — otherwise a paused game "catches up" all at once on resume.
+> And never anchor a countdown to when a message ARRIVED (`deadline =
+> Date.now() + limit`): a phone rebuilt from the game's history receives old
+> messages late and restarts at the full limit. Express deadlines in the
+> host's time (`FR.clock().deadlineIn(s)`) and count down with `clock.left()`.
+> While a countdown runs, have the host re-send its state on a timer (CAPTAIN
+> SAYS and LOOK AWAY every 250ms, MELTDOWN every 500ms): a phone counts on from
+> the last `now` it saw, and for a rebuilt phone that is the last state in its
+> history, which can be seconds old. Skip the phone's redraw when only `now`
+> changed. Every phone then shows the same seconds, dropped or not (details in
+> [FR-GAME.md](FR-GAME.md)). The validator fails a built-in game that uses
+> `Date.now()` in code.
 
-On reconnect the host shell also **replays your last `broadcast` and that player's last
-`sendTo`**, so a returning player lands mid-game rather than on an empty board. Handling
-`{type:'hello'}` with a state publish (below) is still recommended — it makes the resync
-immediate and is the documented contract.
+**The one thing a rebuilt page can lose** is state that never crossed the wire — what
+the phone worked out for itself (a selected card, a local track timer). If the player
+must still see it after a rebuild, the host should send it (CAPTAIN SAYS echoes each
+tap privately to the sailor who made it, so a rebuilt phone comes back locked in on
+that colour; TEMPO streams its track position with its score).
 
 ### Messaging (your game → shell → wire)
 ```js
@@ -246,10 +271,13 @@ Table.broadcast(payload)        // host → all clients. Host-only (no-op on cli
 Table.sendTo(playerId, payload) // host → one client (e.g. a private hand). Host-only.
 ```
 - `payload` is **any JSON-serializable object** — plain data only (no functions, DOM nodes,
-  class instances). It is structured-cloned across the boundary.
-- Delivery is **reliable and ordered** while connected (a TCP-like stream): messages arrive
-  in the order sent, without loss. But it is **asynchronous** — never assume a `send` has
-  been handled by the next line.
+  class instances). It is JSON-serialized across the boundary (`JSON.stringify` on device),
+  so `undefined` fields vanish, `NaN` becomes `null`, and a `Date`, `Map` or `Set` does not
+  survive the trip.
+- Delivery is **reliable and ordered** — across disconnects too (see above): messages
+  arrive once, in the order sent. But it is **asynchronous** — never assume a `send` has
+  been handled by the next line. A client's messages from the host arrive after its own
+  `onStart`, never before.
 - **Clients only `send`; the host `broadcast`/`sendTo`.** Clients never mutate authoritative
   state directly — they send an intent and wait for the host's next state broadcast.
 
@@ -259,11 +287,32 @@ Table.endGame({ winnerId, title, standings: [{ playerId | teamId, score, detail 
 ```
 Host-only. Standings rank players — or whole teams via `teamId`. See [§6](#6-ending-a-game).
 
-### Optional persistence (stretch; may be a no-op in some shells)
+### Persistence (per device, per game)
 ```js
-Table.saveState(obj)   // host persists authoritative state (crash/relaunch recovery)
-Table.loadState()      // returns the last saved state, or null
+Table.saveState(obj)   // keep a small JSON value on THIS device, for this game
+Table.loadState()      // the value last saved on this device (synchronous), or null
 ```
+Stored per device and keyed by the game's `id`, so it survives a relaunch and never leaks
+into another game. It is for small things a phone should remember — settings, the phrases
+used last time — not a way to restore a game in progress: each device has its own copy,
+and nothing is shared over the wire. `loadState()` never awaits; the shell hands the
+stored value to the page as it loads.
+
+### Shared screens (an Apple TV, an iPad)
+Declare `"screen": "optional"` or `"required"` in the manifest and ship a `screen.js` that
+defines `createScreen(Table, screen)`. A screen is a DISPLAY, not a player: it is handed
+the host's public `broadcast`s (never a private `sendTo`) and draws them through
+`screen.onDraw((ctx, env) => …)` with the canvas-2d vocabulary in `FRScreen` (tvOS has no
+DOM — see `sdk/fr-screen.js`). `"required"`: the shell won't start without one attached.
+```js
+Table.screens               // HOST ONLY: how many screens are attached (a number); null on
+                            // every client. Treat null as "no screen".
+Table.onScreensChange(n => …) // HOST ONLY: one came or went (a TV switched on mid-game) — republish
+```
+Only the host knows whether a screen is there, so an `"optional"` game reads
+`Table.screens` on the host and publishes it in its state; the phones lay themselves out
+from that (HOLD'EM: with a TV the phone is your hand; without one every phone is the
+whole table).
 
 ---
 
@@ -272,24 +321,20 @@ Table.loadState()      // returns the last saved state, or null
 The reliable shape for almost every game:
 
 1. **`onStart`** — build initial state. On the **host**, create the authoritative state
-   (deck, scores, whose turn). On a **client**, `Table.send({type:'hello'})` and wait.
+   (deck, scores, whose turn) and publish it. On a **client**, render a waiting state; the
+   host's first broadcast is on its way (it is delivered after your `onStart`, always).
 2. **Host `onMessage`** — validate the intent (is it this player's turn? is the move
    legal?), mutate authoritative state, then `Table.broadcast({type:'state', …})` a public
-   snapshot. Ignore illegal intents. Handle `{type:'hello'}` by broadcasting current state
-   (this resyncs a client whose webview loaded late).
+   snapshot. Ignore illegal intents (better: build on `FR.host`, which refuses them).
 3. **Client `onMessage`** — on `{type:'state', …}`, replace local view and re-render. Clients
    are pure render functions of the host's state.
-4. **`onPlayerLeave`** (host) — a player dropped; fold them out so the game can continue
-   (e.g. auto-bank/skip them, advance the turn if it was theirs), then broadcast.
-5. **`Table.endGame(...)`** (host) — when the game is decided.
+4. **`Table.endGame(...)`** (host) — when the game is decided.
 
-Why the `hello` handshake matters: a client's webview may finish loading *after* the host's
-first `broadcast`, missing it. Having the client announce itself and the host reply with the
-current state closes that race. (The shell also refires `onStart` on reconnect.)
+There is no step for players leaving or reconnecting: the shell owns both (§4).
 
-**Randomness / secrets:** only the host should use `Math.random()` (shuffles, dice). Clients
-render host state, so they never diverge. Deal private info with `sendTo(playerId, …)` so a
-hidden hand never rides on a `broadcast`.
+**Randomness / secrets:** seed `FR.rng(Table.seed)` once (shuffles, dice) — never
+`Math.random()`, anywhere. Clients render host state, so they never diverge. Deal
+private info with `sendTo(playerId, …)` so a hidden hand never rides on a `broadcast`.
 
 ---
 
@@ -566,6 +611,9 @@ var seats  = FR.seats(playerIds);   // turn order, statuses, elimination, surviv
 var table  = FR.host({ ... });      // the reducer that refuses illegal intents for you
 FR.standings.byScore(totals)        // the payload Table.endGame wants
 FR.timers()                         // named timers, cancelAll() when the game ends
+FR.clock(timers)                    // the table's one clock: countdowns anchored
+                                    // to the host, so rebuilt phones agree (re-send
+                                    // state on a timer while one runs)
 ```
 
 Full reference with a complete example game: **[FR-GAME.md](FR-GAME.md)**.
@@ -728,21 +776,23 @@ A checklist. Violating these produces code that runs but misbehaves.
 10. **Reference assets via HTML/CSS, not runtime `fetch()`** (studio portability).
 11. **`Table` is the whole platform.** No filesystem, sockets, or device APIs beyond standard
     in-webview web APIs. Don't include your own copy of the `Table` SDK — it's injected.
-12. **Randomness lives on the host.** Shuffles/dice use `Math.random()` on the host only.
+12. **Randomness lives on the host.** Shuffles/dice use `FR.rng(Table.seed)` on the host only — never `Math.random()`.
 13. **Keep the bundle small** (it transfers over the air to every joiner).
 14. **Bump `version` on any change; keep `id` stable.** Same `id@version` must be identical
     on every device.
 
 ---
 
-## 10. Test & ship
+## 11. Test & ship
 
-- **Test:** open the [Playtest Studio](playtest/) (`cd playtest && python3 -m
-  http.server`, then browse to it). Load your game **folder**, add players, run them across
-  iPhone device sizes, watch the **message log** to debug your wire protocol, exercise
-  **Drop/Reconnect**, and drive an end-to-end game including `endGame` → Play Again. Edit
-  files and hit **Reload → Start** to hot-reload.
+- **Test:** `node check.mjs` is the gate — run it before every commit (CI runs exactly
+  it); `node check.mjs --quick` while iterating. Setup once: `npm ci && npx
+  playwright-core install webkit`. It covers validation, headless playtests under
+  bots (hostile input, pauses, warm/cold reconnects, real button presses), shared
+  screens, every phone screen in real WebKit, bundle tests, and mutants. For
+  interactive debugging, open the [Playtest Studio](playtest/) (serve the dev-kit
+  root, then browse to `playtest/`) and exercise **Drop/Reconnect** there.
 - **Package:** click **Export .zip** in the studio (or zip the folder). That's your bundle.
-- **Ship:** in the Family Room app, **Add Game from Zip** installs it into the library; it
-  then appears in "Choose a game" and can be hosted. Joiners who lack it pull it from the
+- **Ship:** in the Family Room app, **Add** (beside "Choose a game" on the home screen)
+  imports the zip into the library; it then appears in "Choose a game" and can be hosted. Joiners who lack it pull it from the
   host over the peer-to-peer link automatically.

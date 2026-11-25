@@ -6,7 +6,64 @@
  */
 const TYPES = ['croqueta', 'skewer', 'gambas', 'tortilla1', 'tortilla2', 'tortilla3', 'aioli', 'churro'];
 
-export default function tapasInvariants({ table, players, done, result }) {
+/* Every plate's score, worked out here from the dishes on it — croqueta pairs 5, skewer
+ * sets of three 10, gambas 1/3/6/10/15/21/28, a tortilla tripled by an earlier aioli —
+ * and at the end the churro majority (+6 split among the most, −6 among the fewest).
+ * A scoring rule quietly changed conserves every card; only recomputing it shows. */
+function plateScore(cards) {
+  const count = (k) => cards.filter(c => c === k).length;
+  let s = Math.floor(count('croqueta') / 2) * 5 + Math.floor(count('skewer') / 3) * 10;
+  s += [0, 1, 3, 6, 10, 15, 21, 28][Math.min(count('gambas'), 7)];
+  let aiolis = 0;
+  for (const c of cards) {
+    if (c === 'aioli') { aiolis++; continue; }
+    const v = c === 'tortilla1' ? 1 : c === 'tortilla2' ? 2 : c === 'tortilla3' ? 3 : 0;
+    if (v) { s += aiolis > 0 ? v * 3 : v; if (aiolis > 0) aiolis--; }
+  }
+  return s;
+}
+function scoring({ table }) {
+  const m = table._tapasScored || (table._tapasScored = { i: 0, round: null, sum: null });
+  const all = table.wire('broadcast');
+  for (; m.i < all.length; m.i++) {
+    const s = all[m.i].payload && all[m.i].payload.s;
+    if (!s || !s.tableau || !s.lastRound) continue;
+    if (s.phase !== 'roundEnd' && s.phase !== 'gameOver') continue;
+    if (m.round === s.round) continue;
+    m.round = s.round;
+    if (!m.sum) m.sum = Object.fromEntries(s.order.map(id => [id, 0]));
+    for (const id of s.order) {
+      const want = plateScore(s.tableau[id] || []);
+      if (s.lastRound[id] !== want) {
+        return `round ${s.round}: ${id}'s plate [${(s.tableau[id] || []).join(' ')}] is worth ${want}, but scored ${s.lastRound[id]}`;
+      }
+      m.sum[id] += want;
+    }
+    const final = { ...m.sum };
+    if (s.phase === 'gameOver') {
+      const n = s.order.map(id => s.churros[id] || 0);
+      const most = Math.max(...n), least = Math.min(...n);
+      if (most > 0 && most !== least) {
+        const top = s.order.filter(id => (s.churros[id] || 0) === most);
+        const low = s.order.filter(id => (s.churros[id] || 0) === least);
+        top.forEach(id => { final[id] += Math.floor(6 / top.length); });
+        low.forEach(id => { final[id] -= Math.floor(6 / low.length); });
+      }
+    }
+    for (const id of s.order) {
+      if (s.totals[id] !== final[id]) {
+        return `after round ${s.round} ${id} has ${s.totals[id]}, but their plates${s.phase === 'gameOver' ? ' and churros' : ''} add up to ${final[id]}`;
+      }
+    }
+  }
+  return null;
+}
+
+export default function tapasInvariants(args) {
+  return scoring(args) || tapasInvariantsBase(args);
+}
+
+function tapasInvariantsBase({ table, players, done, result }) {
   const seen = table._tapas || (table._tapas = {});
   for (const id of players) {
     const s = table.view(id)?.s;

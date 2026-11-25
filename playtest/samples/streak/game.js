@@ -20,6 +20,9 @@ function createGame(Table, root) {
   // which is what makes a fuzz failure something you can look at rather than a rumour.
   const rng = FR.rng(Table.seed);
   const shuffle = a => rng.shuffle(a);
+  // Named timers, so a finished game (or a new round) can kill them all at once —
+  // raw setTimeouts here once outlived the round that armed them.
+  const timer = FR.timers();
 
   // ---- setup (host only) ----
   function initGame(players) {
@@ -31,12 +34,11 @@ function createGame(Table, root) {
     startRound();
   }
   function startRound() {
-    G.finalized = false;                 // per-round guard; see finalizeRound()
     G.deck = shuffle(buildDeck()); G.discard = [];
     G.order.forEach(id => { G.lines[id] = { nums:[], mods:[], hasSave:false }; G.status[id]='active'; });
     G.pending = null; G.work = []; G.roundOver = false; G.winner = null;
-    clearTimeout(G.workTimer);            // no stale forced flips across rounds
-    clearTimeout(G.endTimer); G.ending = false;
+    timer.cancel('work'); timer.cancel('endRound');   // no stale forced flips across rounds
+    G.ending = false;
     G.turn = nextActiveFrom(G.dealer % G.order.length, true);
     G.phase = 'playing';
     G.banner = 'Round ' + G.round + ' — ' + G.names[curId()] + ' starts';
@@ -114,11 +116,10 @@ function createGame(Table, root) {
   };
   function buildTable() {
     return FR.host({
-      state: G, seats: seatsView, timers: FR.timers(), hostId: MY,
+      state: G, seats: seatsView, timers: timer, hostId: MY,
       phase: () => G.phase,
       publish: publish,
       intents: {
-        hello: { hidden: true, run: () => {} },
         next:  { host: true, phase: 'roundEnd', run: () => {
                    G.round++; G.dealer=(G.dealer+1)%G.order.length; G.lastRound={}; startRound();
                  } },
@@ -159,8 +160,7 @@ function createGame(Table, root) {
     if (G.work.length) {
       // More forced flips queued: show this one, land the next after a beat.
       publish();
-      clearTimeout(G.workTimer);
-      G.workTimer = setTimeout(resolveWork, FORCED_FLIP_DELAY);
+      timer.after('work', FORCED_FLIP_DELAY, resolveWork);
       return;
     }
     endTurnOrRound();
@@ -182,18 +182,13 @@ function createGame(Table, root) {
     if (G.ending) return;                       // already counting down
     G.ending = true;
     G.work = [];
-    clearTimeout(G.workTimer);
+    timer.cancel('work');
     publish();                                  // the triggering banner, held
-    clearTimeout(G.endTimer);
-    G.endTimer = setTimeout(finalizeRound, ROUND_END_DELAY);
+    timer.after('endRound', ROUND_END_DELAY, finalizeRound);
   }
 
   function finalizeRound() {
-    // Guarded because a leave arriving after the round already resolved used to re-enter
-    // here, re-add every line to the totals and fire a SECOND endGame with a different
-    // winner. `ending` is cleared by this function, so it can't be the guard.
-    if (G.phase === 'gameOver' || G.finalized) return;
-    G.finalized = true;
+    // Reached only from the one 'endRound' timer, which endRound() arms once (G.ending).
     G.ending = false;
     G.pending = null; G.work = []; G.lastRound = {};
     G.order.forEach(id => {
@@ -205,6 +200,7 @@ function createGame(Table, root) {
     const leader = ranked[0];
     if (G.totals[leader] >= 200) {
       G.phase='gameOver'; G.winner=leader; G.banner = '🏆 '+G.names[leader]+' wins with '+G.totals[leader]+'!';
+      timer.cancelAll();   // nothing may tick under the results screen
       // Hand the terminal result to the shell for a native results screen + "Play Again".
       Table.endGame({
         winnerId: leader,
@@ -249,26 +245,8 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); publish(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G || G.phase === 'gameOver') return;   // results are up; don't re-score anyone
-      // If they were mid-choice, drop the pending action. It is the ONLY legal move in
-      // the game while it stands, and it belongs to them — leaving it behind froze the
-      // table permanently with no timer to recover. Losing the card is the right trade.
-      if (G.pending && G.pending.chooserId === id) {
-        G.pending = null;
-        G.banner = G.names[id] + ' left — their card is discarded';
-        resolveWork();
-        return;
-      }
-      if (G.status[id] === 'active') {
-        G.status[id]='stayed';
-        G.banner = G.names[id]+' left — auto-banked';
-        if (curId()===id) endTurnOrRound();
-      }
-      publish();
-    });
   } else {
-    Table.onStart(() => { view = { phase:'connecting' }; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view = { phase:'connecting' }; render(); });
     Table.onMessage((_from, msg) => { if (msg.t === 'state') { view = msg.s; render(); } });
   }
   function publish() {
@@ -327,11 +305,14 @@ function createGame(Table, root) {
                     : v.banner && v.banner.indexOf('🧊')===0 ? ' frozen'
                     : v.banner && v.banner.indexOf('🔥')===0 ? ' streak' : '';
 
+    // Every player on screen at once, at any table size: nobody scrolls to find out
+    // who is about to bust. Five or six get tighter rows; seven or eight get one line each.
+    const density = v.players.length >= 7 ? ' dense xdense' : v.players.length >= 5 ? ' dense' : '';
     let h = `<div class="hdr"><span class="brand">STREAK</span>
       <span class="roundlbl">Round ${v.round}</span>
       <span class="deckcount ${v.deckLeft <= 12 ? 'low' : ''}" title="cards left before the deck reshuffles">🎴 ${v.deckLeft}</span>
       <span class="goal">first to 200</span></div>
-      <div class="banner${bannerCls}">${esc(v.banner||'')}</div><div class="board">`;
+      <div class="banner${bannerCls}">${esc(v.banner||'')}</div><div class="board${density}">`;
 
     v.players.forEach(p => {
       const mine = p.id===MY;
@@ -350,11 +331,14 @@ function createGame(Table, root) {
       else if (p.status === 'stayed' && seenStatus[p.id] !== 'stayed') feel('gain', mine);
       if (mine && p.hasSave && !seenSave[p.id]) feel('heal', true);
       seenSave[p.id] = p.hasSave;
+      // The one-line version's status: an icon, not a sentence.
+      const short = p.status==='busted' ? '💥' : p.status==='frozen' ? '🧊' : p.status==='stayed' ? '🏦'
+                  : p.roundPts ? '+'+p.roundPts : '';
       h += `<div class="prow ${p.status} ${p.id===v.turn?'active-turn':''} ${mine?'me-row':''}${justBusted?' shake':''}${justFrozen?' freezeflash':''}">
         <div class="top"><span class="pemoji">${p.emoji}</span><span class="who">${esc(p.name)}</span>
           ${mine?'<span class="you">YOU</span>':''}
           <span class="meta">${state} · ${p.unique}/7 · <b>${p.total}</b></span></div>
-        <div class="chips">${chipsHTML(p)}</div></div>`;
+        <div class="chips">${chipsHTML(p)}</div><span class="tot">${short} <b>${p.total}</b></span></div>`;
     });
     h += '</div><div class="ctrl">';
 

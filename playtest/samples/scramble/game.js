@@ -123,31 +123,11 @@ function createGame(Table, root) {
       grid: [], possible: 0, themeOnGrid: 0, secondsLeft: READY_SECONDS,
       rows: null, points: null, revealed: 0, totalRows: 0
     };
-    players.forEach(p => seatPlayer(p));
-    rollGrid();
-  }
-
-  /* G.seats is the live roster, and FR.host holds the SAME ARRAY — it is what
-   * refuses intents from an id that is not at the table. So it is mutated in
-   * place, never reassigned: a filtered copy would leave the host checking a
-   * roster that stopped changing the moment somebody walked out. */
-  function seatPlayer(p) {
-    if (G.seats.indexOf(p.id) === -1) G.seats.push(p.id);
-    G.names[p.id] = p.name;
-    G.emojis[p.id] = p.emoji;
-    if (G.totals[p.id] == null) G.totals[p.id] = 0;
-    // Somebody reconnecting keeps the words they already found this round.
-    G.counts[p.id] = (found[p.id] || []).length;
-    if (G.done[p.id] == null) G.done[p.id] = false;
-  }
-
-  function unseatPlayer(id) {
-    const at = G.seats.indexOf(id);
-    if (at !== -1) G.seats.splice(at, 1);
-    delete G.names[id];
-    delete G.emojis[id];
-    delete G.done[id];
-    delete G.counts[id];
+    // G.seats is the roster FR.host refuses strangers against. It is set once: the
+    // shell keeps everyone seated for the whole game (a dropped phone pauses the
+    // table; it never leaves it).
+    players.forEach(p => { G.names[p.id] = p.name; G.emojis[p.id] = p.emoji; G.totals[p.id] = 0; });
+    rollGrid();                       // and every seat's word count and "done" with it
   }
 
   /**
@@ -302,7 +282,6 @@ function createGame(Table, root) {
     if (G.revealed >= pending.length) { timer.cancel('reveal'); return false; }
     const row = pending[G.revealed++];
     for (const id of row.by) {
-      if (G.points[id] == null) continue;           // somebody who has since left
       G.points[id] += row.value;
       G.totals[id] = (G.totals[id] || 0) + row.value;
     }
@@ -370,7 +349,6 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: () => {} },
         /* A traced word: playable, never enumerable. The bundle's bot.mjs supplies
          * it, using the same rules.js the host validates with. */
         word: {
@@ -459,23 +437,8 @@ function createGame(Table, root) {
       syncAll();
     });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerJoin(p => {
-      if (!G) return;
-      seatPlayer(p);
-      sendPrivate(p.id, null);
-      syncAll();
-    });
-    Table.onPlayerLeave(id => {
-      if (!G) return;
-      // Their words stay in the round — a word they found still shares yours,
-      // which is the only answer that doesn't rewrite everyone else's score.
-      unseatPlayer(id);
-      if (!G.seats.length) return finish();
-      if (G.phase === 'round' && everyoneDone()) endRound();
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view = null; render(); Table.send({ t: 'hello' }); });
+    Table.onStart(() => { view = null; render(); });
     Table.onMessage((_from, msg) => {
       if (!msg) return;
       if (msg.t === 'state') { view = msg.s; render(); }
@@ -711,6 +674,27 @@ function createGame(Table, root) {
     R.PALETTE_KEYS.forEach((name) => el.style.setProperty('--' + name.toLowerCase(), p[name]));
   }
 
+  /**
+   * Nothing on a phone scrolls. The list keeps the newest words that fit its space
+   * and folds the rest into one line at the bottom, so a good round never pushes a
+   * word you just found somewhere you have to go looking. Measured in the real
+   * layout; a page with no layout (the headless harness) leaves the list alone.
+   */
+  function fitChips(box) {
+    if (!box || !box.children || !box.children.length || !box.clientHeight) return;
+    if (box.scrollHeight <= box.clientHeight + 1) return;
+    const kids = Array.prototype.slice.call(box.children);
+    const more = document.createElement('div');
+    more.className = 'chip more';
+    box.appendChild(more);
+    let hidden = 0;
+    while (kids.length > 1 && box.scrollHeight > box.clientHeight + 1) {
+      box.removeChild(kids.pop());
+      hidden++;
+      more.textContent = '+ ' + hidden + (hidden === 1 ? ' earlier word' : ' earlier words');
+    }
+  }
+
   function render() {
     paint(view && view.theme);
     if (!view) {
@@ -918,6 +902,7 @@ function createGame(Table, root) {
                '<span>' + esc(w.toUpperCase()) + '</span>' +
                '<span class="tags">' + themeTag + tag + '</span></div>';
       }).join('');
+      fitChips(root.querySelector('#chips'));
     }
 
     const tallyLine = root.querySelector('#tally');

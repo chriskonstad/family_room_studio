@@ -39,9 +39,14 @@
    * Living only in the native shell was itself a drift: a game that leaned on timers
    * freezing behaved differently in the studio, where they kept running. Now both get it.
    *
+   * It also keeps GAME TIME: wall time with every paused stretch taken out, frozen while
+   * paused. `w.__frGameNow()` reads it — FR.clock does on a phone, so a countdown that
+   * extrapolates from the host's last reading stops when the table stops instead of
+   * running out during the pause (every timed game showed 0 the moment play resumed).
+   *
    * @param {Object} w the window to patch.
    * @param {function} onError called with a message if a timer callback throws.
-   * @returns {{setPaused:function, isPaused:function}}
+   * @returns {{setPaused:function, isPaused:function, now:function}}
    */
   function installTimerShim(w, onError) {
     var nSetTimeout = w.setTimeout.bind(w);
@@ -49,8 +54,19 @@
     var nSetInterval = w.setInterval.bind(w);
     var nClearInterval = w.clearInterval.bind(w);
     var timers = new Map();
+    // Every id this shim ever handed out. Clearing one that is already gone must be
+    // a no-op — it must NEVER fall through to the native clear below. Shim ids and
+    // native ids are independent counters sharing one small-number namespace, so a
+    // stale shim id can numerically equal a LIVE native timer: forwarding it murders
+    // an unrelated timer. That is exactly what killed FR.clock's 250ms tick in
+    // LOOK AWAY (a stale bar id of 6 cleared native job 6) while one-shots carried
+    // on, freezing every countdown mid-game with the game otherwise healthy.
+    var issued = {};
     var nextTimerId = 1, paused = false;
     var onPauseChange = null;
+    var pausedTotal = 0, pausedSince = 0;
+    function gameNow() { return (paused ? pausedSince : Date.now()) - pausedTotal; }
+    w.__frGameNow = gameNow;
 
     function armTimeout(rec) {
       rec.native = nSetTimeout(function () { timers.delete(rec.id); rec.cb(); },
@@ -59,12 +75,15 @@
     }
     function armInterval(rec) {
       // Honour the remaining slice of the current period, then settle into a plain interval.
+      // The plain interval is armed BEFORE the callback runs, as a native interval is
+      // already armed when its callback runs: armed after, a callback that threw on this
+      // first fire (after creation, and again after every resume) left the interval
+      // dead for good, where a native one keeps firing.
       rec.native = nSetTimeout(function () {
         rec.due = Date.now() + rec.delay;
-        rec.cb();
-        if (!timers.has(rec.id)) return;
         rec.native = nSetInterval(function () { rec.due = Date.now() + rec.delay; rec.cb(); }, rec.delay);
         rec.repeating = true;
+        rec.cb();
       }, Math.max(0, rec.due - Date.now()));
       rec.repeating = false;
     }
@@ -78,6 +97,7 @@
       if (typeof fn !== 'function') return nSetTimeout(fn, delay);
       var args = Array.prototype.slice.call(arguments, 2);
       var id = nextTimerId++, d = Math.max(0, delay || 0);
+      issued[id] = 1;
       var rec = { id: id, cb: function () { fn.apply(null, args); }, delay: d,
                   due: Date.now() + d, repeat: false, native: null };
       timers.set(id, rec);
@@ -88,6 +108,7 @@
       if (typeof fn !== 'function') return nSetInterval(fn, delay);
       var args = Array.prototype.slice.call(arguments, 2);
       var id = nextTimerId++, d = Math.max(1, delay || 1);
+      issued[id] = 1;
       var rec = { id: id, cb: function () { fn.apply(null, args); }, delay: d,
                   due: Date.now() + d, repeat: true, native: null };
       timers.set(id, rec);
@@ -96,19 +117,24 @@
     };
     w.clearTimeout = function (id) {
       var rec = timers.get(id);
-      if (rec) { disarm(rec); timers.delete(id); } else { nClearTimeout(id); }
+      if (rec) { disarm(rec); timers.delete(id); }
+      else if (!issued[id]) { nClearTimeout(id); }   // a pre-shim native id, not ours
     };
     w.clearInterval = function (id) {
       var rec = timers.get(id);
-      if (rec) { disarm(rec); timers.delete(id); } else { nClearInterval(id); }
+      if (rec) { disarm(rec); timers.delete(id); }
+      else if (!issued[id]) { nClearInterval(id); }  // a pre-shim native id, not ours
     };
 
     return {
       isPaused: function () { return paused; },
+      /** Game time in ms: wall time minus every paused stretch, frozen while paused. */
+      now: gameNow,
       /** Called by the harness when the session pauses/resumes. */
       setPaused: function (next) {
         next = !!next;
         if (next === paused) return;
+        if (next) pausedSince = Date.now(); else pausedTotal += Date.now() - pausedSince;
         paused = next;
         if (paused) {
           timers.forEach(function (rec) {
@@ -139,6 +165,8 @@
    *   isHost    boolean
    *   saved     the persisted state to hand back from loadState() (already parsed)
    *   clock     the object returned by installTimerShim, or omitted for no pausing
+   *   screens   HOST ONLY: how many shared screens (an Apple TV, an iPad) are showing
+   *             the table right now. Omitted on a client, and by a shell too old to know.
    * @param {Object} io the transport. Every method is optional; a missing one is a no-op,
    *   which is what lets the conformance runner instantiate a Table with nothing behind it.
    *   send(payload) broadcast(payload) sendTo(id,payload) endGame(result)
@@ -162,6 +190,12 @@
     }
 
     var roster = cfg.players || [];
+    /* How many shared screens are attached — known only to the HOST, because only
+     * the host's shell has the connections. `null` means "not known here": every
+     * client, and a host on a shell too old to say. A game whose phones should
+     * look different with a TV in the room reads this on the host and publishes
+     * it in its own state, the same way it publishes everything else. */
+    var screens = (cfg.isHost && typeof cfg.screens === 'number') ? cfg.screens : null;
     var rawTeams = cfg.teams || [];
     var isHost = !!cfg.isHost;
 
@@ -209,6 +243,15 @@
       onResume: function (cb) { handlers.resume = cb; },
       get isPaused() { return clock ? clock.isPaused() : !!w.__tablePaused; },
 
+      /// HOST ONLY: how many shared screens are showing the table right now — a
+      /// number on the host, `null` on every client and on a shell too old to know.
+      /// Treat `null` as "assume no screen": a phone that shows the whole table is
+      /// redundant beside a TV, while a phone that assumes one shows nothing at all.
+      get screens() { return screens; },
+      /// HOST ONLY: a screen attached or went away (cb receives the new count). A
+      /// TV switched on mid-game is normal; republish so the phones can adapt.
+      onScreensChange: function (cb) { handlers.screens = cb; },
+
       /// Room feedback. Shell-owned because iOS WebKit has no vibrate API and gates web
       /// audio behind a per-device user gesture.
       /// haptic: light|medium|heavy|soft|rigid|selection|success|warning|error|thud|buzz|boom
@@ -224,6 +267,16 @@
 
     /** The harness fires game events in through this. */
     w.__tableFire = function (event, a, b) {
+      // The screen count is state the SDK owns, so it is updated before the game
+      // hears about it — and only a change is news. A shell fires it on every page
+      // load to sync a fresh page, which must not look like a TV coming and going.
+      if (event === 'screens') {
+        if (!isHost) return;
+        var n = Math.max(0, Number(a) || 0);
+        if (n === screens) return;
+        screens = n;
+        a = n;
+      }
       var cb = handlers[event];
       if (cb) { try { cb(a, b); } catch (e) { report(e); } }
     };

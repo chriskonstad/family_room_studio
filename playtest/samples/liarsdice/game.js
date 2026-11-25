@@ -169,7 +169,6 @@ function createGame(Table, root) {
     return FR.host({
       state:G, seats:seatsView, hostId:MY, phase:() => G.phase, publish:syncAll,
       intents:{
-        hello:{ hidden:true, run:() => {} },
         bid:{ phase:'bidding', turn:true,
           options:bidOptions,
           when:ctx => validBid(ctx.msg.qty, ctx.msg.face),
@@ -213,18 +212,8 @@ function createGame(Table, root) {
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G || (G.diceCount[id] || 0) <= 0) return;
-      G.diceCount[id] = 0;
-      G.dice[id] = [];
-      if (G.eliminated.indexOf(id) === -1) G.eliminated.push(id);
-      if (G.lastBidder === id) G.lastBid = null;
-      if (G.current === id) G.current = nextAliveAfter(id, false);
-      if (!maybeFinish() && G.phase !== 'revealed') startRound(G.current || aliveIds()[0]);
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view = null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view = null; render(); });
     Table.onMessage((_from, msg) => {
       if (msg.t === 'state') { view = msg.s; render(); }
     });
@@ -232,6 +221,11 @@ function createGame(Table, root) {
 
   let pickQty = 1;
   let pickFace = 2;
+  /* The bid the stepper was last set against. When it changes — somebody raised, or a
+   * new round opened — the stepper goes back to the smallest legal bid. Keeping the old
+   * numbers whenever they were still legal carried last round's 4 x 4 into the next
+   * round's OPENING bid, one thumb-tap from opening far higher than you meant to. */
+  let pickBase = null;
 
   function render() {
     if (!view) {
@@ -246,7 +240,7 @@ function createGame(Table, root) {
       '</div>' +
       '<div class="banner">' + esc(view.banner) + '</div>' +
       renderBidBox() +
-      '<div class="table">' + view.order.map(renderSeat).join('') + '</div>' +
+      '<div class="table' + (view.order.length > 6 ? ' many' : '') + '">' + view.order.map(renderSeat).join('') + '</div>' +
       '<div class="controls">' + renderControls() + '</div>';
     wireControls();
   }
@@ -272,6 +266,7 @@ function createGame(Table, root) {
     if (id === MY) classes.push('me');
     if (id === view.current && view.phase === 'bidding') classes.push('turn');
     if (out) classes.push('out');
+    if (view.order.length > 6 && view.phase === 'bidding' && id !== MY) classes.push('compact');
     return '<div class="' + classes.join(' ') + '">' +
       '<div class="who"><span>' + esc(view.emojis[id] || '') + '</span><span class="name">' + esc(view.names[id] || id) +
       '</span><span class="dice-left">' + (view.diceCount[id] || 0) + ' dice</span></div>' +
@@ -324,7 +319,9 @@ function createGame(Table, root) {
     pickQty = Math.max(1, Math.min(view ? view.totalDice : START_DICE, pickQty));
     pickFace = Math.max(1, Math.min(6, pickFace));
     const legal = view && view.legalBids ? view.legalBids : [];
-    if (legal.length && !canPickBid()) {
+    const base = view ? view.round + ':' + (view.lastBid ? view.lastBid.qty + 'x' + view.lastBid.face : 'open') : null;
+    if (legal.length && (!canPickBid() || base !== pickBase)) {
+      pickBase = base;
       pickQty = legal[0].qty;
       pickFace = legal[0].face;
     }

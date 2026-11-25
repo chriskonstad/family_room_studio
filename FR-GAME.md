@@ -40,6 +40,13 @@ var timers = FR.timers();
 timers.after('boom', 3000, fn); timers.every('tick', 1000, fn);
 timers.cancel('boom'); timers.cancelAll(); timers.pending
 
+// One game-time clock every phone counts down from (NOT Date.now()).
+var clock = FR.clock(timers); clock.start();          // host
+clock.now(); clock.deadlineIn(11);                    // put now in state; re-send it
+                                                      // on a timer while a countdown runs
+var phoneClock = FR.clock();                          // phone
+phoneClock.see(state); phoneClock.left(deadline);     // seconds left
+
 // The host-authoritative reducer.
 var table = FR.host({ state, seats, publish, phase, timers, intents });
 table.handle(from, msg); table.hold(ms, fn); table.sequence(ms, steps, done);
@@ -57,9 +64,11 @@ shown again, and fuzzing it is pointless because a failure can't be reproduced. 
 store the seed in state, and the entire game becomes a function of `(seed, intents)`.
 
 ```js
-var G = { seed: Date.now() >>> 0 };     // host picks it once
-var r  = FR.rng(G.seed);                // everything random comes from here
+var r = FR.rng(Table.seed);             // everything random comes from here
 ```
+
+The seed comes from the table, never from the wall clock: a game that seeds
+itself with `Date.now()` is reproducible in principle and never in practice.
 
 `r.shuffle()` returns a **new** array — shuffling a caller's deck in place is how you
 accidentally shuffle the discard pile too.
@@ -103,16 +112,9 @@ if (seats.settled) finish();      // exactly one player left
 if (!seats.next()) endRound();
 ```
 
-`eliminate()` is idempotent, so calling it from both a game rule and your
-`Table.onPlayerLeave` handler is safe — and you should do exactly that:
-
-```js
-Table.onPlayerLeave(function (id) {
-  seats.eliminate(id);
-  if (seats.settled) finish();
-  publish();
-});
-```
+`eliminate()` is idempotent. It is for your game's own rules — a player busting
+out — and never for connections: a phone that drops pauses the table and is caught
+up when it returns, so no player ever vanishes from a game (no `onPlayerLeave`).
 
 ## `FR.standings` — one scoreboard, sorted one way
 
@@ -142,6 +144,60 @@ timers.cancelAll();
 Reusing a name replaces the old timer rather than running both. When a game ends, call
 `cancelAll()` (or `table.stop()`) — a finished game that keeps ticking under the results
 screen is a bug that has shipped here before.
+
+## `FR.clock` — countdowns that survive a rebuild
+
+Anything a player counts down — an order expiring, a pick window, a turn timer — must
+be measured against the HOST's clock, never against when a message happened to arrive
+on one phone. The arrival-anchored version (`deadline = Date.now() + limit`) is wrong
+in exactly the situation the shell creates on purpose: a rebuilt phone receives the
+order late and restarts it at the full limit while the table is seconds from expiry.
+MELTDOWN shipped that; LOOKAWAY and FISHBOWL had their own versions.
+
+```js
+// host
+var clock = FR.clock(timers); clock.start();
+state = { ..., now: clock.now() };
+var due = clock.deadlineIn(11);              // send `due` with the order
+// phone
+var clock = FR.clock();
+onState: clock.see(state);
+clock.left(due);                             // seconds left — same on every phone
+```
+
+A phone counts on between states on GAME time — the shell's timer shim keeps it, and
+it stops while the table is paused — so a countdown holds still through a pause, as
+the host's does, instead of reading 0 the moment play resumes.
+
+**While a countdown runs, the host re-sends its state on a timer.** `see(state)`
+takes the state's `now` as the host's time *at the moment the phone sees it*, and the
+phone counts on from there. A phone rebuilt from the history replays every old state
+in one burst, so the reading it keeps is the last one in its history — sent whenever
+the host last had something to say, which can be seconds before the drop. Counting on
+from that, it shows seconds the table no longer has. Republishing on a timer bounds
+how old that last reading can be, and the next tick corrects it:
+
+```js
+// host: when the countdown starts — cancel it when the countdown ends
+timers.every('clock', 250, publish);
+// phone: a tick moves nothing but `now`, so don't redraw for one
+function sameButNow(a, b) {
+  return JSON.stringify(Object.assign({}, a, { now: 0 })) ===
+         JSON.stringify(Object.assign({}, b, { now: 0 }));
+}
+onState: var tick = view && sameButNow(view, state);
+         view = state; clock.see(state); if (!tick) render();
+```
+
+CAPTAIN and LOOKAWAY re-send every 250ms while an order or pick window is open,
+MELTDOWN every 500ms while the reactor runs. Their phones skip the redraw when only
+`now` changed: the bar reads the clock by itself, and a redraw would swap the buttons
+out from under a thumb.
+
+Name clock fields `now`, `deadline` or `*Ends`: the harness's pause/reconnect
+comparisons treat those as clock readings (they may differ by a tick across a pause)
+and require everything else in the state to match exactly. CAPTAIN, LOOKAWAY,
+MELTDOWN and FISHBOWL run on this; TEMPO and PASSBOMB stream the same idea by hand.
 
 ## `FR.host` — the four checks games kept forgetting
 
@@ -202,8 +258,8 @@ play: {
 | Option | Use it for |
 |---|---|
 | `options(ctx)` | the argument sets this intent accepts right now |
-| `when(ctx)` | any guard `turn`/`host`/`phase` can't express — checked by `handle` **and** `legalMoves`, so they can never disagree |
-| `hidden: true` | keep it out of the move space (`hello`, or free text nothing can enumerate) |
+| `when(ctx)` | any guard `turn`/`host`/`phase` can't express — checked by `handle` **and** `legalMoves` (against each concrete option, so `ctx.msg` is always the message), so they can never disagree. Validate argument values HERE, not inside `run`: a `run` that silently ignores a bad value is an accepted intent that does nothing |
+| `hidden: true` | keep it out of the move space (free text nothing can enumerate — pair it with a `bot.mjs`) |
 
 The UI becomes one view of this list rather than the only place it exists. You don't have to
 restructure your game to get it: SUMMIT kept its own deck and scoring and only moved its
@@ -295,17 +351,26 @@ function endRound() {
 
 function publish() { Table.broadcast({ view: G, deckLeft: deck.left, turn: seats.current }); }
 Table.onMessage(function (from, msg) { table.handle(from, msg); });
-Table.onPlayerLeave(function (id) { seats.eliminate(id); if (seats.settled) endRound(); publish(); });
 ```
 
 ---
 
 ## Testing your game
 
+The gate is one command — run it before every commit, and CI runs exactly it:
+
+```sh
+node check.mjs            # everything: conformance, validation, playtests,
+                          # screens, phone layouts, bundle tests, mutants
+node check.mjs --quick    # while iterating: skips phone layouts and mutants
+```
+
+Setup once: `npm ci && npx playwright-core install webkit`.
+
 `FR` has no DOM and no `Table` dependency, so host logic built on it runs under plain node:
 
 ```sh
-node sdk/fr-game.test.mjs      # the library's own suite: 51 tests incl. a fuzz soak
+node sdk/fr-game.test.mjs      # the library's own suite, incl. a fuzz soak
 ```
 
 The suite's `fakeClock` is worth copying: it makes a 60-second game run in a millisecond, so

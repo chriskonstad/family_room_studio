@@ -1,15 +1,23 @@
-/* HOLD'EM — the board is on the television, your two cards are in your hand.
+/* HOLD'EM — the board on the television if there is one, your two cards in your hand.
  *
- * This is the game the shared screen was waiting for. Poker is already split
- * exactly the way a Family Room table is: the community cards, the pot, the
- * stacks and who has bet what are all PUBLIC and belong in the middle of the
- * room, and the two cards that decide what any of it means are PRIVATE and
- * belong face-down in front of one person.
+ * Poker is already split exactly the way a Family Room table is: the community
+ * cards, the pot, the stacks and who has bet what are all PUBLIC and belong in the
+ * middle of the room, and the two cards that decide what any of it means are
+ * PRIVATE and belong face-down in front of one person.
  *
- * So the TV is the felt — five cards, the pot, every seat with its chips, the
- * button, and whose turn it is — and a phone is just your hand and your chips.
- * `"screen": "required"`, because without the felt there is no table: nobody
- * gathered around a living room watches a shared board on six separate phones.
+ * WITH A TV the screen is the felt — five cards, the pot, every seat with its
+ * chips, the button, and whose turn it is — and a phone is just your hand, your
+ * chips and your buttons.
+ *
+ * WITHOUT ONE every phone is the felt as well: the seats, their stacks and bets,
+ * the button, whose turn it is, and at a showdown everybody's cards and what they
+ * won. `"screen": "optional"`, because a living room without an Apple TV should
+ * still be able to play. Only the host's shell knows whether a screen is attached
+ * (`Table.screens`), so the host publishes it in the state and every phone lays
+ * itself out from that — and a TV switched on or off mid-game re-lays every phone
+ * on the next publish. A shell too old to say counts as "no TV": a phone showing
+ * the whole table beside a TV is redundant, a phone assuming a TV that isn't there
+ * shows nothing at all.
  *
  * WHAT KEEPS THE HOLE CARDS HOLE
  *
@@ -102,7 +110,7 @@ function createGame(Table, root) {
   }
   /** Betting order from the dealer's left — who gets an odd chip in a split. */
   function orderFromDealer() {
-    const d = seats.dealer;
+    const d = G.button;
     const at = Math.max(0, G.order.indexOf(d));
     const out = [];
     for (let k = 1; k <= G.order.length; k++) out.push(G.order[(at + k) % G.order.length]);
@@ -119,9 +127,13 @@ function createGame(Table, root) {
       hand: 0, level: 0, sb: LEVELS[0][0], bb: LEVELS[0][1],
       betToMatch: 0, minRaise: 0, toAct: null,
       phase: 'handEnd', street: 'preflop', banner: '', reveal: null,
-      /* Chips that left the table in somebody's pocket. Without it, a player
-       * walking out looks exactly like the pot arithmetic losing money. */
-      removed: 0, startChips: 0, lastPot: 0
+      startChips: 0, lastPot: 0,
+      /* Who has the button. Kept here rather than read from FR.seats, whose dealer is
+       * an index stepped by one each hand: after a bust that index can land on the
+       * same live player twice, who then deals twice while the two seats after them
+       * pay the blinds twice running. */
+      button: players[0].id,
+      handStart: {}           // stacks as each hand began — who busts first when two go at once
     };
     players.forEach(p => {
       G.names[p.id] = p.name; G.emojis[p.id] = p.emoji;
@@ -145,9 +157,12 @@ function createGame(Table, root) {
     G.sb = LEVELS[G.level][0];
     G.bb = LEVELS[G.level][1];
 
-    // Everyone not busted is live again; the button moves from the second hand on.
-    seats.startRound(G.hand > 1);
+    // Everyone not busted is live again; the button moves to the next player still in
+    // the game from the second hand on.
+    seats.startRound(false);
+    if (G.hand > 1) G.button = stepFrom(G.button, (id) => st(id) !== 'out');
     const live = seats.remaining;
+    G.handStart = Object.assign({}, G.stacks);
 
     G.board = []; G.reveal = null; G.hole = {};
     G.acted = {}; G.lastAction = {};
@@ -159,7 +174,7 @@ function createGame(Table, root) {
      * before the flop, then last after it. Special-casing only who POSTS lets the
      * general "first to act is after the big blind / after the button" rules below
      * produce the right answer for two players without a second code path. */
-    const dealerId = seats.dealer;
+    const dealerId = G.button;
     let sbId, bbId;
     if (live.length === 2) {
       sbId = dealerId;
@@ -234,6 +249,11 @@ function createGame(Table, root) {
     return out.sort((a, b) => a - b);
   }
 
+  function raiseSizeOk(id, rawTo) {
+    const to = Math.round(Number(rawTo));
+    return isFinite(to) && to >= minRaiseTo(id) && to <= maxTo(id) && to > (G.bet[id] || 0);
+  }
+
   function doCheck(id) { G.acted[id] = true; G.lastAction[id] = 'check'; advance(id); }
 
   function doCall(id) {
@@ -284,7 +304,7 @@ function createGame(Table, root) {
 
   function advance(pivot) {
     const live = inHand();
-    if (live.length <= 1) return endHand(live[0] || null);
+    if (live.length <= 1) return endHand(live[0]);
     if (roundDone()) return nextStreet();
     const nxt = stepFrom(pivot || G.toAct, (id) => st(id) === 'active');
     if (!nxt) return nextStreet();
@@ -316,11 +336,11 @@ function createGame(Table, root) {
     const next = STREETS[STREETS.indexOf(G.street) + 1];
     G.toAct = null;
     dealStreet(next);
-    if (inHand().length <= 1) return endHand(inHand()[0] || null);
+    if (inHand().length <= 1) return endHand(inHand()[0]);
     if (canAct().length < 2) return runItOut();
     // A held beat so the room sees the card land before anyone can act on it.
     table.hold(STREET_MS, function () {
-      const first = stepFrom(seats.dealer, (id) => st(id) === 'active');
+      const first = stepFrom(G.button, (id) => st(id) === 'active');
       if (!first) return nextStreet();
       G.phase = 'betting';
       setToAct(first);
@@ -372,7 +392,7 @@ function createGame(Table, root) {
 
   function showdown() {
     const live = inHand();
-    if (live.length <= 1) return endHand(live[0] || null);
+    if (live.length <= 1) return endHand(live[0]);
 
     const scores = {};
     live.forEach(id => { scores[id] = R.evaluate(G.hole[id].concat(G.board)); });
@@ -408,7 +428,6 @@ function createGame(Table, root) {
 
   /** Everyone else folded: the pot is taken without showing a card. */
   function endHand(winnerId) {
-    if (!winnerId) return voidHand();
     const pot = potTotal();
     G.stacks[winnerId] = (G.stacks[winnerId] || 0) + pot;
     settle();
@@ -420,32 +439,14 @@ function createGame(Table, root) {
     table.hold(FOLDED_WIN_MS, endOfHand);
   }
 
-  /**
-   * Nobody is left in the hand at all — every player in it folded or walked out.
-   * The chips have to go somewhere, and the only honest somewhere is back: a
-   * voided hand is the one outcome that keeps the table's chip count exact.
-   */
-  function voidHand() {
-    G.order.forEach(id => {
-      if (st(id) === 'out' && (G.stacks[id] || 0) === 0) {
-        G.removed += G.committed[id] || 0;         // nobody is left to return it to
-      } else {
-        G.stacks[id] = (G.stacks[id] || 0) + (G.committed[id] || 0);
-      }
-    });
-    settle();
-    G.reveal = { hole: {}, hands: {}, won: {}, pots: [], detail: [], uncontested: true };
-    G.banner = 'Hand voided — nobody left to win it';
-    G.phase = 'showdown';
-    table.hold(FOLDED_WIN_MS, endOfHand);
-  }
-
   function endOfHand() {
     // Busting out is permanent, and the order of it is the finishing order. The
     // shorter stack busts first when two go down together, which is the rule a
     // real table uses and the only way a tie in elimination ranks consistently.
+    // Judged on the stacks the hand STARTED with: this used to sort on `committed`,
+    // which settle() has already zeroed by now, so every tie went by seat order.
     const busted = G.order.filter(id => st(id) !== 'out' && (G.stacks[id] || 0) <= 0);
-    busted.sort((a, b) => (G.committed[a] || 0) - (G.committed[b] || 0));
+    busted.sort((a, b) => (G.handStart[a] || 0) - (G.handStart[b] || 0));
     busted.forEach(id => {
       G.lastAction[id] = 'out';
       seats.eliminate(id);
@@ -466,20 +467,6 @@ function createGame(Table, root) {
   }
 
   function finish() {
-    /* A hand can still be live when the game ends — somebody walks out of a
-     * heads-up table and there is nothing to play for, with chips sitting in the
-     * middle. They have to go somewhere: to the one player left, or out of the
-     * game with the last person if there is nobody. Leaving them in the pot made
-     * the table's chips quietly stop adding up at the final whistle, which the
-     * chip-conservation invariant caught on a two-player seed with a departure.
-     * Guarded here rather than at the one call site that hit it, so every route
-     * into the end of the game is safe. */
-    if (potTotal() > 0) {
-      const survivor = seats.remaining[0] || null;
-      if (survivor) G.stacks[survivor] = (G.stacks[survivor] || 0) + potTotal();
-      else G.removed += potTotal();
-      settle();
-    }
     G.phase = 'gameOver';
     timers.cancelAll();
     if (table) table.stop();
@@ -520,11 +507,17 @@ function createGame(Table, root) {
        * sitting in front of people without counting the same chip twice. */
       collected: potTotal() - sum(bets),
       betToMatch: G.betToMatch, minRaise: G.minRaise,
-      toAct: G.toAct, dealer: seats.dealer, blinds: G.blindIds || null,
+      toAct: G.toAct, dealer: G.button, blinds: G.blindIds || null,
       lastAction: Object.assign({}, G.lastAction),
       banner: G.banner, reveal: G.reveal,
-      startChips: G.startChips, removed: G.removed
+      startChips: G.startChips,
+      screen: screensNow()
     };
+  }
+
+  /** Shared screens attached right now, as only the host's shell knows. */
+  function screensNow() {
+    return typeof Table.screens === 'number' ? Table.screens : 0;
   }
 
   function publish() {
@@ -542,30 +535,11 @@ function createGame(Table, root) {
       publish();
     });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G || G.phase === 'gameOver' || st(id) === 'out') return;
-      const wasToAct = G.toAct === id;
-      /* Their chips leave with them; whatever they already pushed in stays in the
-       * pot for somebody else to win. Tracking what walked out is what lets the
-       * fuzzer still insist the table's chips add up. */
-      G.removed += G.stacks[id] || 0;
-      G.stacks[id] = 0;
-      seats.setStatus(id, 'folded');
-      seats.eliminate(id);
-      G.banner = G.names[id] + ' left the table';
-      if (seats.remaining.length <= 1) { finish(); publish(); return; }
-      /* Only touch the action when the table is actually live. A departure that
-       * arrived mid-freeze used to re-enter the street machinery underneath an
-       * in-flight run-out, which dealt a SIXTH community card and left a player
-       * marked to act while every intent was being refused for being busy. Both
-       * showed up on the same hostile-plus-departure seeds; whatever hold or
-       * sequence is running owns the action and will hand it back when it ends. */
-      if (G.phase === 'betting' && !table.busy) advance(id);
-      else if (wasToAct) G.toAct = null;
-      publish();
-    });
+    // A TV switched on or off mid-game: every phone re-lays itself on the next state.
+    // Publishing is safe at any moment, held frame or not — it changes nothing.
+    if (Table.onScreensChange) Table.onScreensChange(() => { if (G) publish(); });
   } else {
-    Table.onStart(() => { view = null; render(); Table.send({ t: 'hello' }); });
+    Table.onStart(() => { view = null; render(); });
     Table.onMessage((_from, msg) => {
       if (!msg) return;
       if (msg.t === 'state') { view = msg.s; render(); }
@@ -592,20 +566,17 @@ function createGame(Table, root) {
         call:  { phase: 'betting', turn: true,
                  when: (ctx) => canCall(ctx.from),
                  run: (ctx) => doCall(ctx.from) },
+        // The size is part of the guard. A raise outside the legal window used to be
+        // ACCEPTED and then quietly ignored inside doRaise — the host took the intent,
+        // nothing happened, and no check could tell a button that does nothing from one
+        // that works. Refused, it is visible: to the fuzzer, and to FR.host's log.
         raise: { phase: 'betting', turn: true,
-                 when: (ctx) => canRaise(ctx.from),
+                 when: (ctx) => canRaise(ctx.from) && raiseSizeOk(ctx.from, ctx.msg && ctx.msg.to),
                  options: (ctx) => raiseOptions(ctx.from).map(to => ({ to: to })),
                  run: (ctx) => doRaise(ctx.from, ctx.msg.to) },
         fold:  { phase: 'betting', turn: true,
                  run: (ctx) => doFold(ctx.from) },
         next:  { host: true, phase: 'handEnd', run: () => startHand() },
-        // Resync: a phone that just joined or reloaded needs its cards back, and
-        // nobody else's. Hidden, because there is nothing here to enumerate.
-        hello: { hidden: true, run: (ctx) => {
-                   if (G.hole[ctx.from] && st(ctx.from) !== 'out') {
-                     Table.sendTo(ctx.from, { t: 'hole', hand: G.hand, cards: G.hole[ctx.from] });
-                   }
-                 } }
       }
     });
   }
@@ -623,27 +594,79 @@ function createGame(Table, root) {
       '<span class="s">' + SUIT[c.s] + '</span></div>';
   }
 
+  /** A card as a little inline pill — what a seat row has room for. */
+  function miniCard(c) {
+    return '<span class="mc' + (isRed(c) ? ' red' : '') + '">' + R.RANK_SHORT[c.r] + SUIT[c.s] + '</span>';
+  }
+
+  /**
+   * Everybody at the table, for a room with no TV: one chip per seat, in seat order.
+   * Two lines each — who and how much, then what they're doing this hand — so eight
+   * seats fit on the smallest phone without scrolling. At a showdown the second line
+   * is their cards and their hand; for the rest of the hand, their bet and last action.
+   */
+  function seatsHTML(v) {
+    const contested = v.reveal && !v.reveal.uncontested;
+    const done = v.phase === 'showdown' || v.phase === 'handEnd' || v.phase === 'gameOver';
+    let h = '<div class="seats' + (v.order.length > 4 ? ' many' : '') + '">';
+    v.order.forEach(id => {
+      const st = v.status[id];
+      const won = done && v.reveal && v.reveal.won ? (v.reveal.won[id] || 0) : 0;
+      const turn = v.phase === 'betting' && v.toAct === id;
+      const cls = ['seat', turn ? 'turn' : '', st === 'folded' ? 'folded' : '', st === 'out' ? 'out' : '',
+                   id === MY ? 'me' : '', won ? 'won' : ''].filter(Boolean).join(' ');
+      let tags = '';
+      if (id === v.dealer && st !== 'out') tags += '<span class="tag d">D</span>';
+      if (v.blinds && v.phase === 'betting' && v.street === 'preflop') {
+        if (v.blinds.sb === id) tags += '<span class="tag">SB</span>';
+        if (v.blinds.bb === id) tags += '<span class="tag">BB</span>';
+      }
+      let line2 = '';
+      if (st === 'out') line2 = '<span class="act">out</span>';
+      else if (contested && done && v.reveal.hole[id]) {
+        line2 = v.reveal.hole[id].map(miniCard).join('') +
+          '<span class="hand">' + esc(v.reveal.hands[id] || '') + '</span>';
+      } else if (st === 'folded') line2 = '<span class="act">folded</span>';
+      else {
+        const bet = v.bet[id] || 0;
+        const act = v.lastAction[id] || '';
+        if (st === 'allin') line2 = '<span class="act allin">ALL IN</span>';
+        else if (act) line2 = '<span class="act">' + esc(act) + '</span>';
+        if (bet) line2 += '<span class="bet">' + bet + '</span>';
+      }
+      if (won) line2 += '<span class="plus">+' + won + '</span>';
+      h += '<div class="' + cls + '">' +
+        '<div class="sl"><span class="sn">' + esc((v.emojis[id] || '') + ' ' + (v.names[id] || '')) + '</span>' +
+        tags + '<span class="ss">' + (v.stacks[id] || 0) + '</span></div>' +
+        '<div class="sl2">' + (line2 || '&nbsp;') + '</div></div>';
+    });
+    return h + '</div>';
+  }
+
   function render() {
     if (!view) {
       root.innerHTML = '<div class="wait">Taking a seat at the table…</div>';
       return;
     }
     const v = view;
+    const tv = !!v.screen;
     const me = { stack: v.stacks[MY] || 0, bet: v.bet[MY] || 0, status: v.status[MY] || 'out' };
     const mine = myHoleHand === v.hand ? myHole : [];
     const folded = me.status === 'folded';
     const out = me.status === 'out';
     const myTurn = v.toAct === MY && v.phase === 'betting';
+    root.classList.toggle('notv', !tv);
 
     let h = '<div class="hdr"><span class="brand">HOLD’EM</span>' +
       '<span class="sub">Hand ' + v.hand + ' · blinds ' + v.sb + '/' + v.bb + '</span>' +
       '<span class="chips">' + me.stack + '</span></div>';
 
-    // The board is on the television; this is the glance-down copy, so it is
-    // deliberately small. What is NOT on the television is underneath it.
+    // With a TV this is the glance-down copy of the board, so it is small; without
+    // one it IS the board, and gets a little more room.
+    const cardCls = tv ? 'sm' : 'md';
     h += '<div class="board">';
     for (let i = 0; i < 5; i++) {
-      h += v.board[i] ? cardHTML(v.board[i], 'sm') : '<div class="pc sm empty"></div>';
+      h += v.board[i] ? cardHTML(v.board[i], cardCls) : '<div class="pc ' + cardCls + ' empty"></div>';
     }
     h += '</div>';
     h += '<div class="potline"><span class="pot">POT ' + v.pot + '</span>' +
@@ -653,31 +676,37 @@ function createGame(Table, root) {
 
     h += '<div class="banner">' + esc(v.banner || '') + '</div>';
 
+    if (!tv) h += seatsHTML(v);
+
     // Your cards, and what only you can know they mean.
     if (out) {
       h += '<div class="mine"><div class="wait">You’re out — ' +
-        'watch the rest on the big screen.</div></div>';
+        (tv ? 'watch the rest on the big screen.' : 'the table plays on above.') + '</div></div>';
     } else if (!mine.length) {
       h += '<div class="mine"><div class="wait">Waiting for the deal…</div></div>';
     } else {
       h += '<div class="mine' + (folded ? ' folded' : '') + '">' +
-        '<div class="hole">' + mine.map(c => cardHTML(c, 'big')).join('') + '</div>' +
+        '<div class="hole">' + mine.map(c => cardHTML(c, tv ? 'big' : 'mid')).join('') + '</div>' +
         '<div class="strength">' + esc(R.describe(mine, v.board)) + '</div></div>';
     }
 
     h += '<div class="actions">';
     if (v.phase === 'gameOver') {
       h += '<div class="wait">That’s the table.</div>';
+    } else if (v.phase === 'handEnd') {
+      // Before `folded`, and before `out`: whoever deals has to be offered the button
+      // whatever happened to their own hand. This sat below the folded branch, so a
+      // host who folded saw "Folded this hand." and NOBODY could deal — the whole
+      // table stuck after any hand the host sat out. Only the host may deal.
+      h += Table.isHost
+        ? '<button class="primary" data-act="next">Deal the next hand</button>'
+        : (out ? '' : '<div class="wait">Waiting for ' + esc(v.names[v.order[0]] || 'the host') + ' to deal…</div>');
     } else if (out) {
       h += '';
     } else if (folded) {
       h += '<div class="wait">Folded this hand.</div>';
     } else if (v.phase === 'showdown') {
       h += '<div class="wait">' + (v.reveal && v.reveal.uncontested ? 'Pot’s away…' : 'Cards up…') + '</div>';
-    } else if (v.phase === 'handEnd') {
-      h += Table.isHost
-        ? '<button class="primary" data-act="next">Deal the next hand</button>'
-        : '<div class="wait">Waiting for ' + esc(v.names[v.order[0]] || 'the host') + ' to deal…</div>';
     } else if (me.status === 'allin') {
       h += '<div class="wait">All in — nothing left to decide.</div>';
     } else if (myTurn) {

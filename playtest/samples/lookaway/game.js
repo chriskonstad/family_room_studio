@@ -1,6 +1,6 @@
 function createGame(Table, root){
   const MY = Table.me.id;
-  let view = null, G = null, myPick = null, tick = null, deadlineLocal = 0;
+  let view = null, G = null, myPick = null, tick = null;
   const DIRS = [
     {k:'up',    ic:'⬆️'}, {k:'left', ic:'⬅️'}, {k:'ctr', ic:'⏺️'},
     {k:'right', ic:'➡️'}, {k:'down', ic:'⬇️'}
@@ -23,6 +23,7 @@ function createGame(Table, root){
 
   // ---------- host ----------
   function initGame(players){
+    clock.start();
     G = {order:players.map(p=>p.id), names:{}, emojis:{}, lives:{},
          phase:'ready', round:0, banner:'Get ready to dodge!', lookerIdx:-1, reveal:false, win:4200};
     players.forEach(p=>{G.names[p.id]=p.name; G.emojis[p.id]=p.emoji; G.lives[p.id]=3;});
@@ -35,13 +36,21 @@ function createGame(Table, root){
     G.looker = G.order[G.lookerIdx];
     G.picks = {}; G.reveal = false; G.phase = 'pick';
     G.banner = '👀 ' + G.names[G.looker] + ' is looking!';
+    G.pickEnds = clock.deadlineIn(G.win/1000);
     timer.after('round', G.win, resolve);
+    // Stream the clock while the window is open. A phone extrapolates from the last
+    // state it was handed, and one rebuilt from the history was last handed the
+    // round's FIRST state: its bar read full with a fraction of the window left.
+    timer.every('clock', 250, syncAll);
     syncAll();
   }
   // The move space. Everyone picks SIMULTANEOUSLY here — there is no turn to key off,
   // and the choice is one of five directions — so `options` enumerates the directions
   // and `when` says who still has a life and hasn't already chosen.
   const timer = FR.timers();
+  // The pick window's countdown is anchored to the host's clock (FR.clock), so
+  // a phone rebuilt mid-round shows the same shrinking bar as everyone else.
+  const clock = FR.clock(Table.isHost ? timer : null);
   let table = null;
   function buildTable(){
     return FR.host({
@@ -49,7 +58,6 @@ function createGame(Table, root){
       phase:()=>G.phase,
       publish:syncAll,
       intents:{
-        hello: { hidden:true, run:()=>{} },
         go:    { host:true, phase:'ready', run:()=>nextRound() },
         look:  { phase:'pick',
                  when:(ctx)=> G.lives[ctx.from]>0 && G.picks[ctx.from]==null,
@@ -57,13 +65,17 @@ function createGame(Table, root){
                  run:(ctx)=>{
                    if(!DIRS.some(d=>d.k===ctx.msg.dir)) return;   // never trust the wire
                    G.picks[ctx.from] = ctx.msg.dir;
+                   // Tell the picker (only them) what the host has them down for: a phone
+                   // rebuilt from the history has lost its own memory of the pick, and
+                   // this is how it comes back locked in on the same arrow.
+                   if(ctx.from!==MY) Table.sendTo(ctx.from, {t:'picked', dir:ctx.msg.dir});
                    if(Object.keys(G.picks).length === withLives().length) resolve();
                  } }
       }
     });
   }
   function resolve(){
-    timer.cancel('round');
+    timer.cancel('round'); timer.cancel('clock');
     withLives().forEach(id=>{ if(G.picks[id]==null) G.picks[id]=pick(DIRS).k; });   // auto for stragglers
     const ld = G.picks[G.looker], caught = [];
     withLives().forEach(id=>{ if(id!==G.looker && G.picks[id]===ld){ G.lives[id]--; caught.push(id); } });
@@ -82,12 +94,17 @@ function createGame(Table, root){
   }
   function publicState(){
     return {phase:G.phase, banner:G.banner, round:G.round, looker:G.looker, win:G.win,
+      now:clock.now(), pickEnds:G.pickEnds||null,
       lives:{...G.lives}, names:G.names, emojis:G.emojis, order:G.order,
       picks:G.reveal?{...G.picks}:null};
   }
   function syncAll(){ const s=publicState(); Table.broadcast({t:'state',s}); onState(s); }
+  const sameButNow = (a,b)=> JSON.stringify({...a, now:0}) === JSON.stringify({...b, now:0});
   function onState(s){
-    const prev = view; view = s;
+    const prev = view; view = s; clock.see(s);
+    // A clock tick moves nothing but `now`. The bar reads the clock by itself, and a
+    // redraw would swap the arrows out from under a thumb mid-pick.
+    if(prev && sameButNow(prev, s)) return;
     if(s.phase==='pick' && (!prev || prev.phase!=='pick' || prev.round!==s.round)){
       myPick = null; startLocalTimer();
     }
@@ -97,24 +114,20 @@ function createGame(Table, root){
   if(Table.isHost){
     Table.onStart(p=>{ initGame(p); table = buildTable(); syncAll(); });
     Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
-    Table.onPlayerLeave(id=>{
-      if(!G) return;
-      G.lives[id]=0;
-      if(G.phase==='pick' && Object.keys(G.picks).length>=withLives().length) resolve();
-      else syncAll();
-    });
   } else {
-    Table.onStart(()=>{ view=null; render(); Table.send({t:'hello'}); });
-    Table.onMessage((_f,m)=>{ if(m.t==='state') onState(m.s); });
+    Table.onStart(()=>{ view=null; render(); });
+    Table.onMessage((_f,m)=>{
+      if(m.t==='state') onState(m.s);
+      else if(m.t==='picked'){ myPick = m.dir; render(); }
+    });
   }
 
   function startLocalTimer(){
     clearInterval(tick);
-    deadlineLocal = Date.now() + (view.win||4000);
     tick = setInterval(()=>{
       const bar = root.querySelector('.tbar i');
       if(!bar || !view || view.phase!=='pick'){ clearInterval(tick); return; }
-      const left = Math.max(0, (deadlineLocal-Date.now())/(view.win||4000));
+      const left = Math.min(1, clock.left(view.pickEnds) / (view.win/1000));
       bar.style.width = (left*100) + '%';
       if(left<=0) clearInterval(tick);
     }, 60);
@@ -142,9 +155,9 @@ function createGame(Table, root){
       h += `<div class="dirs">` + DIRS.map(d=>
         `<button class="dir ${myPick===d.k?'picked':''}" data-d="${d.k}" ${meAlive?'':'disabled'}>${d.ic}</button>`).join('') + `</div>`;
       h += meAlive
-        ? (meLooker ? `<div class="hint"><b>You're looking 👁️</b> — pick where to look and try to catch someone!</div>`
-                    : (myPick ? `<div class="wait">Locked ${dic(myPick)}</div>`
-                              : `<div class="hint">Look <b>away</b> from ${esc(v.names[v.looker])}!</div>`))
+        ? (myPick ? `<div class="wait">Locked ${dic(myPick)}</div>`
+                  : meLooker ? `<div class="hint"><b>You're looking 👁️</b> — pick where to look and try to catch someone!</div>`
+                             : `<div class="hint">Look <b>away</b> from ${esc(v.names[v.looker])}!</div>`)
         : `<div class="wait">💀 out of hearts — spectating</div>`;
     } else if(v.phase==='reveal'){
       const ld = v.picks[v.looker];

@@ -1,0 +1,12 @@
+{
+  "name": "family-room-studio",
+  "private": true,
+  "description": "The Family Room game dev kit. `node check.mjs` is the gate; the only dependency is a headless browser for phone layout checks.",
+  "scripts": {
+    "check": "node check.mjs",
+    "browsers": "playwright-core install webkit chromium"
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

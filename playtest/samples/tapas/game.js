@@ -141,7 +141,6 @@ function createGame(Table, root) {
       phase: () => G.phase,
       publish: syncAll,
       intents: {
-        hello: { hidden: true, run: () => {} },
         pick: { phase: 'drafting',
                 // Already picked this round? Nothing is legal until the round resolves.
                 when: (ctx) => G.picks[ctx.from] == null && !!G.hands[ctx.from],
@@ -176,33 +175,29 @@ function createGame(Table, root) {
     const s = publicState();
     Table.broadcast({ t:'state', s });
     G.order.forEach(id => {
-      if (id === MY) { myHand = G.hands[id].slice(); picked = G.picks[id] != null; }
+      if (id === MY) takeHand(G.hands[id].slice(), G.picks[id] != null);
       else Table.sendTo(id, { t:'hand', hand:G.hands[id], picked:G.picks[id] != null });
     });
-    view = s; sel = null; render();
+    view = s; render();
+  }
+
+  /* The card you have your thumb on stays chosen until your HAND changes. Everyone
+   * drafts at once, so somebody else's pick lands while you are deciding — and it used
+   * to clear your choice, leaving "Take it" greyed out under your finger. */
+  function takeHand(hand, isPicked) {
+    if (hand.join(',') !== myHand.join(',')) sel = null;
+    myHand = hand; picked = isPicked;
   }
 
   // ---------- wiring ----------
   if (Table.isHost) {
     Table.onStart(players => { initGame(players); table = buildTable(); syncAll(); });
     Table.onMessage((from, msg) => { if (table) table.handle(from, msg); });
-    Table.onPlayerLeave(id => {
-      if (!G) return;
-      // fold the leaver: their unplayed hand vanishes, their picks resolve as no-op
-      // Splice in place: FR.host holds a reference to this array, so rebinding it left
-      // the not-seated guard checking a stale roster that still contained the leaver.
-      const at = G.order.indexOf(id);
-      if (at >= 0) G.order.splice(at, 1);
-      delete G.hands[id];
-      delete G.picks[id];
-      if (G.phase === 'drafting' && everyonePicked()) resolvePicks();
-      syncAll();
-    });
   } else {
-    Table.onStart(() => { view=null; render(); Table.send({ t:'hello' }); });
+    Table.onStart(() => { view=null; render(); });
     Table.onMessage((_f, msg) => {
-      if (msg.t === 'state') { view = msg.s; sel = null; render(); }
-      else if (msg.t === 'hand') { myHand = msg.hand; picked = msg.picked; render(); }
+      if (msg.t === 'state') { view = msg.s; render(); }
+      else if (msg.t === 'hand') { takeHand(msg.hand || [], !!msg.picked); render(); }
     });
   }
 
@@ -225,11 +220,14 @@ function createGame(Table, root) {
       <span class="sub">Round ${v.round}/3 · ${v.handCount} cards left</span></div>
       <div class="banner">${esc(v.banner||'')}</div>`;
 
-    h += `<div class="plates">`;
+    // Every plate and your whole hand on screen at once — no scrolling to see what
+    // the next player is collecting. Four or more players get a line each.
+    const dense = v.order.length >= 4;
+    h += `<div class="plates${dense ? ' dense' : ''}">`;
     v.order.forEach(id => {
       h += `<div class="prow ${id===MY?'me':''}" data-pid="${id}">
         <div class="top"><span>${v.emojis[id]}</span><span class="who">${esc(v.names[id])}</span>
-          ${v.phase==='drafting' ? (v.pickedFlags[id] ? '<span class="picked">✓ picked</span>' : '<span class="picked" style="opacity:.35">choosing…</span>') : ''}
+          ${v.phase==='drafting' ? (v.pickedFlags[id] ? `<span class="picked">${dense ? '✓' : '✓ picked'}</span>` : `<span class="picked" style="opacity:.35">${dense ? '…' : 'choosing…'}</span>`) : ''}
           <span class="pts">${v.totals[id]}</span></div>
         <div class="tstack">${tableauHTML(id)}</div></div>`;
     });

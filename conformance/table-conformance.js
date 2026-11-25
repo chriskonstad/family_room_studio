@@ -39,6 +39,10 @@
     { path: 'onPause',       type: 'function', arity: 1 },
     { path: 'onResume',      type: 'function', arity: 1 },
     { path: 'isPaused',      type: 'boolean' },
+    // Shared screens: a count on the host, null where it isn't known (clients, and
+    // a host on a shell too old to say). A game must treat null as "no screen".
+    { path: 'screens',       type: 'number-or-null', note: 'attached shared screens (host only)' },
+    { path: 'onScreensChange', type: 'function', arity: 1 },
 
     // messaging
     { path: 'send',          type: 'function', arity: 1 },
@@ -78,6 +82,7 @@
 
   function checkType(value, expected) {
     if (expected === 'array-or-null') return value === null || Array.isArray(value);
+    if (expected === 'number-or-null') return value === null || typeof value === 'number';
     if (expected === 'array') return Array.isArray(value);
     return kindOf(value) === expected;
   }
@@ -98,7 +103,7 @@
     // --- surface ---------------------------------------------------------
     SPEC.forEach(function (item) {
       var value = resolve(Table, item.path);
-      var present = value !== undefined;
+      var present = value !== undefined || /-or-null$/.test(item.type) && item.path in Table;
       if (!present) {
         record('has ' + item.path, false, 'missing' + (item.note ? ' — ' + item.note : ''));
         return;
@@ -117,7 +122,7 @@
     // --- behaviour -------------------------------------------------------
     // Registering a handler must not throw and must not require the callback
     // to fire immediately.
-    ['onStart', 'onMessage', 'onPlayerJoin', 'onPlayerLeave', 'onPause', 'onResume']
+    ['onStart', 'onMessage', 'onPlayerJoin', 'onPlayerLeave', 'onPause', 'onResume', 'onScreensChange']
       .forEach(function (hook) {
         if (typeof Table[hook] !== 'function') return;
         var threw = null;

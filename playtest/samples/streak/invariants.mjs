@@ -5,7 +5,7 @@
 const STATUSES = ['active', 'busted', 'frozen', 'stayed'];
 const DECK_SIZE = 94;
 
-export default function streakInvariants({ table, players, done, result }) {
+function streakInvariantsBase({ table, players, done, result }) {
   const seenTotals = table._streakTotals || (table._streakTotals = {});
   for (const id of players) {
     const s = table.view(id)?.s;
@@ -59,4 +59,50 @@ export default function streakInvariants({ table, players, done, result }) {
     }
   }
   return null;
+}
+
+/* A round is scored once. Scoring it twice adds everybody's line to their total again: every total
+ * still only ever goes up, so nothing else here would notice. Read every broadcast,
+ * in order, and allow the totals to move once per round. */
+function extra({ table }) {
+  const m = table._streakScored || (table._streakScored = { i: 0, sig: null, scored: null });
+  const all = table.wire('broadcast');
+  for (; m.i < all.length; m.i++) {
+    const s = all[m.i].payload && all[m.i].payload.s;
+    if (!s || !s.players) continue;
+    const sig = JSON.stringify(s.players.map(p => p.total));
+    if (m.sig !== null && sig !== m.sig) {
+      if (m.scored === s.round) return `round ${s.round} was scored twice — totals moved again after it ended`;
+      m.scored = s.round;
+    }
+    m.sig = sig;
+  }
+  return null;
+}
+
+/* Every line's points, worked out here from the cards on it — numbers summed, doubled
+ * by a ×2, plus the bonus cards, +15 for seven different numbers, nothing at all once
+ * busted. A scoring rule quietly changed (a ×2 that stopped doubling) moves no chip a
+ * generic check can see; recomputing the score from the visible line does. */
+function scores({ table }) {
+  const b = table.wire('broadcast').slice(-1)[0];
+  const s = b && b.payload && b.payload.s;
+  if (!s || !s.players) return null;
+  for (const p of s.players) {
+    const nums = p.nums || [], mods = p.mods || [];
+    let want = nums.reduce((a, v) => a + v, 0);
+    if (mods.some(m => m.mod === 'x2')) want *= 2;
+    want += mods.filter(m => m.mod === 'plus').reduce((a, m) => a + m.v, 0);
+    if (nums.length === 7) want += 15;
+    if (p.status === 'busted') want = 0;
+    if (p.roundPts !== want) {
+      return `${p.id}'s line [${nums.join(' ')}${mods.length ? ' | ' + mods.map(m => m.mod === 'x2' ? '×2' : '+' + m.v).join(' ') : ''}] `
+           + `shows ${p.roundPts} points; the cards say ${want}`;
+    }
+  }
+  return null;
+}
+
+export default function streakInvariants(args) {
+  return extra(args) || scores(args) || streakInvariantsBase(args);
 }

@@ -34,7 +34,6 @@
         players: players.map(p => p.id),
         publish,
         intents: {
-          hello: { hidden: true, run: () => {} },
           // Anyone may tap, any time, until someone wins. `when` says so, and that is
           // all the harness needs to play this game with no screen.
           tap: {
@@ -46,8 +45,6 @@
           }
         }
       });
-    } else {
-      Table.send({ t: 'hello' });
     }
     render();
   });

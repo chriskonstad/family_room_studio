@@ -345,6 +345,67 @@ test('cancelling an unarmed name is harmless', () => {
   FR.timers(fakeClock()).cancel('nope');
 });
 
+/* -------------------------------------------------------------- clock --- */
+section('FR.clock — countdowns anchored to the host, not to arrivals');
+
+test('the host clock advances only on its tick', () => {
+  const clock = fakeClock(), t = FR.timers(clock);
+  let wallMs = 1_000_000;
+  const c = FR.clock(t, () => wallMs);
+  c.start();
+  assert.equal(c.now(), 0);
+  clock.advance(1000);
+  assert.equal(c.now(), 1000);
+  // Wall time racing ahead (a long pause, a suspended app) moves nothing:
+  // only the tick counts, so a frozen table's deadlines hold still.
+  wallMs += 60_000;
+  assert.equal(c.now(), 1000);
+});
+
+test('deadlineIn and left agree on the host', () => {
+  const clock = fakeClock(), t = FR.timers(clock);
+  const c = FR.clock(t, () => 0);
+  c.start();
+  const due = c.deadlineIn(11);
+  assert.equal(c.left(due), 11);
+  clock.advance(3500);
+  assert.equal(c.left(due), 7.5);
+  clock.advance(60_000);
+  assert.equal(c.left(due), 0, 'left never goes negative');
+});
+
+test('a rebuilt phone lands on the same seconds as one that never dropped', () => {
+  // Host runs for 10 game-seconds and issues an 11s deadline at t=4s.
+  const hc = fakeClock(), t = FR.timers(hc);
+  const host = FR.clock(t, () => 0); host.start();
+  hc.advance(4000);
+  const due = host.deadlineIn(11);
+  hc.advance(6000);                                   // host now 10s; 5s left
+
+  // The phone that never dropped saw the state at host t=10s, 2s ago.
+  let wallA = 500_000;
+  const a = FR.clock(null, () => wallA);
+  a.see({ now: host.now() });
+  wallA += 2000;
+  // The rebuilt phone saw the same state a moment ago, having just been
+  // handed the whole history — including the deadline issued at t=4s.
+  let wallB = 900_000;
+  const b = FR.clock(null, () => wallB);
+  b.see({ now: host.now() });
+  assert.equal(a.left(due), 3);
+  assert.equal(b.left(due), 5);
+  wallB += 2000;
+  assert.equal(a.left(due), b.left(due), 'same state, same deadline, same seconds — whenever each arrived');
+});
+
+test('see ignores a state with no clock in it', () => {
+  let wallMs = 0;
+  const c = FR.clock(null, () => wallMs);
+  c.see({}); c.see(null); c.see({ now: 'soon' });
+  wallMs += 1000;
+  assert.equal(c.now(), 1000, 'still just extrapolating from creation');
+});
+
 /* --------------------------------------------------------------- host --- */
 section('FR.host — the four checks every game forgot at least once');
 
@@ -749,6 +810,53 @@ test('fuzz: input during a hold never lands, across many random timings', () => 
     }
     assert.equal(state.n, 0, `seed ${seed}: ${sent} taps landed during a hold`);
   }
+});
+
+test('legalMoves checks `when` against each concrete option, msg and all', () => {
+  const seats = FR.seats(['a', 'b']);
+  const table = FR.host({
+    state: { last: 3 }, seats, phase: () => 'bid', publish: () => {},
+    intents: {
+      // The shape that threw: a guard that reads the message, as handle() passes it.
+      bid: { phase: 'bid', turn: true,
+             options: () => [1, 2, 3, 4, 5].map(q => ({ qty: q })),
+             when: (ctx) => ctx.msg.qty > ctx.state.last,
+             run: () => {} },
+      pass: { phase: 'bid', turn: true, when: (ctx) => ctx.msg.t === 'pass', run: () => {} }
+    }
+  });
+  assert.deepEqual(table.legalMoves('a'), [{ t: 'bid', qty: 4 }, { t: 'bid', qty: 5 }, { t: 'pass' }]);
+  for (const m of table.legalMoves('a')) assert.equal(table.handle('a', m), true, JSON.stringify(m));
+});
+
+section('FR.host.describe — the vocabulary a coverage report is measured against');
+
+test('describe lists every intent with its guards, hidden ones included', () => {
+  const seats = FR.seats(['a', 'b']);
+  const table = FR.host({
+    state: {}, seats, hostId: 'a', phase: () => 'play', publish: () => {},
+    intents: {
+      bet:   { phase: 'play', turn: true, options: () => [{ to: 5 }], run: () => {} },
+      next:  { host: true, phase: ['over', 'play'], run: () => {} },
+      hello: { hidden: true, run: () => {} },
+      ping:  () => {}
+    }
+  });
+  const d = Object.fromEntries(table.describe().map(x => [x.name, x]));
+  assert.deepEqual(Object.keys(d).sort(), ['bet', 'hello', 'next', 'ping']);
+  assert.equal(d.bet.turn, true); assert.equal(d.bet.options, true);
+  assert.deepEqual(d.next.phase, ['over', 'play']); assert.equal(d.next.host, true);
+  assert.equal(d.hello.hidden, true);
+  assert.equal(d.ping.hidden, false); assert.equal(d.ping.phase, null);
+});
+
+test('refusedTotal counts every refusal, past the 50 that rejected keeps', () => {
+  const table = FR.host({ state: {}, publish: () => {}, intents: { go: () => {} } });
+  for (let i = 0; i < 60; i++) table.handle('p0', { t: 'nope' });
+  assert.equal(table.rejected.length, 50);
+  assert.equal(table.refusedTotal, 60);
+  table.handle('p0', { t: 'go' });
+  assert.equal(table.refusedTotal, 60, 'an accepted intent is not a refusal');
 });
 
 /* -------------------------------------------------------------------- */

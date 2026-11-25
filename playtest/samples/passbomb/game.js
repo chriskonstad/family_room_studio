@@ -82,35 +82,24 @@ function createGame(Table, root){
         phase:()=>G.phase,
         publish:syncAll,
         intents:{
-          hello: { hidden:true, run:()=>{} },              // resync: publish is enough
           light: { host:true, phase:'ready', run:lightBomb },
           // `options` is what makes this game fuzzable without a screen: it says exactly
           // who may throw the bomb and to whom, so the harness never has to guess.
+          // Only whoever is holding it can throw it, and only to someone still in.
           pass:  { phase:'live',
-                   options:(ctx)=> ctx.from !== G.holder ? []
-                     : aliveIds().filter(id=>id!==ctx.from).map(to=>({to})),
+                   when:(ctx)=> ctx.from === G.holder && ctx.msg.to !== ctx.from && seats.isActive(ctx.msg.to),
+                   options:(ctx)=> aliveIds().filter(id=>id!==ctx.from).map(to=>({to})),
                    run:(ctx)=>{
-            const to = ctx.msg.to;
-            // Only whoever is holding it can throw it, and only to someone still in.
-            if (ctx.from !== G.holder || to === ctx.from || !seats.isActive(to)) return;
-            G.holder = to;
-            G.banner = G.names[ctx.from] + ' threw it to ' + G.names[to] + '!';
+            G.holder = ctx.msg.to;
+            G.banner = G.names[ctx.from] + ' threw it to ' + G.names[ctx.msg.to] + '!';
           } }
         }
       });
       syncAll();
     });
     Table.onMessage((f,m)=>{ if(table) table.handle(f,m); });
-    Table.onPlayerLeave(id=>{
-      if(!G || seats.status(id)==='out') return;
-      seats.eliminate(id);
-      // Don't let the bomb sit in a departed player's hands.
-      if(G.holder===id && G.phase==='live'){ const l=aliveIds(); if(l.length) G.holder=rng.pick(l); }
-      if(seats.settled && G.phase!=='over'){ timer.cancelAll(); return finish(); }
-      syncAll();
-    });
   } else {
-    Table.onStart(()=>{ view=null; render(); Table.send({t:'hello'}); });
+    Table.onStart(()=>{ view=null; render(); });
     Table.onMessage((_f,m)=>{ if(m.t==='state'){ view=m.s; render(); } });
   }
 

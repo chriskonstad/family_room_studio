@@ -1,149 +1,111 @@
 ---
 name: game-dev
-description: Create, edit, test, validate and ship a Family Room game bundle (JS games on the Table SDK). Use when writing a new game, changing an existing one (STREAK/SUMMIT/FISHBOWL/MELTDOWN/TAPAS/TEMPO/BLITZ/Pass the Bomb/The Detonator/Captain Says/Look Away), reviewing game UX, or packaging a bundle as a .zip. Covers the FR library, the headless test harness, the validator, and the two ways a game reaches players.
+description: Create, edit, test, validate, review and ship a Family Room game bundle (JS games on the Table SDK). Use when writing a new game, changing or fixing an existing one (STREAK, SUMMIT, FISHBOWL, MELTDOWN, TAPAS, TEMPO, BLITZ, Pass the Bomb, The Detonator, Captain Says, Look Away, Liar's Dice, HOLD'EM, SCRAMBLE), reviewing a game's UX or phone layout, checking a game is ready for game night, or packaging a bundle as a .zip. Covers the FR library, the connection guarantees games may rely on, the headless harness, phone layout checks, mutation tests, and the validator.
 ---
 
 # Family Room game development
 
-**You do not need a Mac, Xcode, or the app's source to write, test, validate and ship a
-game.** Games are pure web; the iOS harness is a separate concern. Everything in this skill
-runs on plain node.
+You do not need a Mac, Xcode, or the app's source to write, test, validate and ship a
+game. Games are pure web; everything here runs on node (plus a headless WebKit for
+phone layouts). The dev kit's own `tools/CLAUDE.md` is the full reference — this is
+the workflow.
 
-## The one command
+## The workflow — follow it in order
 
-```sh
-node tools/check.mjs
-```
+1. **Read the closest existing game first** (`tools/playtest/samples/<key>/`). Copy its
+   shape: `manifest.json`, `index.html`, `game.js`, `invariants.mjs`, and a
+   `mutants.mjs`. HOLD'EM is the most complete example; BLITZ the smallest.
+2. **Write the game on `FR.host`** (`tools/FR-GAME.md`). Declare every intent's
+   `options`; put every guard in `when(ctx)` (it sees each concrete option as
+   `ctx.msg`). Seed from `FR.rng(Table.seed)`. Time from `FR.timers`. Countdowns
+   from `FR.clock` — never from `Date.now()` at message arrival: a rebuilt phone
+   receives old messages late and would restart its countdown at the full limit.
+   While a countdown runs, re-send the host's state on a timer (CAPTAIN/LOOKAWAY
+   250ms, MELTDOWN 500ms) — a rebuilt phone counts on from the last `now` in its
+   history, which can be seconds old — and skip the phone's redraw when only `now`
+   changed.
+3. **Do not write any connection code.** No `onPlayerLeave`, no `onPlayerJoin`, no
+   `hello`. The shell pauses the table when anyone drops and catches them up when they
+   return — every message, in order, exactly once. The validator rejects it.
+4. **Lay the phone out for an iPhone SE at the biggest table** with long names.
+   Nothing scrolls. Every tap target ≥ 44pt. Content clear of the home indicator.
+5. **Write `invariants.mjs`** — what is true at every moment (conservation, bounds,
+   scores re-derived from public state, secrets that must not reach a phone).
+6. **Write worked examples** for any rule a property can't judge (`*.test.mjs` with a
+   stacked deck — see `holdem/hands.test.mjs`, `streak/rounds.test.mjs`).
+7. **Add `mutants.mjs`** — your game's bugs put back on purpose. Every bug you fix
+   gets one. They must all be caught.
+8. **Bump `manifest.json` version.**
+9. **`node tools/check.mjs`** until green. Fix the game, not the harness — unless the
+   harness disagrees with the shell, in which case the harness is wrong.
+10. **Look at it**: `node tools/harness/phone.mjs <key> --shots /tmp/shots` and open
+    `/tmp/shots/<key>.html` — every phase at every device size, problems outlined.
+    That review is the one step no check replaces.
 
-Conformance + the FR library suite + bundle validation + a headless bot playtest of every
-bundle. Green means the game imports cleanly and plays to a finish under pressure. Run it
-before every commit.
+## Definition of done (all enforced by `node tools/check.mjs`)
 
-## Two ways a game reaches players
+- version bumped · validates strict (no connection code, offline only)
+- plays to a finish under bots: hostile input, pauses, warm and cold reconnects,
+  real button presses, TV on/off — never throws, ends once, leaks no timers, replays
+  exactly, a pause changes nothing but timing, a refused intent changes nothing
+- every control sends something the host accepts; every legal move has a control
+- no phone ever shows another player's private data
+- every phone screen fits at six sizes — nothing clipped, overlapping, under the home
+  bar, under 44pt, or scrolling (WebKit, `phone.mjs`)
+- the shared screen (if any) fits, reads and draws nothing private (`screen.mjs`)
+- the game's own tests pass and every mutant is caught (`mutants.mjs`)
 
-1. **A .zip anyone can import.** Author anywhere, `node tools/validate.mjs mygame.zip`, send
-   the file. The app imports it. This needs nothing from the iOS repo.
-2. **Built in to the app.** Live in `tools/playtest/samples/<key>/`, which the Xcode project
-   folder-references, so a rebuild picks the game up. Also add `<key>` to
-   `GameLibrary.embeddedGameKeys` and its id to `embeddedGameIDs`, and register it in
-   `tools/playtest/samples/index.json`.
+Setup once: `cd tools && npm ci && npx playwright-core install webkit`.
+While iterating: `node tools/check.mjs --quick` (skips phones and mutants).
 
-Either way a bundle is `manifest.json` + `index.html` + `game.js` (+ assets). Files may sit
-at the zip root or under one top-level folder.
-
-`tools/` is a git submodule (the public dev kit, github.com/chriskonstad/family_room_studio);
-the private app repo pins a commit. **There is one copy of everything** — no syncing. Shipping
-a change to a built-in game is two commits:
-```sh
-cd tools && git commit -am "…" && git push     # the game
-cd ..     && git commit -am "Bump dev kit"     # the app's pinned pointer
-```
-
-## Versioning
-
-**Bump `manifest.json` version on ANY change.** The library replaces bundles *by version*:
-the app upgrades an installed older version to a newer embedded one at launch and never
-downgrades a user-imported newer one. The same `id@version` must be byte-identical on every
-device — that is what makes the authoritative-host model safe.
-
-## Authoring rules (full reference: `tools/GAME-AUTHORING.md`)
-
-- One bundle runs on every device; branch on `Table.isHost`. The host is authoritative and
-  validates every intent. Clients send intents and render broadcasts; `hello` resyncs on start.
-- Private info via `Table.sendTo` (hands). End with
-  `Table.endGame({winnerId, title, standings})`. Restart is the shell's job, not yours.
-- Teams: manifest `"teams":"required"`, read `Table.teams` / `me.teamId`. Never build a team picker.
-- Solo: `"minPlayers": 1`.
-- **Disconnect and pause are the shell's job.** When anyone drops, every device pauses and
-  all JS timers freeze — `setTimeout`/`setInterval` are shimmed in the injected SDK, so
-  fuses and clocks stop and resume with zero game code. Never measure elapsed time with bare
-  `Date.now()` deltas across a frame you don't control; a paused game must not catch up.
-- **Reconnect is handled too**: the host replays its last broadcast and each player's last
-  `sendTo`, so a rejoiner lands mid-game.
-- Offline only. No `fetch()`, no external hosts, no CDNs — inline everything. The validator
-  enforces this; otherwise it breaks *only on real phones*.
-
-## Build on `FR` — don't rebuild game structure
-
-`tools/sdk/fr-game.js` is injected alongside the SDK, so `FR` is simply there. Full
-reference with a complete example game: **`tools/FR-GAME.md`**.
-
-- `FR.rng(seed)` — **never call `Math.random()`.** A game that isn't replayable can't have
-  its bugs reproduced or fuzzed. Seed once, store the seed in state.
-- `FR.deck(cards, r)` — draw/discard/auto-reshuffle; `deck.left` for the on-screen counter.
-- `FR.seats(ids)` — turn order. `setStatus` is temporary (cleared by `startRound`);
-  `eliminate` is permanent and its order becomes the final ranking.
-- `FR.standings.byScore` / `.byElimination` — the exact `Table.endGame` payload.
-- `FR.timers()` — named; `cancelAll()` when the game ends.
-- `FR.host({...})` — refuses unknown, frozen, unseated, wrong-phase and out-of-turn intents.
-  **Declare `options(ctx)` on each intent** (plus `when(ctx)` for guards the built-ins can't
-  express, `hidden:true` for free text). That is what lets `table.legalMoves()` enumerate the
-  move space, so the harness can play and fuzz your game with no screen — it is how SUMMIT,
-  TAPAS and FISHBOWL went from undriveable to fully tested.
-  Use `table.hold(ms, fn)` / `table.sequence(ms, steps)` for timed sequences: they freeze
-  input, which is what prevents the Flip-3 class of bug.
-- **`FR.rng(Table.seed)`** — seed from the table, never `Date.now()`, or `--seed N` can't
-  replay the failure the fuzzer just found.
-
-## Game feel — use the shared runtime
-
-`Table.feel()` fires the right animation, haptic and sound together. Reach for it before
-writing keyframes.
-
-```js
-Table.feel('bust', { el: row, mine: true });   // shake + boom haptic + sound
-Table.feel('turn', { el: myRow });             // persistent glow; {off:true} clears
-Table.feel.deal(root.querySelectorAll('.card'));
-```
-Events: `gain win heal` · `bust eliminate hit freeze blocked` · `arrive pass reveal tick
-countdown` · `turn urgent`.
-
-- **`mine: true` for the local player.** Your own disaster should hit harder; six phones
-  buzzing at full strength is worse than silence.
-- **Call `feel()` AFTER writing the DOM, with the live element** — that's what stops
-  animations replaying on every render.
-- Haptic styles: `light medium heavy soft rigid selection success warning error` plus the
-  sustained `thud buzz boom`. Don't fire `success`/`warning`/`error` in a tight loop — they
-  are ~½s patterns and a new one cancels the last; use an impact style for anything rhythmic.
-- Audio: `Table.sound()` needs no gesture unlock and plays through the ring switch. Reach for
-  WebAudio only for sample-accurate scheduling, and create AND resume the `AudioContext`
-  inside a tap handler or iOS leaves it suspended and your game ships silent.
-
-## UX standards
-
-- **Touch targets ≥ 44pt.** Buttons ≥ 12-13px vertical padding.
-- **Viewport + safe areas** on every `index.html`:
-  `width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover`
-  plus `env(safe-area-inset-*)` padding. The validator checks this.
-- **State colours**: danger/bust red, frozen/locked blue, banked/inactive dim, active turn gold.
-- **Say WHY in the banner** ("💥 Ava drew a second 7 — BUST!"), not just what.
-- **Animations fire once per event, never per render.**
-- **Don't rebuild DOM under a thumb or an open keyboard** — patch text nodes in place.
-
-## Test
+## Commands
 
 ```sh
-node tools/check.mjs                                        # everything
-node tools/harness/playtest.mjs streak --games 200          # bot-play one bundle hard
-node tools/harness/playtest.mjs streak --seed 137 --verbose # reproduce a failure exactly
+node tools/check.mjs                                        # the gate
+node tools/harness/playtest.mjs <key> --games 200           # soak one game
+node tools/harness/playtest.mjs <key> --seed 137 --players 4 --reconnect --verbose   # replay a failure (copy the printed command)
+node tools/harness/phone.mjs <key> --shape se --shots /tmp/shots
+node tools/harness/mutants.mjs <key> --verbose
 node tools/validate.mjs ./mygame                            # or mygame.zip
 ```
 
-The harness boots N virtual phones against the real SDK with a virtual clock, so a
-60-second game costs microseconds. It asserts the game never throws, always terminates,
-ends once, names a real winner, and leaves no timers armed.
+## Two ways a game reaches players
 
-All eleven built-in bundles play headlessly. If yours doesn't, the fix is almost always to
-declare `options` on its intents rather than to make its UI more scrapeable.
+1. **A .zip anyone can import.** `node tools/validate.mjs mygame.zip`, send the file.
+2. **Built in to the app.** Live in `tools/playtest/samples/<key>/` — the app derives
+   its built-in games from that folder; nothing else to register. Shipping is two
+   commits: one in `tools/` (the public dev kit), one bumping the pointer in the app.
 
-Genuinely un-enumerable input (free text, a drawn gesture) is the exception: mark that intent
-`hidden` and ship a `bot.mjs` beside the bundle —
-`export default function ({table, playerId, rng, send}) { … return didAct; }`. Return false to
-hand back to the generic bot. FISHBOWL is the worked example.
+## Authoring rules worth knowing by heart
 
-**Studio (to see and feel it):** `cd tools && python3 -m http.server 8777`, open
-`http://localhost:8777/playtest/`. Serve the dev-kit ROOT — from inside `playtest/` the
-studio can't reach `sdk/` and games silently lose `Table.feel` and `FR`.
+- One bundle runs on every device; branch on `Table.isHost`. The host is authoritative.
+  Private info via `Table.sendTo`. End with `Table.endGame({winnerId, title, standings})`.
+- Teams: manifest `"teams":"required"`, read `Table.teams`. Solo: `"minPlayers": 1`.
+- A shared screen (`"screen": "optional" | "required"`) gets broadcasts only. Only the
+  host knows if one is attached (`Table.screens`; `null` = assume none) — publish it.
+- State a rebuilt page must show has to come from the host: a page rebuilt from the
+  history loses only what the phone worked out for itself (CAPTAIN echoes each tap
+  privately to the tapper so a rebuilt phone stays locked in).
+- Offline only: no `fetch()`, no external hosts, no CDNs.
 
-**Native** only matters for what the web can't tell you: real haptics, WebKit rendering,
-and pacing on an actual phone. That needs a Mac and is a spot-check, not the loop.
+## Game feel — `Table.feel()`
+
+```js
+Table.feel('bust', { el: row, mine: true });   // shake + haptic + sound together
+Table.feel('turn', { el: myRow });             // persistent glow; {off:true} clears
+Table.feel.deal(root.querySelectorAll('.card'));
+```
+Events: `gain win heal` · `bust eliminate hit freeze blocked` · `arrive pass reveal
+tick countdown` · `turn urgent`. `mine: true` for the local player. Call it AFTER
+writing the DOM, once per event, never per render.
+
+## UX standards
+
+- Touch targets ≥ 44pt; nothing scrolls; clear of the home indicator (all enforced).
+- Viewport `width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no,
+  viewport-fit=cover` plus `env(safe-area-inset-*)` padding (validated).
+- State colours: danger red, frozen/locked blue, banked/inactive dim, active turn gold.
+- Say WHY in the banner ("💥 Ava drew a second 7 — BUST!"), not just what.
+- Don't rebuild DOM under a thumb or an open keyboard — patch text in place.
+- Hide or disable a control that can't be used right now (a pressed control the host
+  refuses fails the check).
