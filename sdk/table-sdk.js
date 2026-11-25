@@ -39,9 +39,14 @@
    * Living only in the native shell was itself a drift: a game that leaned on timers
    * freezing behaved differently in the studio, where they kept running. Now both get it.
    *
+   * It also keeps GAME TIME: wall time with every paused stretch taken out, frozen while
+   * paused. `w.__frGameNow()` reads it — FR.clock does on a phone, so a countdown that
+   * extrapolates from the host's last reading stops when the table stops instead of
+   * running out during the pause (every timed game showed 0 the moment play resumed).
+   *
    * @param {Object} w the window to patch.
    * @param {function} onError called with a message if a timer callback throws.
-   * @returns {{setPaused:function, isPaused:function}}
+   * @returns {{setPaused:function, isPaused:function, now:function}}
    */
   function installTimerShim(w, onError) {
     var nSetTimeout = w.setTimeout.bind(w);
@@ -59,6 +64,9 @@
     var issued = {};
     var nextTimerId = 1, paused = false;
     var onPauseChange = null;
+    var pausedTotal = 0, pausedSince = 0;
+    function gameNow() { return (paused ? pausedSince : Date.now()) - pausedTotal; }
+    w.__frGameNow = gameNow;
 
     function armTimeout(rec) {
       rec.native = nSetTimeout(function () { timers.delete(rec.id); rec.cb(); },
@@ -67,12 +75,15 @@
     }
     function armInterval(rec) {
       // Honour the remaining slice of the current period, then settle into a plain interval.
+      // The plain interval is armed BEFORE the callback runs, as a native interval is
+      // already armed when its callback runs: armed after, a callback that threw on this
+      // first fire (after creation, and again after every resume) left the interval
+      // dead for good, where a native one keeps firing.
       rec.native = nSetTimeout(function () {
         rec.due = Date.now() + rec.delay;
-        rec.cb();
-        if (!timers.has(rec.id)) return;
         rec.native = nSetInterval(function () { rec.due = Date.now() + rec.delay; rec.cb(); }, rec.delay);
         rec.repeating = true;
+        rec.cb();
       }, Math.max(0, rec.due - Date.now()));
       rec.repeating = false;
     }
@@ -117,10 +128,13 @@
 
     return {
       isPaused: function () { return paused; },
+      /** Game time in ms: wall time minus every paused stretch, frozen while paused. */
+      now: gameNow,
       /** Called by the harness when the session pauses/resumes. */
       setPaused: function (next) {
         next = !!next;
         if (next === paused) return;
+        if (next) pausedSince = Date.now(); else pausedTotal += Date.now() - pausedSince;
         paused = next;
         if (paused) {
           timers.forEach(function (rec) {

@@ -14,10 +14,13 @@
  *   2. fr-game       the game-structure library's own suite, including its fuzz soak
  *   3. fr-screen     the shared-screen drawing vocabulary both renderers honour
  *   4. timer shim    the pausable clock: freezes on pause, stale clears kill nothing
+ *   4b. tooling      the harness's own tests: the validator, version check, mutant
+ *                    runner, the runner's model of the shell, playtest's modes, the
+ *                    screen probe — each once wrong in a way that reported green
  *   5. validate      every bundle would import cleanly into the app
  *   6. versions      every game that changed bumped its manifest version
- *   7. playtest      every bundle plays to a finish under bots: hostile input, leaves,
- *                    pauses, reconnects, real button presses, a TV coming and going
+ *   7. playtest      every bundle plays to a finish under bots: hostile input, pauses,
+ *                    warm and cold reconnects, real button presses, a TV coming and going
  *   8. screens       every shared screen draws at six shapes, fits, and leaks nothing
  *   9. phones        every phone screen, laid out by WebKit at six device sizes: nothing
  *                    clipped, overlapping, under the home bar, too small to tap, or
@@ -47,11 +50,20 @@ const bundleTests = readdirSync(samples).sort().flatMap(d =>
         .map(f => [`${d} ${f.replace('.test.mjs', '')}`, `playtest/samples/${d}/${f}`, []])
     : []);
 
+/* Every check below walks playtest/samples with --all, and a walk over nothing passes.
+ * A gate that ran no game at all must not say green. */
+const bundleCount = readdirSync(samples).filter(d => existsSync(join(samples, d, 'manifest.json'))).length;
+if (!bundleCount) {
+  console.log(`✗ no bundles in ${samples} — every check would pass by checking nothing`);
+  process.exit(1);
+}
+
 const steps = [
   ['Table SDK conformance', 'conformance/run-studio.mjs', []],
   ['fr-game library',       'sdk/fr-game.test.mjs',       []],
   ['fr-screen library',     'sdk/fr-screen.test.mjs',     []],
   ['timer shim',            'sdk/table-sdk.test.mjs',      []],
+  ['tooling self-tests',    'harness/harness.test.mjs',    []],
   ['bundle validation',     'validate.mjs',               ['--all', '--strict']],
   ['version bumps',         'harness/bumps.mjs',          []],
   ['headless playtest',     'harness/playtest.mjs',       ['--all', '--games', quick ? '10' : '24']],

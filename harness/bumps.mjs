@@ -21,7 +21,8 @@ import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO } from './runner.mjs';
 
-const git = (...args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+let gitCwd = REPO;
+const git = (...args) => execFileSync('git', args, { cwd: gitCwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
 function baseRef(wanted) {
   const tries = wanted ? [wanted] : [process.env.FR_BASE, 'origin/main', 'main'].filter(Boolean);
@@ -46,14 +47,24 @@ const newer = (a, b) => {
   return false;
 };
 
-export function checkBumps({ base } = {}) {
+/** Two manifests that differ in nothing but their version. Key order is not a change. */
+export function sameIgnoringVersion(a, b) {
+  const norm = (v) => Array.isArray(v) ? v.map(norm)
+    : (v && typeof v === 'object') ? Object.fromEntries(Object.keys(v).sort().map(k => [k, norm(v[k])])) : v;
+  const strip = (m) => { const c = { ...(m || {}) }; delete c.version; return JSON.stringify(norm(c)); };
+  return strip(a) === strip(b);
+}
+
+/** `repo` is for the dev kit's own tests, which build a throwaway git history. */
+export function checkBumps({ base, repo = REPO } = {}) {
+  gitCwd = repo;
   const ref = baseRef(base);
   if (!ref) return { skipped: 'no base branch to compare with (not a git checkout, or no main)' };
   const samples = 'playtest/samples';
   const problems = [], checked = [];
-  for (const key of readdirSync(join(REPO, samples)).sort()) {
+  for (const key of readdirSync(join(repo, samples)).sort()) {
     const dir = `${samples}/${key}`;
-    if (!existsSync(join(REPO, dir, 'manifest.json'))) continue;
+    if (!existsSync(join(repo, dir, 'manifest.json'))) continue;
     let changed;
     try {
       // Committed AND uncommitted changes since the base — a check run before you
@@ -62,10 +73,16 @@ export function checkBumps({ base } = {}) {
       changed = changed.concat(git('ls-files', '--others', '--exclude-standard', '--', dir).split('\n').filter(Boolean));
     } catch (e) { continue; }
     const shipped = [...new Set(changed)].filter(f => !f.endsWith('.mjs') && !f.endsWith('/manifest.json'));
-    const mine = JSON.parse(readFileSync(join(REPO, dir, 'manifest.json'), 'utf8')).version;
-    let theirs = null;
-    try { theirs = JSON.parse(git('show', `${ref}:${dir}/manifest.json`)).version; } catch (e) { /* new bundle */ }
+    const mineManifest = JSON.parse(readFileSync(join(repo, dir, 'manifest.json'), 'utf8'));
+    const mine = mineManifest.version;
+    let theirs = null, theirsManifest = null;
+    try { theirsManifest = JSON.parse(git('show', `${ref}:${dir}/manifest.json`)); theirs = theirsManifest.version; } catch (e) { /* new bundle */ }
     if (!theirs) continue;
+    // The manifest ships too — the app reads its name, player range, teams and screen
+    // from it. Only its version line was ever meant to be exempt (bumping it is the
+    // point), but the whole file was, so `"maxPlayers": 6 → 8` with no bump passed
+    // and two phones could hold the same id@version with different manifests.
+    if (!sameIgnoringVersion(mineManifest, theirsManifest)) shipped.push(`${dir}/manifest.json`);
     if (shipped.length && !newer(mine, theirs)) {
       problems.push({ key, mine, theirs, files: shipped.map(f => f.slice(dir.length + 1)) });
     } else if (shipped.length) checked.push({ key, from: theirs, to: mine });
@@ -76,7 +93,12 @@ export function checkBumps({ base } = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const i = process.argv.indexOf('--base');
   const out = checkBumps({ base: i === -1 ? null : process.argv[i + 1] });
-  if (out.skipped) { console.log(`  ~ version bumps: skipped — ${out.skipped}`); process.exit(0); }
+  if (out.skipped) {
+    // Locally a checkout with no main to compare against is a shrug. In CI it would be a
+    // gate that silently stopped gating (a shallow clone), so there it is a failure.
+    console.log(`  ${process.env.CI ? '✗' : '~'} version bumps: skipped — ${out.skipped}`);
+    process.exit(process.env.CI ? 1 : 0);
+  }
   for (const c of out.checked) console.log(`  ✓ ${c.key.padEnd(12)} ${c.from} → ${c.to}`);
   for (const p of out.problems) {
     console.log(`  ✗ ${p.key.padEnd(12)} changed since ${out.ref} (${p.files.slice(0, 4).join(', ')}${p.files.length > 4 ? ', …' : ''}) `

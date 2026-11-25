@@ -17,6 +17,18 @@
  *   A SEEDED WORLD. The clock, the RNG and the bot policies are all driven from one seed,
  *   so a failure prints a seed that reproduces it exactly.
  *
+ * WHAT IT MODELS, AND WHAT IT DOES NOT. Modelled as the shell does it (TableBridge,
+ * HostSession, ClientSession, TableLink): the star topology; every delivery asynchronous
+ * and in order, never inside the call that sent it; `start` before any message; the
+ * table-wide pause, held while anyone is away or the host has stepped out; warm
+ * catch-up, cold rebuild from the whole history with feedback muted, held taps resent
+ * once after the unpause; the last endGame winning; the shell's team presets.
+ * Not modelled: network latency (a message lands right after the task that sent it,
+ * before any timer, as the Studio's microtasks do — on a device a timer due in the same
+ * few milliseconds may win); a pause reaching each device a hop apart; the host's own
+ * page going away (that ends the session on a device); the lobby, bundle transfer and
+ * Play Again. Layout is phone.mjs's job.
+ *
  * The DOM shim is deliberately dumb. Games render by assigning innerHTML and reading back
  * buttons, so a shim only needs to make that not crash and let us see what was rendered —
  * it is not trying to be a browser. If a game needs real layout, screenshot it in the
@@ -75,6 +87,8 @@ export function virtualClock() {
    * where "at 12,500ms" is not, because several things happen at the same instant. */
   const started = {};
   const api = {
+    /** Called after every timer callback (the runner drains its message queue here). */
+    afterEach: null,
     get now() { return now; },
     get armed() { return jobs.size; },
     /** How many of `owner`'s callbacks have started so far. */
@@ -100,6 +114,7 @@ export function virtualClock() {
         if (job.every) job.at = now + job.every; else jobs.delete(id);
         if (job.owner) started[job.owner] = (started[job.owner] || 0) + 1;
         job.fn();
+        if (api.afterEach) api.afterEach();     // the runner delivers what that task sent
         if (++fired > 100000) throw new Error('virtual clock livelock — a timer is rescheduling itself with no delay');
       }
       now = target;
@@ -364,6 +379,16 @@ export function loadBundle(game) {
   return { dir, manifest, entry, entryHTML, gameSrc, docScripts, bodyIds };
 }
 
+/** The shell's team presets (TeamInfo.presets): a teams game starts with the first two,
+ *  and joiners are dealt to the smallest team, which for a table filled in seat order
+ *  is round-robin. Ids, names and colours exactly as the app hands them to a game. */
+export const SHELL_TEAMS = [
+  { id: 't0', name: 'Red Team', color: '#e0564b' },
+  { id: 't1', name: 'Blue Team', color: '#4a90e0' },
+  { id: 't2', name: 'Green Team', color: '#43b06b' },
+  { id: 't3', name: 'Gold Team', color: '#e0a52e' }
+];
+
 /** How many screens a bundle is booted with when the caller doesn't say. */
 export function defaultScreens(manifest) {
   return manifest && manifest.screen === 'required' ? 1 : 0;
@@ -404,9 +429,7 @@ export async function runGame(opts = {}) {
    * it reads Table.teams and refuses to start without them. Booting one with no teams
    * left FISHBOWL stuck in its entry phase forever, which looked like the game hanging. */
   let teams = opts.teams || [];
-  if (!teams.length && manifest.teams === 'required') {
-    teams = [{ id: 't1', name: 'Red', color: '#e0574a' }, { id: 't2', name: 'Blue', color: '#4a86e0' }];
-  }
+  if (!teams.length && manifest.teams === 'required') teams = SHELL_TEAMS.slice(0, 2);
   const assignTeam = (i) => (teams.length ? teams[i % teams.length].id : undefined);
   const roster = Array.isArray(opts.players) ? opts.players
     : Array.from({ length: count }, (_, i) => ({
@@ -448,8 +471,8 @@ export async function runGame(opts = {}) {
       if (fromGame) outbox(from, 'send', payload);
       // An INTENT, even one the host sends itself, is never a view — recording it as
       // one made the fuzzer think a refused intent had changed the published state.
-      // `self` marks the host's OWN game sending to itself: a phone replayed on its
-      // own (phone.mjs) loops that back by itself and must not be handed it twice.
+      // `self` marks the host's OWN game sending to itself (no wire: TableBridge hands
+      // it straight back to the page — still asynchronously).
       deliver(hostId, from, payload, false, !!fromGame && from === hostId);
     },
     broadcast(from, payload) {
@@ -478,9 +501,10 @@ export async function runGame(opts = {}) {
       // result already existed, which made playtest's "endGame fires once" assertion
       // unfalsifiable — it could not fail by construction. Neither real harness dedupes:
       // HostSession.endGame overwrites gameResult and re-broadcasts, so on a real phone a
-      // second call replaces the results screen with a different winner.
+      // second call replaces the results screen with a different winner — and so the
+      // result here is the LAST one, as the room would see it.
       log.push({ t: clock.now, kind: 'endGame', payload: r });
-      if (!result) result = r;
+      result = r;
     },
     feedback(from, kind, value) { log.push({ t: clock.now, kind, from, value }); },
     saveState(from, v) { phones.get(from).saved = v; },
@@ -501,25 +525,58 @@ export async function runGame(opts = {}) {
   }
 
   /** Host -> one player, through the connection layer: kept in their history, and
-   *  delivered now if they're connected. */
+   *  delivered if they're connected. A phone's `seen` is what it has APPLIED (the
+   *  ack TableLink resumes from), so it moves when the message lands, not when sent. */
   function post(toId, fromId, payload) {
     if (!phones.has(toId)) return;
-    (history[toId] || (history[toId] = [])).push({ from: fromId, payload: JSON.parse(JSON.stringify(payload)) });
-    const phone = phones.get(toId);
-    if (phone.dropped) return;
-    phone.seen = history[toId].length;
-    deliver(toId, fromId, payload, true);
+    const list = history[toId] || (history[toId] = []);
+    list.push({ from: fromId, payload: JSON.parse(JSON.stringify(payload)) });
+    deliver(toId, fromId, payload, true, false, list.length);
   }
 
-  function deliver(toId, fromId, payload, isView, self) {
+  /* EVERY delivery is asynchronous, as on a device: a page's Table.send/broadcast/
+   * sendTo posts to native and returns; the message reaches its page (another phone's,
+   * or the host's own — TableBridge hands a host's own send back through
+   * evaluateJavaScript) as a task of its own, after the sender's code has run to the
+   * end. The Studio does the same with queueMicrotask.
+   *
+   * It used to be a plain call. A host's Table.send was handled before the next line of
+   * its click handler ran, and a client's reply re-entered the host's onMessage while
+   * the host was still inside its own broadcast() — orderings no device can produce,
+   * so a game could pass here leaning on one, or fail here for one that cannot happen.
+   *
+   * So deliveries queue, FIFO, and drain after each task: each test-API call (send,
+   * press, reconnect, …) and each timer callback — before the next one runs, as a
+   * microtask would. */
+  const inbox = [];
+  let draining = false;
+  function drain() {
+    if (draining) return;
+    draining = true;
+    try {
+      let n = 0;
+      while (inbox.length) {
+        if (++n > 200000) { inbox.length = 0; throw new Error('message livelock — two pages answering each other forever'); }
+        deliverNow(...inbox.shift());
+      }
+    } finally { draining = false; }
+  }
+
+  function deliver(toId, fromId, payload, isView, self, seq) {
+    // Cloned now: what was sent is what arrives, whatever the sender does to the object next.
+    inbox.push([toId, fromId, JSON.parse(JSON.stringify(payload)), isView, self, seq]);
+  }
+
+  function deliverNow(toId, fromId, payload, isView, self, seq) {
     const phone = phones.get(toId);
-    if (!phone || phone.dropped) return;
+    if (!phone || phone.dropped) return;        // in its history; caught up on return
+    if (seq) phone.seen = Math.max(phone.seen, seq);
     // A page that hasn't started yet gets its messages after its start, as on a phone:
     // TableBridge queues everything until the page is ready, then fires start, then
     // drains the queue. Delivering them first (as this used to) had a client's own
     // onStart wipe the state it had just been sent — the reason every game grew a
     // `hello` handshake to ask for it again.
-    if (!phone.started) { phone.early.push([fromId, JSON.parse(JSON.stringify(payload)), isView, self]); return; }
+    if (!phone.started) { phone.early.push([fromId, payload, isView, self]); return; }
     if (isView) record(toId, payload);
     phone.fire('message', fromId, JSON.parse(JSON.stringify(payload)), self);
     // A shadow (see reconnect) hears everything its player hears from here on.
@@ -581,8 +638,10 @@ export async function runGame(opts = {}) {
       sendTo: (to, payload) => bus.sendTo(p.id, to, payload),
       endGame: (r) => bus.endGame(p.id, r),
       saveState: (v) => bus.saveState(p.id, v),
-      haptic: (s) => bus.feedback(p.id, 'haptic', s),
-      sound: (n) => bus.feedback(p.id, 'sound', n),
+      // Silent while a rebuilt page replays the game so far, exactly as TableBridge's
+      // transport: `if (!window.__frReplaying) post(...)`.
+      haptic: (s) => { if (!sandbox.__frReplaying) bus.feedback(p.id, 'haptic', s); },
+      sound: (n) => { if (!sandbox.__frReplaying) bus.feedback(p.id, 'sound', n); },
       error: (m) => bus.error(p.id, m)
     };
     vm.runInContext(`
@@ -629,14 +688,24 @@ export async function runGame(opts = {}) {
     return phone;
   }
 
+  /* Why the table is paused, as HostSession keeps it: `waitingFor` — every player it
+   * is holding for — plus the host's own absence (stepAway), which the playtest's
+   * pause stands in for. Paused while EITHER holds. A single boolean set by whoever
+   * spoke last unpaused the whole table when one of two absent phones came back. */
+  const away = new Set();
+  let held = false;
+  const tablePaused = () => held || away.size > 0;
+
   /** Freeze or thaw every connected phone's clocks, the way the shell's pause does. */
   function pauseAll(on) {
-    for (const p of phones.values()) {
+    for (const p of [...phones.values(), ...shadows.values()]) {
       if (p.dropped) continue;
       p.timeline.push({ t: clock.now, seq: clock.firedBy(p.owner), ev: 'pause', a: !!on, b: null });
       try { p.sandbox.window.__tableSetPaused(!!on); } catch (e) {}
     }
   }
+
+  function sandboxPause(phone, on) { try { phone.sandbox.window.__tableSetPaused(!!on); } catch (e) {} }
 
   for (const p of roster) bootPhone(p, 0);
 
@@ -651,6 +720,8 @@ export async function runGame(opts = {}) {
     }
   }
   for (const phone of phones.values()) startPhone(phone);
+  clock.afterEach = drain;
+  drain();
 
   return {
     manifest, log, clock, bundle, seed,
@@ -667,9 +738,11 @@ export async function runGame(opts = {}) {
     get screens() { return screens; },
 
     /** Send an intent as a player, exactly as a tap would. */
-    send(playerId, payload) { bus.send(playerId, payload); return this; },
+    send(playerId, payload) { bus.send(playerId, payload); drain(); return this; },
     /** Advance virtual time. Returns the number of timer callbacks that fired. */
-    advance(ms) { return clock.advance(ms); },
+    advance(ms) { drain(); return clock.advance(ms); },
+    /** Deliver everything in flight now (each test-API call already does). */
+    flush() { drain(); return this; },
     /** The last state this player received. */
     view(playerId) { return phones.get(playerId)?.lastView ?? null; },
     /** This player's screen, as plain text — what a bot or an agent "sees". Pass
@@ -798,8 +871,10 @@ export async function runGame(opts = {}) {
       if (!p || p.dropped) return this;
       // Its own shell freezes it too: a phone whose link dropped shows "Reconnecting…"
       // with its game's clocks stopped, exactly like everyone else's.
+      away.add(playerId);
       pauseAll(true);
       p.dropped = true;
+      drain();
       return this;
     },
 
@@ -814,12 +889,14 @@ export async function runGame(opts = {}) {
      *   cold + shadow — the cold rebuild, booted BESIDE the phone that never dropped
      *     (which is caught up warm and carries on), so the two screens can be compared.
      *
-     * Every other device's game hears `join` for them, as from HostSession, and the
-     * table unpauses. Nobody's game ever heard that they were gone.
+     * Nobody's game hears that they are back, any more than it heard they were gone,
+     * and the table unpauses — unless it is still waiting on someone else, or held
+     * (see setPaused), exactly as HostSession's `waitingFor` decides.
      */
     reconnect(playerId, { cold = false, shadow = false } = {}) {
       const old = phones.get(playerId);
       if (!old || old.gone) return this;
+      away.delete(playerId);
       const info = roster.find(r => r.id === playerId);
       const mine = history[playerId] || [];
       // Nobody's game hears that they're back, any more than it heard they were gone:
@@ -831,18 +908,22 @@ export async function runGame(opts = {}) {
         phone.seen = mine.length;
       };
       const flushOutbox = (phone) => { for (const payload of phone.outboxQueue.splice(0)) bus.send(playerId, payload, true); };
+      /* HostSession.resume sends the joinAck and what they missed, then publishes the
+       * unpause — all at once. The taps their phone held while it was away go out only
+       * when the joinAck reaches it, a round trip later, so the host's game hears them
+       * on an UNPAUSED table (unless it is still waiting on someone else). */
       if (!cold) {
         old.dropped = false;
         catchUp(old);
+        pauseAll(tablePaused());
         flushOutbox(old);
-        pauseAll(false);
+        drain();
         return this;
       }
       let phone;
       if (shadow) {
         old.dropped = false;
         catchUp(old);
-        flushOutbox(old);
         const prev = shadows.get(playerId);
         if (prev) clock.clearOwner(prev.owner);
         phone = bootPhone(info, old.generation + 1, true);
@@ -856,12 +937,26 @@ export async function runGame(opts = {}) {
       phone.ref.hold = true;
       phone.started = true;
       phone.fire('start', startRoster);
-      for (const m of mine) { phone.lastView = m.payload; phone.fire('message', m.from, m.payload); }
+      // pageDidLoad: `start`, then — the SDK being fresh — re-freeze the page if the
+      // table is still paused, then the queued history.
+      if (tablePaused()) {
+        phone.timeline.push({ t: clock.now, seq: clock.firedBy(phone.owner), ev: 'pause', a: true, b: null });
+        sandboxPause(phone, true);
+      }
+      // Each replayed message runs with window.__frReplaying set, as
+      // TableBridge.deliverReplayedMessage does: feedback is muted for its duration.
+      for (const m of mine) {
+        phone.lastView = m.payload;
+        phone.sandbox.__frReplaying = true;
+        try { phone.fire('message', m.from, m.payload); } finally { phone.sandbox.__frReplaying = false; }
+      }
       phone.seen = mine.length;
       phone.ref.hold = false;
+      pauseAll(tablePaused());
+      if (shadow) flushOutbox(old);
       for (const payload of phone.ref.queue.splice(0)) bus.send(playerId, payload, true);
+      drain();
       if (shadow) phone.ref.live = false;
-      pauseAll(false);
       return this;
     },
     /**
@@ -880,6 +975,7 @@ export async function runGame(opts = {}) {
                nth: Math.max(0, same.indexOf(control)), root: !control.attrs, id: control._id || null }, b: null });
       }
       control.click();
+      drain();
       return this;
     },
     /** Press the shadow's copy of a control just pressed on the real phone, so local
@@ -892,6 +988,7 @@ export async function runGame(opts = {}) {
       const twin = this.clickable(playerId, true).find(h => h.onclick && sig(h) === want);
       if (!twin) return false;
       try { twin.click(); } catch (e) { return false; }
+      drain();
       return true;
     },
     hasShadow(playerId) { return shadows.has(playerId); },
@@ -901,21 +998,25 @@ export async function runGame(opts = {}) {
       screens = Math.max(0, n | 0);
       const host = phones.get(hostId);
       if (host && !host.dropped) host.fire('screens', screens);
+      drain();
       return this;
     },
 
     /** Hand one phone a message directly, as if the host had sent it. For hand-written
      *  phone states a played game can't reach. */
-    deliverTo(playerId, payload, from) { deliver(playerId, from || hostId, payload, true); return this; },
+    deliverTo(playerId, payload, from) { deliver(playerId, from || hostId, payload, true); drain(); return this; },
 
     /**
-     * Pause or resume EVERY phone, the way the shell does when an app backgrounds or a
-     * call lands mid-game. The SDK's timer shim freezes each device's timers and fires
-     * Table.onPause/onResume; while paused, `advance()` still moves the clock (real
-     * time passes on a paused phone too), so state that leaks wall-clock time into
-     * game logic shows itself here.
+     * Hold or release the table, the way the shell does when the HOST's own app
+     * backgrounds (HostSession.stepAway). The SDK's timer shim freezes each device's
+     * timers and fires Table.onPause/onResume; while paused, `advance()` still moves
+     * the clock (real time passes on a paused phone too), so state that leaks
+     * wall-clock time into game logic shows itself here. Releasing it does not unpause
+     * a table that is still waiting on a phone that dropped.
      */
-    setPaused(on) { pauseAll(on); return this; },
+    setPaused(on) { held = !!on; pauseAll(tablePaused()); drain(); return this; },
+    /** Is the table paused right now (anyone away, or held)? */
+    get paused() { return tablePaused(); },
 
     /** Mark "look at this phone now" on every phone's timeline. phone.mjs measures the
      *  real layout at exactly these moments. */

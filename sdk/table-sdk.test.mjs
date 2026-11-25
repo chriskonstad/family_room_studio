@@ -77,6 +77,7 @@ function shimmedWindow() {
   vm.runInContext(sdkSrc, sandbox);
   const frTable = w.__frTable;   // the SDK installs itself on `window`
   const clock = frTable.installTimerShim(w);
+  Object.defineProperty(w, '__ctx', { value: sandbox, enumerable: false });
   return { w, native, clock };
 }
 
@@ -144,6 +145,79 @@ test('timers freeze while paused and resume with the time remaining', () => {
   assert.equal(n, 0, 'only the remaining 600ms was owed');
   native.advance(2);
   assert.equal(n, 1);
+});
+
+section('installTimerShim — an interval behaves like a native one');
+
+test('an interval whose first fire throws keeps firing', () => {
+  const { w, native } = shimmedWindow();
+  let n = 0;
+  w.setInterval(() => { n++; if (n === 1) throw new Error('first fire'); }, 100);
+  try { native.advance(150); } catch (e) { /* the page's error handler would log it */ }
+  native.advance(1000);
+  assert.ok(n >= 10, `a native interval survives a throw; this one fired ${n} time(s)`);
+});
+
+test('…and so does one whose first fire after a resume throws', () => {
+  const { w, native, clock } = shimmedWindow();
+  let n = 0, boom = false;
+  w.setInterval(() => { n++; if (boom) { boom = false; throw new Error('after resume'); } }, 100);
+  native.advance(350);
+  clock.setPaused(true); native.advance(5000); clock.setPaused(false);
+  boom = true;
+  const before = n;
+  try { native.advance(100); } catch (e) { /* logged by the page */ }
+  native.advance(1000);
+  assert.ok(n >= before + 10, `fired ${n - before} time(s) after the resume`);
+});
+
+test('clearing an interval from inside its first fire stops it', () => {
+  const { w, native } = shimmedWindow();
+  let n = 0;
+  const id = w.setInterval(() => { n++; w.clearInterval(id); }, 100);
+  native.advance(1000);
+  assert.equal(n, 1);
+});
+
+test('a pause that lands inside an interval\'s first fire is honoured', () => {
+  const { w, native, clock } = shimmedWindow();
+  let n = 0;
+  w.setInterval(() => { n++; if (n === 1) clock.setPaused(true); }, 100);
+  native.advance(1000);
+  assert.equal(n, 1, `the shim armed a native interval while paused (${n} fires)`);
+  clock.setPaused(false);
+  native.advance(350);
+  assert.equal(n, 4, 'and resumes on its period');
+});
+
+section('installTimerShim — game time, and FR.clock on a phone');
+
+test('game time stops while paused and carries on from where it stopped', () => {
+  const { w, native, clock } = shimmedWindow();
+  const t0 = w.__frGameNow();
+  native.advance(1000);
+  assert.equal(w.__frGameNow() - t0, 1000);
+  clock.setPaused(true);
+  native.advance(44000);
+  assert.equal(w.__frGameNow() - t0, 1000, 'frozen while paused');
+  clock.setPaused(false);
+  native.advance(500);
+  assert.equal(clock.now() - t0, 1500);
+});
+
+test('a phone countdown does not run out during a pause', () => {
+  const { w, native, clock } = shimmedWindow();
+  vm.runInContext(readFileSync(join(REPO, 'fr-game.js'), 'utf8'), w.__ctx);
+  const phone = w.FR.clock();                 // no timers: a phone
+  phone.see({ now: 10000 });                  // the host's clock read 10s
+  native.advance(2000);
+  assert.equal(phone.left(20000), 8);
+  clock.setPaused(true);                      // the host's clock stops here too
+  native.advance(44000);
+  clock.setPaused(false);
+  assert.equal(phone.left(20000), 8, 'the host still has 8s on the clock; so must the phone');
+  native.advance(1000);
+  assert.equal(phone.left(20000), 7);
 });
 
 console.log(results.join('\n'));

@@ -203,8 +203,13 @@ export async function playOne(game, {
   const clicked = { presses: 0, intents: 0 };
   // And a quarter get paused mid-game for 44 virtual seconds, at a seeded moment —
   // drawn from `shape`, so the same game can be played again WITHOUT the pause and
-  // compared move for move (see playtest()).
-  const pauseAt = pause ? (2 + shape.int(25)) : 0;
+  // compared move for move (see playtest()). Half land early (turns 2..4), half
+  // anywhere in 2..26: a single 2..26 schedule never once paused most games of
+  // THE DETONATOR, BLITZ or CAPTAIN (2–14 turns long), and the pause twin then
+  // compared two identical unpaused games and called it a pass.
+  const pauseAt = pause ? (shape() < 0.5 ? 2 + shape.int(3) : 2 + shape.int(25)) : 0;
+  let pausedAt = 0;
+  let toggled = false;
   // Half of drops land early (turns 2..7), half late (3..32). A single late
   // schedule left short games — BLITZ, THE DETONATOR — ending before the drop
   // ever fired, so their reconnect path went untested while reporting green.
@@ -391,6 +396,7 @@ export async function playOne(game, {
         return fail(`threw while the table was paused: ${e.message}`);
       }
       table.setPaused(false);
+      pausedAt = turns;
       if (liveViews() !== frozen) {
         return fail(`published state moved while the table was paused — game time is coming `
              + `from wall-clock deltas or a timer the pause shim doesn't own`);
@@ -443,6 +449,7 @@ export async function playOne(game, {
       try { table.setScreens(table.screens ? 0 : 1); } catch (e) {
         return fail(`threw when a shared screen ${table.screens ? 'left' : 'arrived'}: ${e.message}`);
       }
+      toggled = true;
     }
 
     // Hostile mode: fire things no UI offered, from anyone, including a ghost.
@@ -545,7 +552,7 @@ export async function playOne(game, {
     return done(`endGame fired ${table.wire('endGame').length} times`);
   }
   // A team game legitimately names a TEAM as the winner — Table.endGame takes playerId
-  // or teamId in standings, and FISHBOWL's winner is 't1'. Asserting "must be a player"
+  // or teamId in standings, and FISHBOWL's winner is a team id ('t0'). Asserting "must be a player"
   // reported a healthy game as broken.
   const teamIds = (table.teams || []).map(t => t.id);
   const valid = ids.concat(teamIds);
@@ -600,7 +607,7 @@ export async function playOne(game, {
   if (verbose) console.log(`    seed ${seed}: ${turns} turns, winner ${result.winnerId}`
     + (ui ? `, pressed ${clicked.presses} controls (${clicked.intents} intents)` : ''));
   return { ok: true, turns, result, sent, legal: legalSeen, vocab, fingerprint, story, declared: !!declared, reconnectMode,
-           phases: phasesOf(table) };
+           pausedAt, pauseAt, toggled, phases: phasesOf(table) };
 }
 
 /** How many intents the host has ever refused, or null for a game not on FR.host. */
@@ -706,6 +713,14 @@ export async function playtest(game, opts = {}) {
   // the bundle's own min/max, so an out-of-range count just tests the nearest edge.
   const SWEEP = [3, 2, 4, 6, 8];
 
+  /* Every mode a batch rotates through must actually HAPPEN in it. A pause or a drop is
+   * scheduled for a seeded turn, and a game that ends first never meets it — the run
+   * passes, its twin comparison is between two identical games, and the batch is green
+   * having tested nothing. One run missing it is a note; every run missing it is a
+   * failure. [runs, exercised, first such run] per mode. */
+  const coverage = { pause: [0, 0, null], reconnect: [0, 0, null], toggleScreen: [0, 0, null] };
+  let completed = true;
+
   for (let i = 0; i < games; i++) {
     const seed = first + i;
     const players = opts.players || SWEEP[i % SWEEP.length];
@@ -715,11 +730,22 @@ export async function playtest(game, opts = {}) {
     totalTurns += res.turns;
     if (!res.ok) {
       failures.push({ seed, why: res.why, players, ...modes });
-      if (failures.length >= 5) break;       // five is plenty to diagnose
+      if (failures.length >= 5) { completed = false; break; }      // five is plenty to diagnose
       continue;
     }
+    const count = (mode, did) => {
+      const c = coverage[mode];
+      c[0]++; if (did) c[1]++;
+      if (!c[2]) c[2] = { seed, players, ...modes };
+    };
+    if (modes.pause) count('pause', res.pausedAt);
+    if (modes.reconnect) count('reconnect', res.reconnectMode);
+    if (modes.toggleScreen) count('toggleScreen', res.toggled);
     if (modes.reconnect && !res.reconnectMode) {
       notes.push(`seed ${seed}: the game ended before its phone could drop — that seed's reconnect went untested`);
+    }
+    if (modes.pause && !res.pausedAt) {
+      notes.push(`seed ${seed}: the game ended (turn ${res.turns}) before its pause (turn ${res.pauseAt}) — that seed's pause went untested`);
     }
     vocab = res.vocab;
     for (const ph of res.phases) if (!phases.includes(ph)) phases.push(ph);
@@ -736,7 +762,12 @@ export async function playtest(game, opts = {}) {
     // missed, the phone is indistinguishable from one that only sat through a pause.
     if (modes.reconnect && res.reconnectMode === 'warm') {
       const paused = await playOne(game, { ...run, reconnect: 'reference' });
-      if (paused.ok && paused.story !== res.story) {
+      // A reference that FAILS is not a comparison skipped — it is the same game, with
+      // only a pause where the drop was, going wrong.
+      if (!paused.ok) {
+        failures.push({ seed, players, ...modes,
+          why: `the same seed with only a pause in place of the warm reconnect failed: ${paused.why}` });
+      } else if (paused.story !== res.story) {
         failures.push({ seed, players, ...modes,
           why: `a warm reconnect changed the game — the same seed with only a pause in its place said `
              + `different things. The shell's catch-up must be invisible; something reacts to who is connected` });
@@ -744,7 +775,10 @@ export async function playtest(game, opts = {}) {
     }
     if (modes.pause) {
       const plain = await playOne(game, { ...run, pause: 'reference' });
-      if (plain.ok && plain.story !== res.story) {
+      if (!plain.ok) {
+        failures.push({ seed, players, ...modes,
+          why: `the same seed played WITHOUT the pause failed (the paused game passed): ${plain.why}` });
+      } else if (plain.story !== res.story) {
         failures.push({ seed, players, ...modes,
           why: `a 44s pause changed the game, not just its timing — the same seed played with no pause `
              + `said different things (${plain.turns} turns/winner ${plain.result?.winnerId} unpaused, `
@@ -770,6 +804,17 @@ export async function playtest(game, opts = {}) {
       }
     }
   }
+  if (completed) {
+    const what = { pause: 'paused', reconnect: 'had a phone drop and come back', toggleScreen: 'switched a TV on or off' };
+    for (const [mode, [runs, did, first]] of Object.entries(coverage)) {
+      if (runs && !did) {
+        failures.push({ ...first,
+          why: `${mode} never happened: none of the batch's ${runs} ${mode} run(s) ${what[mode]} before the game ended, `
+             + `so that mode — and the comparison it feeds — tested nothing. Run more games, or look at why every game ends so soon` });
+      }
+    }
+  }
+
   // Intents the whole batch never once sent. 'hello' is plumbing, and an intent the
   // game marks hidden is deliberately outside the enumerable move space (free text
   // with a bot.mjs, a score stream) — flagging those would train people to ignore the

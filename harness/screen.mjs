@@ -112,7 +112,7 @@ function strings(value, out = []) {
  *  Its Math.random is seeded and its clock is the frame clock, so two screens fed
  *  the same things draw the same frames, op for op. That is what lets the leak probe
  *  below compare a screen that was handed secrets with one that wasn't. */
-function bootScreen(dir) {
+function bootScreen(dir, { players = [], teams = [], seed = 0 } = {}) {
   const frScreen = readFileSync(join(REPO, 'sdk/fr-screen.js'), 'utf8');
   const src = readFileSync(join(dir, 'screen.js'), 'utf8');
 
@@ -142,12 +142,20 @@ function bootScreen(dir) {
     dt: 16,
     onDraw(fn) { drawFn = fn; }
   };
+  // The device's screen Table (ScreenBridge.swift), field for field: it knows the
+  // roster, the teams and the seed, and onStart calls back AT ONCE with the players —
+  // it used to be recorded here and never called, so a screen that set itself up in
+  // onStart was never set up at all.
   const Table = {
     isScreen: true,
     isHost: false,
+    players: JSON.parse(JSON.stringify(players)),
+    teams: JSON.parse(JSON.stringify(teams)),
+    seed,
     onMessage(cb) { handlers.message = cb; },
-    onStart(cb) { handlers.start = cb; },
-    onPlayerJoin() {}, onPlayerLeave() {}, onPause() {}, onResume() {}
+    onStart(cb) { cb(Table.players); },
+    onPlayerJoin() {}, onPlayerLeave() {}, onPause() {}, onResume() {},
+    log() {}
   };
 
   sandbox.__boot = () => sandbox.createScreen(Table, screen);
@@ -290,9 +298,11 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
     const s = seed + g;
     const table = await runGame({ game: dir, seed: s, screens: 1 });
     const r = rng(s);
-    const screen = bootScreen(dir);
+    const who = { players: table.roster, teams: table.teams, seed: table.seed };
+    const screen = bootScreen(dir, who);
     // The control: an identical screen that only ever sees public broadcasts.
-    const clean = bootScreen(dir);
+    const clean = bootScreen(dir, who);
+    let fed = 0;                 // broadcasts handed to both screens so far
     const secrets = new Set();
     const told = new Set();
     let t = 0;
@@ -324,11 +334,14 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
       // uppercases, truncates or reformats what it renders would slip past it. A
       // sentinel on the glass is proof the screen drew what it was handed,
       // whatever it did to the characters on the way.
-      const last = table.wire('broadcast').slice(-1)[0];
-      if (last) {
-        screen.deliver(last.payload);
-        clean.deliver(last.payload);
-        const ph = last.payload && last.payload.s && last.payload.s.phase;
+      // EVERY broadcast since the last frame, in order, as the device's screen is
+      // handed them — not just the newest. A screen that keeps a log, or fires a
+      // celebration on a transition, sees the transitions it would see on a TV.
+      const all = table.wire('broadcast');
+      for (; fed < all.length; fed++) {
+        screen.deliver(all[fed].payload);
+        clean.deliver(all[fed].payload);
+        const ph = all[fed].payload && all[fed].payload.s && all[fed].payload.s.phase;
         if (ph) phases.add(ph);
       }
       // AFTER the public state, not before. Delivered first, the next broadcast wiped
@@ -359,8 +372,16 @@ export async function checkScreen(gameKey, { games = 6, seed = 1, verbose = fals
         // "no leaks".
         let control;
         try { control = clean.frame({ width: shape.width, height: shape.height, safe: shape.safe, t, dt: 16 }); }
-        catch (e) { control = null; }
-        if (control && JSON.stringify(control.ops) !== JSON.stringify(out.ops)) {
+        catch (e) {
+          // The copy that saw only public state threw where the probed copy drew: the
+          // private payloads are what let it draw at all. A real TV never gets them, so
+          // this is the screen a room would see — and skipping the comparison here
+          // passed it as "no leaks".
+          failures.push({ seed: s, why: `on ${shape.name} the screen threw when it had seen only the public state `
+            + `(${e.message}) but drew once it was handed a private payload — on a real TV, which is never sent one, it throws` });
+          return false;
+        }
+        if (JSON.stringify(control.ops) !== JSON.stringify(out.ops)) {
           const extra = out.texts.filter(x => !control.texts.includes(x));
           failures.push({ seed: s, why: `LEAK: on ${shape.name} the screen drew a different frame after it was `
             + `handed a private ${priv && priv.payload && priv.payload.t ? `"${priv.payload.t}" ` : ''}payload`

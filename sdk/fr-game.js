@@ -465,9 +465,16 @@
   /**
    * @param {Object} [timers] an FR.timers instance (host only). Omit on a phone.
    * @param {Function} [wallNow] wall clock in ms; tests inject a fake.
+   *
+   * A phone extrapolates on GAME time, not wall time: the pausable timer shim keeps
+   * it (`__frGameNow`, wall time minus every paused stretch). On wall time a phone's
+   * countdown kept running through a pause the host's clock sat out — 44 seconds of
+   * pause and every phone read 0 on resume, its order still 6s from expiring.
    */
   FR.clock = function (timers, wallNow) {
-    var wall = wallNow || function () { return Date.now(); };
+    var wall = wallNow || function () {
+      return typeof global.__frGameNow === 'function' ? global.__frGameNow() : Date.now();
+    };
     var nowMs = 0;                 // host: ticked. phone: last seen host time
     var seenAt = wall();           // wall moment nowMs was true
     var TICK = 250;

@@ -43,11 +43,23 @@ import { checkScreen } from './screen.mjs';
 const SAMPLES = join(REPO, 'playtest/samples');
 const DEFAULT_CHECKS = ['playtest', 'tests'];
 
+/* A failure that says nothing about the bug a mutant describes: the bundle no longer
+ * boots (a mutant that breaks the syntax or the load "is caught" by every suite ever
+ * written), or the tooling itself fell over (a browser that would not open a page). A
+ * mutant caught only that way is reported as INVALID — never as caught. */
+const NOT_A_CATCH = /^boot failed:|threw on load/;
+
 /** Run the named checks on a bundle directory. The first failure is the catch. */
-async function runChecks(dir, checks, { games }) {
+export async function runChecks(dir, checks, { games }) {
+  const known = ['playtest', 'tests', 'screen', 'phone'];
+  const unknown = checks.filter(c => !known.includes(c));
+  if (unknown.length) return { failed: true, invalid: true, by: 'mutants.mjs', why: `unknown check(s) ${unknown.join(', ')} — use ${known.join(', ')}` };
   if (checks.includes('playtest')) {
     const out = await playtest(dir, { games, seed: 1 });
-    if (out.failures.length) return { failed: true, by: 'playtest', why: out.failures[0].why };
+    if (out.failures.length) {
+      const why = out.failures[0].why;
+      return { failed: true, by: 'playtest', why, invalid: NOT_A_CATCH.test(why) };
+    }
   }
   if (checks.includes('tests')) {
     for (const f of readdirSync(dir).filter(f => f.endsWith('.test.mjs')).sort()) {
@@ -58,22 +70,29 @@ async function runChecks(dir, checks, { games }) {
       }
     }
   }
-  if (checks.includes('screen') && existsSync(join(dir, 'screen.js'))) {
+  if (checks.includes('screen')) {
+    // Asking for the screen check of a bundle with no screen used to run nothing and
+    // report the mutant as surviving a check that never happened.
+    if (!existsSync(join(dir, 'screen.js'))) return { failed: true, invalid: true, by: 'screen', why: 'the bundle has no screen.js to check' };
     const out = await checkScreen(dir, { games: 4 });
     if (out.failures && out.failures.length) return { failed: true, by: 'screen', why: out.failures[0].why };
   }
   if (checks.includes('phone')) {
     const { checkPhones } = await import('./phone.mjs');
     const out = await checkPhones(dir, {});
-    if (out.failures.length) return { failed: true, by: 'phone', why: out.failures[0].why };
+    // A page the browser could not drive is the tooling failing, not the suite
+    // catching anything; only a real finding counts.
+    const real = out.failures.filter(f => f.kind !== 'harness');
+    if (real.length) return { failed: true, by: 'phone', why: real[0].why };
+    if (out.failures.length) return { failed: true, invalid: true, by: 'phone', why: out.failures[0].why };
   }
   return { failed: false };
 }
 
 /** A fresh copy of a bundle, somewhere it cannot ship from. */
-function copyOf(key) {
+function copyOf(key, samples = SAMPLES) {
   const dir = mkdtempSync(join(tmpdir(), `fr-mutant-${key}-`));
-  cpSync(join(SAMPLES, key), dir, { recursive: true });
+  cpSync(join(samples, key), dir, { recursive: true });
   return dir;
 }
 
@@ -91,8 +110,9 @@ function apply(dir, mutant) {
   }
 }
 
-export async function mutate(key, { games = 16, only = null } = {}) {
-  const spec = join(SAMPLES, key, 'mutants.mjs');
+/** `samples` is for the dev kit's own tests, which mutate throwaway bundles. */
+export async function mutate(key, { games = 16, only = null, samples = SAMPLES } = {}) {
+  const spec = join(samples, key, 'mutants.mjs');
   if (!existsSync(spec)) return null;
   const mutants = ((await import(pathToFileURL(spec).href)).default || [])
     .filter(m => !only || only.some(o => m.name.includes(o)));
@@ -100,25 +120,39 @@ export async function mutate(key, { games = 16, only = null } = {}) {
   const baselines = new Map();
   for (const m of mutants) {
     const checks = m.checks || DEFAULT_CHECKS;
-    const ck = checks.join(',');
+    const n = m.games || games;
+    // The baseline must run exactly what the mutant will run. Keyed on the checks
+    // alone, a mutant asking for 80 games was compared with a 16-game baseline, and a
+    // failure in seeds 17..80 that the UNMUTATED bundle also has counted as a catch.
+    const ck = checks.join(',') + '@' + n;
     if (!baselines.has(ck)) {
-      const dir = copyOf(key);
-      try { baselines.set(ck, await runChecks(dir, checks, { games })); }
+      const dir = copyOf(key, samples);
+      try { baselines.set(ck, await runChecks(dir, checks, { games: n })); }
+      catch (e) { baselines.set(ck, { failed: true, by: 'the checks', why: `threw: ${e.message}` }); }
       finally { rmSync(dir, { recursive: true, force: true }); }
     }
     const base = baselines.get(ck);
+    if (base.invalid) {
+      results.push({ name: m.name, status: 'invalid', by: base.by, why: base.why });
+      continue;
+    }
     if (base.failed) {
       results.push({ name: m.name, status: 'baseline', why: `the unmutated bundle already fails ${base.by}: ${base.why}` });
       continue;
     }
-    const dir = copyOf(key);
+    const dir = copyOf(key, samples);
+    let applied = false;
     try {
       apply(dir, m);
+      applied = true;
       const t0 = Date.now();
-      const r = await runChecks(dir, checks, { games: m.games || games });
-      results.push({ name: m.name, status: r.failed ? 'caught' : 'survived', by: r.by, why: r.why, ms: Date.now() - t0, checks });
+      const r = await runChecks(dir, checks, { games: n });
+      const status = r.invalid ? 'invalid' : r.failed ? 'caught' : 'survived';
+      results.push({ name: m.name, status, by: r.by, why: r.why, ms: Date.now() - t0, checks });
     } catch (e) {
-      results.push({ name: m.name, status: 'stale', why: e.message });
+      // Only a find that no longer matches is stale; anything else is the tooling
+      // failing, which must not be reported as if the mutant had gone out of date.
+      results.push({ name: m.name, status: applied ? 'error' : 'stale', why: e.message });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -160,7 +194,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         if (flag('verbose', false)) console.log(`      ✓ ${r.name} — ${r.by}: ${String(r.why).split('\n')[0].slice(0, 150)}`);
       } else {
         console.log(`      ✗ ${r.status.toUpperCase()}: ${r.name}`);
-        console.log(`        ${String(r.why || 'every check passed with this bug in place').split('\n')[0]}`);
+        const why = String(r.why || 'every check passed with this bug in place').split('\n')[0];
+        console.log(`        ${r.status === 'invalid' ? `"caught" only by ${r.by} failing for a reason unrelated to the bug — ` : ''}${why}`);
       }
     }
   }

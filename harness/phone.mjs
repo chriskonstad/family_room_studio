@@ -46,7 +46,7 @@
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runGame, REPO, loadBundle, defaultScreens, scrubClocks } from './runner.mjs';
+import { runGame, REPO, loadBundle, defaultScreens, scrubClocks, SHELL_TEAMS } from './runner.mjs';
 import { playOne } from './playtest.mjs';
 
 const SAMPLES = join(REPO, 'playtest/samples');
@@ -84,7 +84,7 @@ async function record(dir, { seed, players, screens, leave, ui, bot }) {
   const { manifest } = loadBundle(dir);
   const lo = manifest.minPlayers || 1, hi = Math.min(8, manifest.maxPlayers || 8);
   const n = Math.max(lo, Math.min(hi, players));
-  const teamIds = manifest.teams === 'required' ? ['t1', 't2'] : null;
+  const teamIds = manifest.teams === 'required' ? SHELL_TEAMS.slice(0, 2).map(t => t.id) : null;
   const roster = LONG_ROSTER.slice(0, n).map(([name, emoji], i) => ({
     id: 'p' + i, name, emoji, teamId: teamIds ? teamIds[i % 2] : undefined }));
   const phase = (table) => {
@@ -207,12 +207,14 @@ ${sdk.table}
   var clock = window.__frTable.installTimerShim(window);
   window.__tableSetPaused = clock.setPaused;
   cfg.clock = clock;
-  /* The host's own game hears its own sends and its own sendTo, synchronously, as in
-   * runner.mjs. The replay skips those events from the recording for that reason. */
+  /* The host's own game hears its own sends and its own sendTo LATER, as a task of
+   * their own (TableBridge loops them back through evaluateJavaScript; runner.mjs
+   * queues them). The recording has each one, marked self, at the moment it landed,
+   * and the replay delivers it there — never inside the call that sent it. */
   window.Table = window.__frTable.create(cfg, {
-    send: function(p){ OUT.push({ kind: 'send', payload: clone(p) }); if (cfg.isHost) window.__tableFire('message', cfg.me.id, clone(p)); },
+    send: function(p){ OUT.push({ kind: 'send', payload: clone(p) }); },
     broadcast: function(p){ OUT.push({ kind: 'broadcast', payload: clone(p) }); },
-    sendTo: function(to, p){ OUT.push({ kind: 'sendTo', to: to, payload: clone(p) }); if (to === cfg.me.id) window.__tableFire('message', to, clone(p)); },
+    sendTo: function(to, p){ OUT.push({ kind: 'sendTo', to: to, payload: clone(p) }); },
     endGame: function(r){ OUT.push({ kind: 'endGame', payload: clone(r) }); },
     saveState: function(){}, haptic: function(){}, sound: function(){},
     error: function(m){ ERR.push(String(m)); }
@@ -542,7 +544,6 @@ const MEASURE = String.raw`
           if (state.sample >= stop) break;
           continue;
         }
-        if (e.ev === 'message' && e.self) continue;
         if (e.ev === 'press') {
           var target = findPressed(e.a);
           if (!target) { state.errors.push('replay diverged: could not find the pressed control "' + e.a.text + '" (' + e.a.tag + ' ' + JSON.stringify(e.a.attrs) + ')'); state.i = tl.length; break; }
@@ -578,6 +579,17 @@ const MEASURE = String.raw`
 
 /* ------------------------------------------------------------------ driving --- */
 
+/**
+ * Which engines to try, in order. WebKit — the engine inside every iPhone's WKWebView —
+ * and nothing else unless asked for by name (`FR_BROWSER=chromium`). This used to fall
+ * back to Chromium whenever WebKit would not launch, silently: a machine with a broken
+ * WebKit install measured every phone in the wrong engine and reported "fits" — the
+ * engine's name was printed only under --verbose.
+ */
+export function engineOrder(env = process.env) {
+  return env.FR_BROWSER ? [env.FR_BROWSER] : ['webkit'];
+}
+
 let pw = null;
 async function browser() {
   if (pw) return pw;
@@ -587,7 +599,7 @@ async function browser() {
     throw new Error('the phone layout check needs a browser engine. Install it once:\n'
       + '        npm ci && npx playwright-core install webkit');
   }
-  const engines = process.env.FR_BROWSER ? [process.env.FR_BROWSER] : ['webkit', 'chromium'];
+  const engines = engineOrder();
   let last;
   for (const name of engines) {
     try { pw = { b: await lib[name].launch(), name }; return pw; } catch (e) { last = e; }
@@ -838,7 +850,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     catch (e) { console.log(`  ✗ ${key.padEnd(12)} ${e.message}`); bad++; if (/browser engine|playwright/.test(e.message)) break; continue; }
     const ms = Date.now() - t0;
     if (!out.failures.length) {
-      console.log(`  ✓ ${key.padEnd(12)} ${out.measured} screens · ${shapes.length} shapes · ${out.runs} games · fits · ${ms}ms`);
+      console.log(`  ✓ ${key.padEnd(12)} ${out.measured} screens · ${shapes.length} shapes · ${out.runs} games · fits · ${ms}ms${out.engine !== 'webkit' ? ` · ENGINE ${out.engine.toUpperCase()}, NOT WEBKIT` : ''}`);
       continue;
     }
     bad++;

@@ -39,6 +39,103 @@ const KNOWN = new Set([...REQUIRED, 'iconEmoji', 'minPlayers', 'maxPlayers',
 
 const MAX_BUNDLE_MB = 12;      // bundles transfer phone-to-phone when friends join
 
+/* ------------------------------------------------------------ source views --- */
+
+/* Words after which a `/` starts a regex literal rather than dividing. */
+const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete',
+  'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+
+/**
+ * Two views of a script with what is not code blanked out, character for character —
+ * newlines kept, so a match's line number is the line it is on in the file.
+ *
+ *   noComments  comments blanked; strings, templates and regexes kept
+ *   codeOnly    comments AND the contents of strings, templates and regex literals
+ *               blanked (a template's `${…}` expressions are code and are kept)
+ *
+ * A real (small) tokenizer, because the line-by-line comment stripping it replaces was
+ * fooled both ways: `var u = 'http://x'; var t = Date.now();` lost everything after the
+ * `//` inside the string, so the Date.now() passed; a `'/*'` in a string skipped every
+ * line until some later `*\/`; and `"Date.now()"` in a hint string tripped the error.
+ */
+export function sourceViews(src) {
+  const n = src.length;
+  const nc = src.split(''), co = src.split('');
+  const blank = (arr, from, to) => { for (let k = from; k < to; k++) if (arr[k] !== '\n') arr[k] = ' '; };
+  const stack = [];         // template nesting: brace depth at each `${`
+  let depth = 0;
+  let prev = '';            // last significant code character, for regex-vs-divide
+  let word = '';            // last identifier/keyword
+  let i = 0;
+  const regexAllowed = () => !prev || /[(,=:[!&|?{};+\-*%<>~^]/.test(prev) || REGEX_AFTER_WORD.has(word);
+  // Scan a template body from i (just after ` or }) to its end or next `${`.
+  const templateBody = () => {
+    const start = i;
+    while (i < n) {
+      if (src[i] === '\\') { i += 2; continue; }
+      if (src[i] === '`') { blank(co, start, i); i++; prev = '`'; word = ''; return; }
+      if (src[i] === '$' && src[i + 1] === '{') { blank(co, start, i); i += 2; stack.push(depth); depth++; prev = '{'; word = ''; return; }
+      i++;
+    }
+    blank(co, start, n);
+  };
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '/') {
+      let j = src.indexOf('\n', i); if (j === -1) j = n;
+      blank(nc, i, j); blank(co, i, j); i = j; continue;
+    }
+    if (c === '/' && d === '*') {
+      let j = src.indexOf('*/', i + 2); j = j === -1 ? n : j + 2;
+      blank(nc, i, j); blank(co, i, j); i = j; continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < n && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
+      blank(co, i + 1, Math.min(j, n)); i = Math.min(j + 1, n); prev = c; word = ''; continue;
+    }
+    if (c === '`') { i++; templateBody(); continue; }
+    if (c === '/' && regexAllowed()) {
+      let j = i + 1, cls = false;
+      while (j < n && src[j] !== '\n') {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === '[') cls = true;
+        else if (src[j] === ']') cls = false;
+        else if (src[j] === '/' && !cls) break;
+        j++;
+      }
+      blank(co, i + 1, Math.min(j, n)); i = Math.min(j + 1, n);
+      while (i < n && /[a-z]/i.test(src[i])) i++;
+      prev = '/'; word = ''; continue;
+    }
+    if (c === '{') { depth++; prev = c; word = ''; i++; continue; }
+    if (c === '}') {
+      if (stack.length && stack[stack.length - 1] === depth - 1) { depth--; stack.pop(); i++; templateBody(); continue; }
+      depth--; prev = c; word = ''; i++; continue;
+    }
+    if (/[A-Za-z_$0-9]/.test(c)) {
+      let j = i; while (j < n && /[A-Za-z_$0-9]/.test(src[j])) j++;
+      word = src.slice(i, j); prev = 'a'; i = j; continue;
+    }
+    if (!/\s/.test(c)) { prev = c; word = ''; }
+    i++;
+  }
+  return { noComments: nc.join(''), codeOnly: co.join('') };
+}
+
+/** The script a source file runs: all of a .js, the inline <script> bodies of an .html
+ *  (offsets kept, so line numbers stay true). */
+function scriptViews(src, ext) {
+  if (ext !== '.html') return sourceViews(src);
+  const nc = src.replace(/[^\n]/g, ' ').split(''), co = nc.slice();
+  for (const m of src.matchAll(/(<script\b[^>]*>)([\s\S]*?)<\/script>/gi)) {
+    const at = m.index + m[1].length;
+    const v = sourceViews(m[2]);
+    for (let k = 0; k < m[2].length; k++) { nc[at + k] = v.noComments[k]; co[at + k] = v.codeOnly[k]; }
+  }
+  return { noComments: nc.join(''), codeOnly: co.join('') };
+}
+
 export function validateBundle(dir, { strict = false } = {}) {
   const errors = [];
   const warnings = [];
@@ -162,22 +259,12 @@ export function validateBundle(dir, { strict = false } = {}) {
     // forward the moment play resumes. Every phone in the room pauses when one app
     // backgrounds, so this bites exactly on game night. Client-side DISPLAY math is
     // the one acceptable use — hence a warning, not an error.
-    // Scanned line by line with comments stripped — a comment explaining WHY the code
-    // avoids Date.now() must not itself trip the warning.
-    let dateLine = 0, inBlock = false;
-    const srcLines = src.split('\n');
-    for (let i = 0; i < srcLines.length && !dateLine; i++) {
-      let line = srcLines[i];
-      if (inBlock) {
-        const end = line.indexOf('*/');
-        if (end === -1) continue;
-        line = line.slice(end + 2); inBlock = false;
-      }
-      line = line.replace(/\/\*[\s\S]*?\*\//g, '');
-      const bs = line.indexOf('/*'); if (bs !== -1) { line = line.slice(0, bs); inBlock = true; }
-      const sl = line.indexOf('//'); if (sl !== -1) line = line.slice(0, sl);
-      if (/\bDate\.now\s*\(/.test(line)) dateLine = i + 1;
-    }
+    // Code only: a comment explaining WHY the code avoids Date.now() must not itself
+    // trip the check, nor a string that mentions it — and a `//` inside a string must
+    // not hide a real call later on the line (see sourceViews).
+    const views = scriptViews(src, extname(f.rel));
+    const dateAt = views.codeOnly.search(/\bDate\s*\.\s*now\s*\(/);
+    const dateLine = dateAt === -1 ? 0 : lineOf(dateAt);
     if (dateLine) {
       // An error under --strict, like connection code: the arrival-anchored
       // countdown (deadline = Date.now() + limit) restarts on a rebuilt phone,
@@ -213,7 +300,9 @@ export function validateBundle(dir, { strict = false } = {}) {
       [/Table\.sendTo\((?:[^,]+),\s*\{\s*(?:t|type)\s*:\s*['"]hello['"]/g, "sends a 'hello' resync"]
     ]) {
       // Every occurrence, not just the first: one handler is already one too many.
-      for (const m of src.matchAll(re)) {
+      // Comments are exempt (one explaining why the handler is gone is not a handler);
+      // strings are not, so the `hello` literal is still seen.
+      for (const m of views.noComments.matchAll(re)) {
         (strict ? err : warn)(`${f.rel}:${lineOf(m.index)} ${what} — the shell owns connections: a dropped phone pauses the table and is caught up when it returns (every message, in order, exactly once), and games never see anyone leave or come back. Delete it`);
       }
     }
