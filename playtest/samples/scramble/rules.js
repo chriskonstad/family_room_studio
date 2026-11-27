@@ -464,7 +464,7 @@ var SCRAMBLE_RULES = (function () {
    * Every word on this grid, best first.
    *
    * Walks the DICTIONARY testing placement rather than walking the grid testing
-   * prefixes: the cheap letter filter below throws most of 200,000 words away
+   * prefixes: the cheap letter filter below throws most of the 36,000 words away
    * without touching the grid at all, and it needs no trie to be built on a phone
    * at the start of every round.
    */

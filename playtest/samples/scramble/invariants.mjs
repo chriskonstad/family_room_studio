@@ -290,6 +290,24 @@ export default function scrambleInvariants({ table, players, done, result }) {
     }
   }
 
+  /* THE ROOM HEARS EVERY WORD. Leaving a tally — for the next grid or the
+   * results — only ever follows a broadcast of that tally fully read out. A
+   * playtest watched the screen's count stop and the next round start because
+   * one phone's Skip button was accepted mid-reveal; the points all landed, but
+   * the reading, which IS the scoring, did not. */
+  const order = table._scOrder || (table._scOrder = { seen: 0, last: null });
+  for (; order.seen < broadcasts.length; order.seen++) {
+    const payload = broadcasts[order.seen].payload;
+    const s = payload && payload.s;
+    if (!s || !s.phase) continue;
+    const last = order.last;
+    if (last && last.phase === 'tally' && s.phase !== 'tally' && last.revealed < last.totalRows) {
+      return `round ${last.round + 1} left the reveal for "${s.phase}" with ` +
+             `${last.revealed} of ${last.totalRows} words read out`;
+    }
+    order.last = { phase: s.phase, round: s.round, revealed: s.revealed, totalRows: s.totalRows };
+  }
+
   if (done && result && Array.isArray(result.standings) && result.standings.length) {
     const top = Math.max(...result.standings.map(r => r.score));
     const winner = result.standings.find(r => r.playerId === result.winnerId);

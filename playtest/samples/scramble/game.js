@@ -363,7 +363,16 @@ function createGame(Table, root) {
           when: (ctx) => !G.done[ctx.from],
           run: (ctx) => { G.done[ctx.from] = true; if (everyoneDone()) endRound(); }
         },
-        next: { phase: 'tally', run: () => nextRound() },
+        /* Only once the whole round has been read out. This used to be
+         * accepted mid-reveal, and every phone shows the button, so the first
+         * person to tap it jumped the room past words still being counted — a
+         * playtest saw the score readout stop and the next grid start. Points
+         * were never lost (nextRound awards them all), but the reading was. */
+        next: {
+          phase: 'tally',
+          when: () => G.revealed >= G.totalRows,
+          run: () => nextRound()
+        },
         /* The occasion. Host-only — it is the host's party — but declared with
          * `options` so the headless bots pick one too and every theme's scoring
          * gets played rather than merely unit-tested. */
@@ -830,7 +839,7 @@ function createGame(Table, root) {
           '<div class="chips" id="chips"></div>' +
           '<div class="foot">' +
             '<span class="hint">Look up.</span>' +
-            '<button id="next" type="button">Skip</button>' +
+            '<button id="next" type="button">Next</button>' +
           '</div>' +
         '</div>';
       root.querySelector('#next').addEventListener('click', () => send({ t: 'next' }));
@@ -917,6 +926,9 @@ function createGame(Table, root) {
     const scored = root.querySelector('#scored');
     if (scored) {
       const reading = v.revealed < v.totalRows;
+      // Nobody hurries the reading: the button exists only for the pause after it.
+      const next = root.querySelector('#next');
+      if (next) { next.disabled = reading; next.style.visibility = reading ? 'hidden' : ''; }
       scored.innerHTML =
         '<div class="big">' + (reading ? 'Reading the round out…' : 'Round scored') + '</div>' +
         '<div class="hint">' + (v.totalRows
